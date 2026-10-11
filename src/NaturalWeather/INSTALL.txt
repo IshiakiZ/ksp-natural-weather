@@ -1,0 +1,37 @@
+Natural Weather @VERSION@
+for Kerbal Space Program 1.12.x
+
+Weather that is seen and felt: wind and gusts on craft and smoke, cloud light, rain and snow,
+storms with lightning and thunder, fog and dust, a launch go / no go with a forecast, and a
+real city's weather if you like.
+
+INSTALL
+  Copy the two folders in this download's GameData (Keystone and NaturalWeather) into your
+  KSP's GameData folder, and start the game. Keystone is the base this mod stands on: one
+  copy serves every mod that uses it. To remove the mod, delete the NaturalWeather folder.
+
+USE
+  Nothing to do: the weather comes as it comes, mostly fair. Its settings (the weather held
+  to one kind, how often it turns bad, the wind, which worlds, whether wind moves craft,
+  whether lightning can strike, what is drawn, a city's real weather) and the launch go / no
+  go with its forecast are in the Keystone window: the keystone button on the game's toolbar,
+  or Option-K on a Mac and Alt-K elsewhere. Then turn to Natural Weather.
+
+ONLINE
+  Only if you type a city on its page: the city's name is sent to Open-Meteo
+  (open-meteo.com) to find it, then that place's latitude and longitude for its weather,
+  every quarter of an hour while the game runs. Nothing else is sent. An empty box sends
+  nothing. Weather data by Open-Meteo.com, under CC BY 4.0.
+
+BESIDE OTHER MODS
+  Wind moves craft only where the Harmony mod (HarmonyKSP) is installed. Cloud light needs
+  the Natural Light mod; smoke in the wind needs Volumetric Explosions. Where another mod
+  already puts wind into the game's aerodynamics (the Kerbal Weather Project, Advanced
+  Atmosphere Tools), that one wins. EVE's clouds are left as they are unless the page is told
+  to hide them over Kerbin.
+
+WHERE IT WORKS
+  Made and tried on a Mac, and tried on Windows 11: the clouds (shaders of its own, packed for
+  the game's OpenGL and built for Direct3D), rain, fog and snow. Nobody has run it on Linux yet.
+
+Everything else: https://github.com/IshiakiZ/ksp-natural-weather

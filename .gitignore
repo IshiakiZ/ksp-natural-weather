@@ -1,0 +1,6 @@
+GameData/
+dist/
+bin/
+obj/
+__pycache__/
+.DS_Store
