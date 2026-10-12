@@ -149,6 +149,28 @@ Natural Weather's clouds (`src/NaturalWeather/Clouds*.cs`; shaders `tools/shader
   altogether (it lays its haze on from a copy of the picture taken at that same moment, and which of the two comes
   first has not been tried). On OpenGL, smoke further off than the near camera reaches (some 400 m) is drawn
   before the far camera's clouds, as it always was.
+  *Tried on OpenGL on the Windows PC that evening (two cameras, no Scatterer; `tools/dev/windows/farsmoke.py`):* a
+  Kerbal X's launch filmed from 900 m, the camera 170 m up, under a held Cloudy sky. As it is, the smoke column is cut
+  out wherever the horizon's clouds are behind it: it shows against the ground and again beside the rocket, and not
+  between (what the user saw on the Mac: "the clouds running and rendering in front of the rocket smoke"). With the
+  far camera's clouds laid on before the see-through things (`NaturalWeather.Clouds.First "1"`, development build)
+  the column is whole, and the trail further up stays in front of the heaps. The same film on Direct3D, the order
+  as the mod chooses it there, shows it whole too. Left as it was for two cameras: where Scatterer is installed the
+  old order is kept in any case, and that is the user's game.
+  *Tried on the Mac the same night, where Scatterer is installed (`tools/dev/far_smoke.py`, the same launch from 900 m
+  under a held Cloudy sky):* as it is, the fault shows as the user saw it: the smoke column stands against the ground
+  and is hidden wherever clouds are behind it. With the clouds laid on before the see-through things (`First "1"`)
+  the column is whole **and there are no clouds at all**: the whole sky is Scatterer's clear blue. So that order is
+  not the cure beside Scatterer (it draws its sky after that moment, over whatever is there), and the rule that keeps
+  the old order where Scatterer is installed is right as far as it goes. What is left to try: the clouds laid on not
+  at one of the camera's own moments but as a thing drawn in its turn among the see-through things, after Scatterer's
+  sky and before the smoke (which wants Scatterer's own places in that order found out, in the game). Pictures:
+  `dist/progress/clouds-over-far-smoke-as-it-is.jpg`, `dist/progress/clouds-laid-first-with-scatterer.jpg`. Also in
+  the first of those: a grey disc with a white dot in it high in the sky, the same in every frame (not looked into:
+  the Mun behind the clouds, by its size), and the dark band across the near ground that the PC saw.
+  *Seen in those OpenGL films and not looked into:* a dark band right across the ground where the near camera's
+  stretch ends (some 400 m from the camera), darkest at its far edge and fading towards the camera; both walks were
+  on ("near and far", showers near, the sheet at 0 m). Not there on Direct3D in the same film, with its one camera.
 * **Cost kept down**: each walk is drawn at half the picture's size (a third for "lower"), with its steps begun at a
   different place each frame (each pixel's own, moved on by the golden ratio), and taken together with earlier frames
   (where each cloud was last frame is worked out from how far off it is; what is kept is held within this frame's

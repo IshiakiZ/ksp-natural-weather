@@ -4,7 +4,7 @@ Weather that is seen and felt. The wind that rocks a plane is the wind that bend
 slants the rain past it; clouds dim the sun; storms flash and rumble; and the launch pad has a go / no go
 with a forecast, as real launches do.
 
-For Kerbal Space Program 1.12.x. Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.7 (in the download). Better with
+For Kerbal Space Program 1.12.x. Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.7, a separate download ([its page on SpaceDock](https://spacedock.info/mod/4665/Keystone)): this mod does not load without it. Better with
 [Natural Light](https://github.com/IshiakiZ/ksp-natural-light) 0.10 (cloud light, and the rain, snow, fog and dust veiling the
 distance), [Volumetric Explosions](https://github.com/IshiakiZ/ksp-volumetric-explosions) (smoke in the wind) and the Harmony mod
 (wind on craft); without each, that one part does nothing.
@@ -39,7 +39,8 @@ distance), [Volumetric Explosions](https://github.com/IshiakiZ/ksp-volumetric-ex
 
 ## Install
 
-Copy the `Keystone` and `NaturalWeather` folders from the download into your KSP `GameData`.
+Install [Keystone](https://github.com/IshiakiZ/ksp-keystone) first: it is a download of its own, and its `Keystone` folder goes into your KSP
+`GameData`. Then copy the `NaturalWeather` folder from this mod's download into `GameData` beside it.
 
 ## Settings
 

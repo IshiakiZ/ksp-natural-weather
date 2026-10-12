@@ -568,6 +568,9 @@ namespace NaturalWeather
             strikeCheck = Time.time + 0.5f;
             Vessel v = FlightGlobals.ActiveVessel;
             if (!Weather.Strike || v == null || v.packed || v.mainBody != body || TimeWarp.CurrentRate > 1.01f) return;
+            // (a craft that has just been destroyed is still the game's craft for a while, with no part left to strike:
+            // seen 2026-10-11, an exception half a minute after a rocket went into the sea under a storm)
+            if (v.parts == null || v.parts.Count == 0) return;
             World w = World.Of(body);
             double lat = v.latitude, lon = v.longitude, alt = v.altitude;
             WeatherHere here = Model.Here(w, lat, lon, ut);

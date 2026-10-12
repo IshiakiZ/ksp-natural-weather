@@ -6,9 +6,12 @@ storms with lightning and thunder, fog and dust, a launch go / no go with a fore
 real city's weather if you like.
 
 INSTALL
-  Copy the two folders in this download (Keystone and NaturalWeather) into your
-  KSP's GameData folder, and start the game. Keystone is the base this mod stands on: one
-  copy serves every mod that uses it. To remove the mod, delete the NaturalWeather folder.
+  This mod needs Keystone, the base it stands on, which is a separate download:
+    https://spacedock.info/mod/4665/Keystone
+  Copy Keystone's folder (Keystone) into your KSP's GameData folder, and the NaturalWeather
+  folder from this download beside it, and start the game. Without Keystone the game does
+  not load this mod. One copy of Keystone serves every mod that uses it. To remove this
+  mod, delete the NaturalWeather folder.
 
 USE
   Nothing to do: the weather comes as it comes, mostly fair. Its settings (the weather held
