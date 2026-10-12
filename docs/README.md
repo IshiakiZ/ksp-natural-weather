@@ -4,6 +4,7 @@ Weather that is seen and felt, for Kerbal Space Program 1: wind on craft and smo
 snow, storms with lightning and thunder, fog and dust, and a launch go / no go with a forecast. It needs
 [Keystone](https://github.com/IshiakiZ/ksp-keystone). The short version is on the repository's front page.
 
+* [The long description](The-long-description.md): everything the front page said before it was cut short, and what was tried on each system
 * [Settings](Settings.md): what each one does
 * [How it works](How-it-works.md): the weather from the place and the clock, the wind on craft, the rain, the lightning
 * [Clouds of our own](Clouds.md): how they are drawn, what was looked at, and what is still wrong with them
