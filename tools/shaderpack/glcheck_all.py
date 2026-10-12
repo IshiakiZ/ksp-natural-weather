@@ -19,7 +19,9 @@ subprocess.run(["swiftc", "-O", "-o", exe, os.path.join(PACK, "glcheck.swift")],
 BUNDLES = {"volume": "src/VolumetricExplosions/Shaders/volume.bundle", "layers": "src/VolumetricExplosions/Shaders/layers.bundle", "enlarge": "src/VolumetricExplosions/Shaders/enlarge.bundle",
            "shadow": "src/VolumetricExplosions/Shaders/shadow.bundle", "mark": "src/VolumetricExplosions/Shaders/mark.bundle", "shock": "src/VolumetricExplosions/Shaders/shock.bundle",
            "lens": "src/Keystone/Shaders/lens.bundle", "shafts": "src/NaturalLight/Shaders/shafts.bundle", "clean": "src/NaturalLight/Shaders/clean.bundle", "veil": "src/NaturalLight/Shaders/veil.bundle",
-           "clouds": "src/NaturalWeather/Shaders/clouds.bundle", "cloudsover": "src/NaturalWeather/Shaders/cloudsover.bundle", "cloudshade": "src/NaturalWeather/Shaders/cloudshade.bundle"}
+           "clouds": "src/NaturalWeather/Shaders/clouds.bundle", "cloudsover": "src/NaturalWeather/Shaders/cloudsover.bundle", "cloudshade": "src/NaturalWeather/Shaders/cloudshade.bundle",
+           "ocean": "src/NaturalOcean/Shaders/ocean.bundle", "oceanfoam": "src/NaturalOcean/Shaders/oceanfoam.bundle", "oceanweed": "src/NaturalOcean/Shaders/oceanweed.bundle",
+           "oceanunder": "src/NaturalOcean/Shaders/oceanunder.bundle"}
 bad = 0
 for which, spec in make_bundle.SHADERS.items():
     if not os.path.exists(os.path.join(PACK, spec["code"])):
@@ -37,6 +39,31 @@ for which, spec in make_bundle.SHADERS.items():
         if packed not in blob: bad += 1
     fine = said.returncode == 0 and "error" not in text.lower()
     if not fine: bad += 1
+    # (and every value and texture the code declares must be in the packer's own list for it: one that is not is never set by the
+    # game, and reads as nothing, with no word said. So it was with the clouds' _CloudHole values for a night, 2026-10-11.)
+    import re
+    declared = set(re.findall(r"^uniform \w+ (\w+);", code.decode("utf-8", "replace"), re.M))
+    listed = set(t[0] for t in spec["textures"]) | set(u[0] for u in spec.get("fragment", [])) | set(u[0] for u in spec.get("vertex", []))
+    unlisted = sorted(declared - listed)
+    if unlisted:
+        bad += 1
+        text = (text + "\n" if text else "") + "NOT IN THE PACKER'S LIST (never set by the game): " + ", ".join(unlisted)
     print("%-11s %s; %s; %d samplers placed%s" % (which, "compiles" if fine else "DOES NOT COMPILE", inside, packed.count(b"layout(location"), ("\n    " + text.replace("\n", "\n    ")) if text else ""))
+# (A stretch of code that two shaders must have word for word alike is marked in each by a line beginning "// <name>" and one
+# "// </name>": the sea's surf, which the sea's mesh and the foam's pass must both work out the same.)
+SAME = {"surf": ["ocean.glsl", "oceanfoam.glsl"]}
+for name, files in SAME.items():
+    texts = []
+    for f in files:
+        if not os.path.exists(os.path.join(PACK, f)):
+            continue
+        t = open(os.path.join(PACK, f), encoding="utf-8").read()
+        if "// <%s>" % name not in t or "// </%s>" % name not in t:
+            texts.append(None)
+        else:
+            texts.append(t[t.index("// <%s>" % name):t.index("// </%s>" % name)])
+    if len(texts) > 1 and (None in texts or len(set(texts)) != 1):
+        bad += 1
+        print("THE STRETCH <%s> IS NOT THE SAME IN %s" % (name, " AND ".join(files)))
 print("all well" if not bad else "%d wrong" % bad)
 sys.exit(1 if bad else 0)

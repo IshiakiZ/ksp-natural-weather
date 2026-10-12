@@ -101,6 +101,8 @@ Natural Weather's clouds (`src/NaturalWeather/Clouds*.cs`; shaders `tools/shader
   on another thread (`CloudMap`) when the clock has moved on half a minute, and at least every twenty seconds: the low
   and the middle layers (how much cloud, what kind, base, top, how wet), the high cloud and how stormy. The storms near
   the camera (up to six) are handed to the shader one by one, each a tower with an anvil, where the weather has it.
+  Since 0.2.2 the map is asked of the weather's atlas of the world (below): about a third of a second of that thread
+  for Kerbin, where it was 3.4 seconds and more, with no clouds in the sky until it was done.
 * **What they look like**: Perlin-Worley noise and cellular noise in two cubes (128 and 64 cells, repeating every 9 km
   and every kilometre), made once on the graphics card when the clouds are first drawn (no files); carved by each kind's
   profile with height and by the cover, the edges eaten by the small noise (a little at the flat base, cauliflower
@@ -117,7 +119,8 @@ Natural Weather's clouds (`src/NaturalWeather/Clouds*.cs`; shaders `tools/shader
 * **Light**: the sun's light through the air to each point (a table per world worked out from the game's own air and
   the colours the game draws its sky with: a low sun comes through red, and the planet's own shadow ends it), through
   the cloud towards the sun (six steps, each longer, and one long look a few kilometres on), scattered once (mostly
-  straight on: the silver lining) and a few times (octaves), and very many times over (diffusing: falling off by the
+  straight on: the silver lining, for which the light that goes straight on is dimmed by a tenth of the cloud it
+  passes: see 0.2.2 below) and a few times (octaves), and very many times over (diffusing: falling off by the
   two-stream rule, 1 / (1 + 0.11 depth), so a heap's shaded side is grey, its base darker, and a heap against the sun dark
   inside its rim), the powder darkening, the sky's blue from above (less on the flat base, greyed under a deck) and the
   ground's light from below; lightning from inside (below). The air between the camera and the cloud dims it and adds the light the air scatters, from the sun and from
@@ -126,13 +129,36 @@ Natural Weather's clouds (`src/NaturalWeather/Clouds*.cs`; shaders `tools/shader
   another. The clouds are walked for each camera's own stretch, after the camera has drawn its own scene, so a craft
   stands in front of a cloud behind it and is hidden by one in front. The near walk is done only when a cloud can be
   within 400 m of the camera. (On Direct3D the game draws the whole scene with one camera; the clouds then walk it once.)
+* **What the clouds are laid over, and what over them** (2026-10-11, from Windows). The clouds know what stands in
+  front of them from the camera's picture of distances, and not everything is in that: nothing see-through is (smoke,
+  flames, spray, rain's drops), nor is Natural Ocean's sea. With two cameras that mostly comes right by itself: the
+  near camera draws its stretch of sea and its smoke after the far camera's clouds. With one camera the clouds, laid
+  on after everything see-through, were laid over all of it: a rocket's smoke column stood behind the clouds of the
+  horizon, a crash's smoke had the sky's heaps drawn across it, and the sea's nearest waves and (from under water)
+  the underside of its surface had clouds painted on them. Two things are done about it:
+  * The sheet the clouds are laid on with is put as far from the camera as the nearest cloud or rain can be (under
+    everything that can hold cloud: as far as that is above the camera; and no further than the nearest raining
+    storm's curtain), and is hidden by whatever the camera has drawn nearer than that (`cloudsover` is drawn
+    "nearer or as near", no longer "always"; `Clouds.SheetClear`). On every system.
+  * Where one camera draws the whole scene, and while it is below everything that can hold cloud, the clouds are
+    laid on before the see-through things, not after (`Clouds.LaidFirst`). From below, everything lower than the
+    clouds is then in front of them, the sea among it.
+  Still wrong: with the camera among the clouds or above them the old order is kept (a sea drawn after the clouds
+  would be drawn over them seen from above), so near smoke has far clouds over it there; a trail that has climbed
+  above the clouds shows in front of them from below; and where Scatterer is installed the old order is kept
+  altogether (it lays its haze on from a copy of the picture taken at that same moment, and which of the two comes
+  first has not been tried). On OpenGL, smoke further off than the near camera reaches (some 400 m) is drawn
+  before the far camera's clouds, as it always was.
 * **Cost kept down**: each walk is drawn at half the picture's size (a third for "lower"), with its steps begun at a
   different place each frame (each pixel's own, moved on by the golden ratio), and taken together with earlier frames
   (where each cloud was last frame is worked out from how far off it is; what is kept is held within this frame's
-  neighbours, so nothing lingers); each step a hundredth of its distance from the camera, but at least two dozen across
-  the shell (from orbit) and three at a time through clear air, going back when a long step finds cloud; where a step
-  enters cloud, the edge found between it and the last clear one by halving twice and lit there (the visible edge of a
-  dense heap is then where it is, not anywhere within a step of tens of metres); no further than
+  neighbours, so nothing lingers); each step a hundredth of its distance from the camera (on the lower setting, with 56
+  steps to the middle one's 88, as much longer as that is fewer: the same reach, more coarsely), but at least two dozen
+  across the shell (from orbit) and three at a time through clear air, going back when a long step finds cloud; where a
+  step enters cloud, the edge found between it and the last clear one by halving twice, and the cloud lit from no more
+  than ten metres past the last clear place (the visible edge of a dense heap is then where it is, and lit as its
+  outside is, not as its inside a step of tens or hundreds of metres in; out to 40 km from in or under the clouds, to
+  15 from high above them); no further than
   90 km into the shell; the noise read more coarsely far off; the walk stops where the camera's own scene is in the way
   and once the cloud has hidden everything behind it.
 * **Shadows**: a square of ground round the camera (50 km from the ground, more from high up) gets, for each of 512 by
@@ -153,7 +179,10 @@ Natural Weather's clouds (`src/NaturalWeather/Clouds*.cs`; shaders `tools/shader
   compiler, without the Unity editor), all three compiled for Direct3D 11 and taken by Direct3D itself (the clouds'
   walk is a program of 324,736 bytes). Seen in the game there the same day (KSP 1.12.5 on Direct3D 11, HarmonyKSP
   installed, a development build holding the weather): fair-weather heaps, a broken storm deck and an overcast, from
-  the launch pad. Where the mod finds no shader it draws no clouds, says so on its page, and leaves EVE's clouds alone.
+  the launch pad. Built again on 2026-10-11 from 0.3.0's remade clouds (the walk now 341,080 bytes, nine minutes of
+  the compiler's time) and seen the same day: fair, mostly cloudy and a storm, each from the ground, from 2,500 m
+  and from 6 km, picture for picture as on OpenGL on the same computer. Where the mod finds no shader it draws no
+  clouds, says so on its page, and leaves EVE's clouds alone.
 * **OpenGL with NVIDIA's driver** (Windows started with `-force-glcore`; Linux with an NVIDIA card is presumably the
   same): until 2026-10-10 the clouds drew nothing at all, and the game's log took `OpenGL Error: Invalid texture
   unit!` about six times a draw. The driver numbers a program's uniforms in the order of their names, and Unity
@@ -164,6 +193,8 @@ Natural Weather's clouds (`src/NaturalWeather/Clouds*.cs`; shaders `tools/shader
   there, with nothing in the log.
 
 ### Where the clouds come from
+
+(On a world with no ground under its air, Jool, these clouds are not drawn at all since 0.2.2: see the end of this page.)
 
 From `Keystone.Weather` (Keystone 0.7, the weather helper's interface: Natural Weather answers it), read on another thread
 for the whole map: `At(body, latitude, longitude, ut)` gives three layers (low, middle, high: kind, cover, base, top, water),
@@ -180,7 +211,8 @@ the weather mod's, for the clouds only.)
 ### Tuning, and what was found doing it
 
 Most of the look was worked out with a small offline copy of the drawing (the shader itself, run with this Mac's OpenGL on
-a plain sky, with the noise made exactly as the game makes it; a helper's scratch tool, not part of the mod), which can be
+a plain sky, with the noise made exactly as the game makes it; a helper's scratch tool at first, kept in the workspace
+since 0.2.2 as `tools/shaderpack/cloudlab.swift`, whose first lines say how to use it), which can be
 tried a hundred times while the one game is busy with the other helpers. What it showed:
 
 * The noise's "heaps" channel lies between 0.74 and 0.92 nearly everywhere (measured over the whole cube), so a cover of
@@ -294,4 +326,155 @@ as before (the weather mod's own taken in place of it for the clouds only where 
   clouds on and off alternately, vsync lifted): **2.9 ms a frame** (19.9 against 17.0 ms; 2.4 ms leaving out one slow
   frame-time reading). Offline the walk alone costs about half as much again as before the pass (the edge search, a second
   reading of the noise, more cloud being drawn); the game's own measurement is the one to go by.
+
+### 0.2.2: the faults the second pass left
+
+The second pass left four faults in its notes: silver linings thinner than before it, a slight smear beyond 15 km, tall
+storm clouds cut off on the lower setting, and a first map that took 3.4 s at the pad and 15 s from orbit, with no clouds
+until it was made. Worked on in the lab (the shader run offline, as above, now with the game's own roll-off of the
+brightest values) and then in the game on 2026-10-10, on the development build from the test save's pad. What was seen in
+the game and what only in the lab is said for each.
+
+* **The silver lining.** A cloud drop throws most of what it scatters on within a few degrees of the way the light was
+  going, and light scattered so is as good as not scattered: looked at from near the line to the sun it is still
+  sunlight. So the light that goes straight on is dimmed by only the rest of what the cloud takes: 1 - g squared of it,
+  0.28 for g 0.85 (the delta-Eddington rule). The shader had dimmed it by all of it, and since the second pass a heap is
+  dense right up to its edge (0.15 of the light lost in each metre, three times a real heap's core, so that its shaded
+  parts read dark in the game's picture): the sunlight got seven metres in, which is less than a pixel of rim at any
+  distance. That is why the linings went thin when the edges were made sharp. Now what goes straight on is dimmed by a
+  tenth of the cloud it passes (0.28 of a real heap's 0.03 to 0.05 a metre, counted against the 0.15 here): it comes
+  through the outermost sixty metres or so, and lights a heap's billows and thin places from behind. The rule the light
+  goes on by (Henyey and Greenstein's) is what keeps it to clouds near the sun: seventy times an even scattering
+  straight towards the sun, twenty at ten degrees off, four at twenty, a half at forty-five. Nothing is added to the
+  cloud's stuff: no mist round the heaps, which is what made the first cut's wide glows and its cotton wool.
+  *In the lab*, the same heaps with 0.2.1's shader and with this one, the sun 7 and 24 degrees up behind them: grey
+  bodies with a hair of rim before; after, a bright rim round the billows nearest the sun, wider on the small ones, the
+  bodies as grey as before; nothing changed looking away from the sun, from above or from orbit. Tried at 0.28 (hardly a
+  difference at these densities), 0.12, 0.1 and 0.07 (a small heap in front of the sun glows all through and loses its
+  shape). *In the game*, sunrise at the pad with heaps held, looking at the sun: the clouds in front of it white-gold at
+  their edges and through their thin parts, with Natural Light's shafts coming from behind them, the larger ones dark
+  with lit rims; before, dark mauve shapes with no rim. (The two pictures are of different heaps: see the trap below.)
+  Rims within a few degrees of a low sun come out white rather than gold: the far camera's picture holds nothing brighter
+  than white, and each colour is rolled off by itself.
+* **Heaps beyond 15 km a flat grey.** The lab's far view (22 degrees wide, on the horizon) against the same view walked
+  very finely (steps a fifth as long, 4,000 of them) showed two causes. First, where a step enters cloud its edge was
+  searched for only within 15 km, and beyond that the cloud was lit at the step's own place: anywhere up to a step's
+  length inside it, 150 m at 15 km and 400 at 40, where no sunlight is. A heap's sunlit side came out as its inside:
+  flat grey beside the nearer ones. Now the edge is searched for out to 40 km (from in or under the clouds; from high
+  above them a step is less than a pixel), and at any distance the cloud is lit from no more than ten metres past the
+  last place known to be clear, since the search still leaves the edge known only to a quarter of a step. To pay for
+  it, a cloud of which eight tenths is already hidden by cloud in front is not searched for at all. Second, the long
+  steps through clear air (three at a time) step over a far heap in most frames, so that taken over frames it is a
+  ghost of itself; that is still so (two at a time between 12 and 60 km was tried in the lab and made no difference worth
+  its steps). *In the lab*: the far heaps' sunlit sides white where they were grey, their shapes as before; still
+  fainter and softer than in the finely walked picture. *In the game*: not set side by side on the same heaps, and it
+  cannot be by loading twice (below: no two loads have the same sky). Two loads of the pad with heaps held, the clock
+  the same and the noise held still, 0.2.1's shader in the one and this one in the other, six ways round by day and at
+  sunrise: heaps down to the horizon in both; the farthest band reads as separate heaps with white tops and grey bases
+  with this one, and as a softer lilac-grey band with 0.2.1's, but they are different heaps, and that is as much as
+  the pictures can say.
+* **No storm towers on the lower setting.** The lower setting had the middle one's steps and fewer of them (56 to 88), so a
+  line of sight simply ran out sooner: in the lab a storm's tower 12 km off, with its anvil, was not drawn at all (most
+  of a line's steps go on the clear air between the camera and the tower). Now each step is as much longer as there are
+  fewer of them (1.57 times), and a line reaches as far on the lower setting as on the middle one, more coarsely. *In the
+  lab*: the tower and its anvil on the lower setting as on the middle one. *In the game*: a storm held at the pad by
+  day, four ways round, on the middle and the lower setting: the same masses and towers on both (with 0.2.1's shader the
+  lower setting had the tall ones thinner and broken, and fewer far off).
+* **The first map.** The map of the planet (32,768 places) was asked of the weather one place at a time through Keystone,
+  which works out the wind over each place as well and finds the storms about each afresh (some seven hundred boxes of
+  the storms' lattice looked into, and the weather asked where each storm found stands): 0.22 ms a place in the game
+  that evening, seven seconds of a thread for the whole map (3.4 s and 15 s when the second pass measured it), every
+  time a flight began, and no clouds in the sky until it was done; after the first, every other place each way was
+  asked, to keep later ones under two seconds. Now, where the weather is Natural Weather's own, the map is asked of the
+  model's atlas of the world (`Model.Atlas`): every storm on the world found once (some 500 to 800 on Kerbin as the
+  weather comes, 10,000 with a storm held), sorted into squares of latitude and longitude 36 km across, and each place
+  given the storms of the squares round it and its own large fields, no wind. *In the game*: the first map of a flight
+  0.32 s, where 0.2.1's a few minutes before had taken 1.95 s for a quarter of the places. Later that night, a flight
+  loaded, the installed copy's own first map waited out, then the mods started afresh with the frame limit lifted and
+  the clouds' page asked every quarter second: with 0.2.1 at the pad, no clouds within the twelve seconds watched; with
+  0.2.2 the clouds drawn 0.82 s after the mods started at the pad (the map 0.57 s of it) and 1.12 s after from a 250 km
+  orbit (0.83 s). The frame meanwhile, at the pad, a quarter second at a time: 18.7 ms before; 22 to 76 ms over the
+  first three seconds (the longest single frame 148 ms); 24 to 31 ms from the fourth second with one second of 40,
+  24 ms by the twelfth. With 0.2.1, which was making no clouds in that time: 18.0 ms before, 24 to 52 ms over the first
+  three seconds (longest frame 108 ms), 23 to 32 ms after. So the long frames of the first seconds are the starting of
+  all the mods' development copies together, with or without clouds; the clouds' own start shows in them as two
+  quarter seconds of 70 and 76 ms where 0.2.1's worst was 52, and no more can be told apart. From orbit: 17.2 ms before, 25 to 90 ms over the first three seconds (longest 150 ms), 16 to 23 ms
+  after. The atlas itself, asked in the game (`Probe.Atlas`): made in 184 ms at the pad for 314 storms and 155 ms from
+  orbit for 393; 6,000 places each time the same as asked one by one, none differing; a place 9.3 and 7.8 µs by the
+  atlas against 323 and 288 µs by itself (a map of the planet 0.49 and 0.41 s against 10.6 and 9.4 s). *Outside the game* (the model's own files
+  compiled by themselves): at 126,000 places on six worlds, with the weather as it comes and a storm and rain held,
+  near the poles and across the line where longitude wraps, every answer the same as asking place by place, to the last
+  figure. The map is also made once more as soon as the weather knows the world's land and seas (it reads them from the
+  game a few dozen places a frame in the first seconds of a session's first flight, and takes the world for land until
+  then): before, the sky changed by itself up to twenty seconds later. A world too large for the atlas (more than about
+  1,400 km in radius: none of the game's own but Jool, which has no clouds of these) is asked place by place, without
+  the wind.
+* **Jool.** Looked at for the first time, from a 260 km orbit by day: the weather's deck showed as a flat pale grey
+  disc under the craft, with a fuzzy round edge, on a planet otherwise plain dark green: the disc is as far out as a
+  line of sight reaches the deck within the 90 km of air it is walked through, and the planet was plain because EVE's own
+  clouds of Jool had been told to hide while these drew. These clouds are made for white heaps and sheets in the lowest
+  sixteen kilometres of air over a ground (the map keeps a middle layer's base only up to 12 km and its top to 16;
+  Jool's deck is given as 20 to 90). A world with no ground under its air is cloud all the way down, in its own colours,
+  and what the game and EVE draw of it is its clouds: there these are not drawn any more, the page says so, and EVE's are
+  left alone. *In the game*, after the change, from the same orbit on the day and the night side, six ways round each:
+  Jool plain green with its bright limb, no grey disc; no map of it made; the clouds' page reads "No clouds of the
+  mod's own on Jool: it has no ground under its air, and keeps the clouds the game draws it with."; EVE's layer of
+  Jool listed and not hidden; with a storm held, every flash the weather made was within cloud (0 to the ground of 14,
+  then of 43), where three in ten had been drawn as strokes down to a ground that is not there.
+* **Cost.** In the game, paused at the pad by day with heaps held and the frame limit lifted, the clouds switched off
+  and on four times for each: with 0.2.1's packed shader and with this one put in by turns in the one scene (a new
+  build each time), the frame with clouds 14.05, 14.13, 13.91, 13.94, then 14.12, 14.00, 14.06 ms with the old (one
+  reading of 15.37 left out) and 14.18, 14.00, 14.00, 13.99, then 14.05, 14.21, 13.98, 14.10 ms with the new: 14.03
+  against 14.06 on average, three hundredths of a millisecond more; the frame without clouds wandered between 12.84 and
+  13.13 ms over the same minutes (two readings of 14.4 and 14.7 left out), so that the clouds' own cost comes out at
+  0.93 and 1.17 ms with the old shader and 1.13 and 1.07 with the new, the same within what the frame itself wanders.
+  In the lab the walk alone (640 by 360) came out between 9% less and 9% more over seven views, and 15 to 17% more
+  looking along the horizon through a narrow lens, where every line of sight has far heaps in it. Among the heaps
+  1.9 km up, paused, both cameras' walks running (the camera beside a heap, its shadow on the shallows below), the two
+  shaders by turns twice: the frame with clouds 17.2 and 15.6 ms with the old (four readings each) and 16.4 and 16.1
+  with the new; without clouds 12.1 to 15.8 ms over the same minutes; the clouds' own cost 3.2 and 2.7 ms with the old
+  and 1.8 and 3.0 with the new. No dearer there either; the readings wander by more than the two differ.
+* **Found: the clouds did not sit on the planet. Mended by the code, and that mend not yet looked at in the game.** The
+  clouds worked in what their code called the planet's own axes, taken (until this mend) from
+  `CelestialBody.GetRelSurfaceNVector` at latitude 0 longitude 0, at longitude 90 and at the pole.
+  That function answers in the planet's own frame, not in the scene's: the three come out as the scene's x, z and y
+  however the planet stands. And the scene stands turned about the pole against the planet by
+  `CelestialBody.directRotAngle`, which is whatever the planet's turning and the scene before left it at (the game's
+  own code adds it to a longitude before asking that function for a place in the scene); above some 100 km it runs on
+  with the planet's turning. *In the game*, two loads of the same quicksave with the clock set the same (9,325,010 s)
+  and heaps held: the wind over the pad, 7.0 m/s to the east and 1.5 to the north in both, came out in "the planet's
+  axes" as -0.60, -6.97, 1.50 in the one and 6.99, 0.41, 1.50 in the other: by those axes the pad stood at longitude
+  175.1 in the one and -86.6 in the other. It is at -74.6. What followed, by the code (none of it looked for in the
+  game):
+  * the weather's map is read at the scene's longitude, so the sky over the craft is the weather of a place
+    `directRotAngle` further round the planet on the same latitude (110 and 12 degrees in those two loads), not the
+    weather the mod gives the craft its rain, wind and seeing from; it is cut to the heights of the clouds round the
+    craft's true place, and not drawn at all if there are none there. With the weather held it is the same everywhere
+    and nothing shows, which is how every picture of these clouds so far was taken;
+  * the storms near the craft (their towers) and the light of a flash within the clouds are worked out from true
+    latitudes and longitudes and then taken for the scene's: they are placed that same angle away, out of sight. In
+    the film's storm shot each flash lights the ground and the sky above it stays black;
+  * the heaps are in other places after every load, whatever is held (the trap below);
+  * from orbit the clouds stay with the scene while the planet turns under them (175 m/s at Kerbin's equator).
+
+  The mend is a few lines: the axes from `GetSurfaceNVector`, the storms' and the flashes' places from
+  `GetWorldSurfacePosition`. Its arithmetic was checked by hand against the game's own (`PlanetaryFrame(0, 90, turn)`
+  puts a place of longitude L at the scene's longitude L + turn; with the new axes the shader's own sum gives back L and
+  the latitude exactly), and it compiles; it has **not been run**. Below the height where the planet starts turning in
+  the scene it turns the whole of the clouds about the pole by one fixed angle and nothing else; what it adds is the
+  weather's own sky over the craft, and storms' towers and flashes' light where they belong, which no picture has shown
+  yet. To check it: the clouds' development readout gives the camera's longitude by the game and by the clouds' axes
+  and how far apart they are (`Clouds.Stats`: nought with the mend, whatever the load); the sky after two loads with
+  the weather and the noise held should be the same; a flash to the ground at night should light the cloud over it.
+* **Still wrong.** Far small heaps are fainter than near ones (above). Seen close, a heap's lit faces show the noise's
+  own cells as flat facets and boxy lumps, and now and then a smooth bright lens shape hangs among the heaps (both there
+  in 0.2.1 as well). The Direct3D build of the shaders (`clouds-windows.bundle`) was 0.2.1's until it was built again on
+  the Windows PC on 2026-10-11, from 0.3.0.
+* **A trap for pictures of before and after.** Two loads of the same quicksave do not have the same heaps in the same
+  places, whatever is done: tried with the weather held first and the mods started again after the warp (the wind's
+  carrying then starts from the clock alone), and with the noise held still besides (`Clouds.Still on`, development
+  build): different skies both times, because the noise is laid out in the scene's axes, which stand differently
+  against the planet after every load (above; with the mend, not yet tried, two loads should agree). Until that is
+  seen, the same sky twice is to be had only within one flight: a new build published into the running game (`tools/dev/reload.sh`) loads a newly packed shader and leaves
+  the scene as it stands. The two settings side by side were taken so; the old and the new shader's far heaps were not.
 

@@ -22,12 +22,48 @@ namespace NaturalWeather
         public static WeatherHere At(CelestialBody body, double latitude, double longitude, double ut) =>
             Keystones ? Keystone.Weather.At(body, latitude, longitude, ut) : CloudStandIn.At(body, latitude, longitude, ut);
 
+        /// <summary>
+        /// The weather at one moment, for asking at very many places (the map of the whole planet): the clouds and what falls at
+        /// each, the wind left out. Where the weather is Natural Weather's own it is asked of the model's atlas of the world,
+        /// which finds every storm once for all the places (Model.Atlas: until 0.2.2 each of the map's 32,768 places was asked
+        /// through Keystone, which works out the wind over each as well and finds the storms about each afresh: 3.4 seconds of a
+        /// thread for a map of Kerbin, and no clouds until it was made). What is handed back is for one thread.
+        /// </summary>
+        public static Func<double, double, WeatherHere> Many(CelestialBody body, double ut)
+        {
+            if (!Keystones) return (latitude, longitude) => CloudStandIn.At(body, latitude, longitude, ut);
+            Func<double, double, WeatherHere> own = Provider.Many(body, ut);
+            if (own != null) return own;
+            return (latitude, longitude) => Keystone.Weather.At(body, latitude, longitude, ut);
+        }
+
+        /// <summary>
+        /// Whether the weather knows all it needs of this world yet. Natural Weather's own reads a coarse map of the world's land
+        /// and seas from the game a few dozen places a frame, in the first seconds of the first flight of a session, and until
+        /// that is done takes the whole world for land a hundred metres up: a map of the clouds made meanwhile is made again
+        /// when it is. (Any thread.)
+        /// </summary>
+        public static bool Settled(CelestialBody body) => !Keystones || !(Keystone.Weather.Provider is Provider) || Provider.Knows(body);
+
         /// <summary>The storms and showers within a distance (m) of a place.</summary>
         public static int Cells(CelestialBody body, double latitude, double longitude, double radius, double ut, List<WeatherCell> into) =>
             Keystones ? Keystone.Weather.Cells(body, latitude, longitude, radius, ut, into) : CloudStandIn.Cells(body, latitude, longitude, radius, ut, into);
 
         /// <summary>Whether this world can have clouds at all (air; and weather for it, where a weather mod answers).</summary>
-        public static bool Worth(CelestialBody body) => body != null && body.atmosphere && (Keystones || CloudStandIn.HasClouds(body));
+        public static bool Worth(CelestialBody body) => body != null && body.atmosphere && Grounded(body) && (Keystones || CloudStandIn.HasClouds(body));
+
+        /// <summary>
+        /// Whether the world has ground under its air. One that has none (Jool) is cloud all the way down, in its own colours,
+        /// and what the game (and EVE) draw of it is its clouds already: these clouds, made for white heaps and sheets in the
+        /// lowest sixteen kilometres of air over a ground, are not drawn there. (Until 0.2.2 they were: from a low orbit of Jool
+        /// its weather's deck showed as a flat grey disc under the craft, as far out as the walk through 90 km of air reached
+        /// it, on a planet whose own bands EVE had been told to hide.)
+        /// </summary>
+        public static bool Grounded(CelestialBody body) => body != null && body.hasSolidSurface && body.pqsController != null;
+
+        /// <summary>Why these clouds are not drawn on a world that has air, for the page; nothing where they are, or where there is no more to say.</summary>
+        public static string WhyNot(CelestialBody body) =>
+            body != null && body.atmosphere && !Grounded(body) ? "No clouds of the mod's own on " + body.bodyName + ": it has no ground under its air, and keeps the clouds the game draws it with." : "";
 
         /// <summary>
         /// A kind of cloud as the shader takes it: 0 a flat sheet, 0.25 a lumpy layer, 0.5 heaps, 0.75 towering heaps, 1 storm
@@ -90,7 +126,9 @@ namespace NaturalWeather
                 if (b < 0.01f) continue;
                 // (a flash to the ground is seen lighting its cloud from the lower part of the cloud; one in the cloud from its middle)
                 double height = f.Ground ? Math.Max(f.Bottom, f.Top - 1500.0) : (f.Bottom + f.Top) * 0.5;
-                Vector3d where = body.GetRelSurfacePosition(f.Latitude, f.Longitude, height);
+                // (from the planet's centre in the scene's axes, as the clouds take it: GetRelSurfacePosition answers in the planet's
+                // own frame, which the scene stands turned against)
+                Vector3d where = body.GetWorldSurfacePosition(f.Latitude, f.Longitude, height) - body.position;
                 // (the brightest ones kept, in order)
                 int slot = -1;
                 if (n < at.Length) slot = n++;

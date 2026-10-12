@@ -27,7 +27,7 @@ namespace NaturalWeather
 
         Color32[] nextA, nextB, nextC;
         float nextTop, nextBase, nextHigh, nextTook;
-        bool nextAny;
+        bool nextAny, nextSettled, settled = true;     // (settled: made when the weather knew the world's land and seas: see CloudSource.Settled)
         double nextFor;
         Task working;
         float askedAt = -100f;
@@ -62,7 +62,7 @@ namespace NaturalWeather
                     A.SetPixels32(nextA); A.Apply(false, false);
                     B.SetPixels32(nextB); B.Apply(false, false);
                     C.SetPixels32(nextC); C.Apply(false, false);
-                    HighestTop = nextTop; LowestBase = nextBase; HighCloud = nextHigh; AnyCloud = nextAny; MadeFor = nextFor; Took = nextTook; Made++;
+                    HighestTop = nextTop; LowestBase = nextBase; HighCloud = nextHigh; AnyCloud = nextAny; MadeFor = nextFor; Took = nextTook; settled = nextSettled; Made++;
                 }
                 working = null;
             }
@@ -71,7 +71,10 @@ namespace NaturalWeather
             float wait = Time.realtimeSinceStartup - askedAt;
             // (made again when the clock has moved on half a minute, at most every two seconds, as under time warp; and at least every
             // twenty seconds: the weather changes over hours, and a thread kept busy costs the game's own threads time on this Mac)
-            if (working == null && (otherWorld || now || double.IsNaN(MadeFor) || (wait > 2f && Math.Abs(ut - MadeFor) > 30.0) || (wait > 20f && Math.Abs(ut - MadeFor) > 0.5)))
+            // (and once more as soon as the weather knows the world's land and seas, if the map in use was made before it did: in the
+            // first seconds of the first flight of a session; else the sky changed by itself up to twenty seconds later)
+            if (working == null && (otherWorld || now || double.IsNaN(MadeFor) || (wait > 2f && Math.Abs(ut - MadeFor) > 30.0) || (wait > 20f && Math.Abs(ut - MadeFor) > 0.5)
+                                    || (!settled && A != null && wait > 1f && CloudSource.Settled(body))))
             {
                 askedAt = Time.realtimeSinceStartup;
                 CelestialBody b = body;
@@ -87,18 +90,22 @@ namespace NaturalWeather
         void Make(CelestialBody body, double ut, double latNear, double lonNear, double reach, int stride)
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
+            bool known = CloudSource.Settled(body);
             var a = new Color32[Wide * High];
             var b = new Color32[Wide * High];
             var c = new Color32[Wide * High];
             float top = 0f, lowest = 99999f, highSum = 0f, highWeight = 0f;
             bool any = false;
+            // (the weather asked for all the places at once: with Natural Weather's own, every storm on the world is found once
+            // for the lot. A map of Kerbin took 3.4 s of this thread until 0.2.2, each place asked by itself; see CloudSource.Many)
+            Func<double, double, WeatherHere> weatherAt = CloudSource.Many(body, ut);
             for (int j = 0; j < High; j += stride)
             {
                 double lat = (j + 0.5 * stride) / High * 180.0 - 90.0;
                 for (int i = 0; i < Wide; i += stride)
                 {
                     double lon = (i + 0.5 * stride) / Wide * 360.0 - 180.0;
-                    WeatherHere w = CloudSource.At(body, lat, lon, ut);
+                    WeatherHere w = weatherAt(lat, lon);
                     float lowKind = CloudSource.Kind(w.Low), midKind = CloudSource.Kind(w.Middle);
                     float lowCover = lowKind < 0f ? 0f : Mathf.Clamp01(w.Low.Cover), midCover = midKind < 0f ? 0f : Mathf.Clamp01(w.Middle.Cover);
                     float highCover = w.High.Kind == CloudKind.Cirrus || w.High.Kind == CloudKind.Altostratus ? Mathf.Clamp01(w.High.Cover) : 0f;
@@ -124,6 +131,7 @@ namespace NaturalWeather
             }
             nextA = a; nextB = b; nextC = c; nextTop = top; nextBase = lowest > 99000f ? 1000f : lowest; nextAny = any;
             nextHigh = highWeight > 0.01f ? highSum / highWeight : 8000f;
+            nextSettled = known;
             nextFor = ut; nextTook = (float)clock.Elapsed.TotalSeconds;
         }
 

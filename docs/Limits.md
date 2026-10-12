@@ -31,7 +31,10 @@
   own particle shader, as bright as the light in front of the camera: not a refraction of what is behind it.
 * **No lying snow, no wet ground, no puddles, no drops on windows**: each wants a shader of its own.
 * **Lightning within a cloud** lights the scene and is heard, but its channel is not drawn (the cloud hides it);
-  our clouds light themselves by it. A flash to the ground seen from under the cloud's base is drawn after our
+  our clouds light themselves by it (by the code; until a mend in 0.2.2 that light was put at the wrong longitude,
+  and the mend has not been looked at: next but one). On film, before that mend,
+  a flash to the ground lights the ground brightly and flatly while the sky over it stays black. A flash to the
+  ground seen from under the cloud's base is drawn after our
   clouds, from the ground to the base only (the clouds are laid on after everything see-through, and drew over
   it wherever there was cloud behind it); from above the base it is drawn before them, and a cloud in front hides
   it. A cloud lower than the base where the flash is, between it and the camera, does not.
@@ -51,3 +54,24 @@
   calm day that is still not much (2.8 m/s at 10 m at the pad on Windows, with 5 m/s at a kilometre).
 * **Duna's dust devils, Eve's virga and Jool's lightning deep in its bands** are in the weather's numbers but not
   drawn yet.
+* **Jool has no clouds of the mod's own** (since 0.2.2), nor any world with no ground under its air: it keeps the look
+  the game and EVE give it. Its weather is its winds (in bands), its rough air and its lightning, which there is all
+  within the cloud: the scene flashes, no channel is drawn. (Until 0.2.2 the weather's deck was drawn there as a flat
+  grey disc under the craft: see [Clouds](Clouds.md).)
+* **The clouds did not sit on the planet** (found in 0.2.2, there since the clouds were made; mended by the code,
+  the mend **not yet looked at in the game**): they were laid out in the scene's axes, which stand turned against the
+  planet by an angle that is different after every load. So the sky over a craft was the weather of another longitude
+  on the same latitude, not the weather its rain and wind come from; storms' towers and the light of flashes within
+  cloud were placed that angle away; and from orbit the clouds did not turn with the planet. With the weather held it
+  did not show. See [Clouds](Clouds.md), "0.2.2".
+* **Duna's nearest ground in a dust storm is near black**: the ground there is nearly as dark on a clear day (it
+  takes next to no light from Duna's sky), and the storm's veil needs a hundred metres to cover anything. Dust blown
+  along the ground, for Natural Light's veil, is written and was looked at in the game (on the branch
+  `sky-ground-dust`): the ground from a few metres out comes dim red-brown, the ground at the camera's feet stays
+  dark, and a craft thirty metres off is nearly hidden; not put in. See [What was tested](What-was-tested.md).
+* **Far heaps of cloud are fainter than near ones**: beyond ten or twenty kilometres the walk's long steps through clear
+  air step over a small heap in most frames. And **the clouds' "lower" setting** draws as far and as tall as the middle
+  one (since 0.2.2; before, it drew no storm towers), more coarsely and in a smaller picture.
+* **On a world much larger than the game's own** (a planet pack's, more than about 1,400 km in radius) the clouds' map
+  is still asked of the weather place by place: seconds of a thread at the start of each flight, with no clouds until
+  it is done. Kerbin's takes a third of a second.

@@ -6,7 +6,7 @@ storms with lightning and thunder, fog and dust, a launch go / no go with a fore
 real city's weather if you like.
 
 INSTALL
-  Copy the two folders in this download's GameData (Keystone and NaturalWeather) into your
+  Copy the two folders in this download (Keystone and NaturalWeather) into your
   KSP's GameData folder, and start the game. Keystone is the base this mod stands on: one
   copy serves every mod that uses it. To remove the mod, delete the NaturalWeather folder.
 
@@ -29,6 +29,11 @@ BESIDE OTHER MODS
   already puts wind into the game's aerodynamics (the Kerbal Weather Project, Advanced
   Atmosphere Tools), that one wins. EVE's clouds are left as they are unless the page is told
   to hide them over Kerbin.
+
+KNOWN FAULTS
+  Its clouds are in the middle of being remade: a fair day's heaps are too alike, and from
+  space, from very far off or while flying towards them they show faults. The rest (wind,
+  rain, snow, fog, lightning, the launch weather) is as described.
 
 WHERE IT WORKS
   Made and tried on a Mac, and tried on Windows 11: the clouds (shaders of its own, packed for

@@ -29,6 +29,7 @@ namespace NaturalWeather
             public WeatherFlash F;
             public CelestialBody Body;
             public float Born;                 // realtime it began
+            public int BornFrame;              // and the frame
             public float[] Strokes;            // when each stroke comes, seconds after Born
             public readonly List<Vector3> Points = new List<Vector3>();       // in metres east, north, up from its foot
             public readonly List<int> From = new List<int>();                 // the point each one hangs from (-1 none)
@@ -150,7 +151,12 @@ namespace NaturalWeather
             float angle = 6.2831853f * Noise.Unit(Noise.Hash(h ^ 0x11u)), reach = c.Radius * 0.7f * Noise.Sqrt(Noise.Unit(Noise.Hash(h ^ 0x12u)));
             double dn = reach * Math.Cos(angle), de = reach * Math.Sin(angle);
             double lat = c.Latitude + dn / w.Radius * 180.0 / Math.PI, lon = c.Longitude + de / (w.Radius * Math.Max(0.05, Math.Cos(c.Latitude * Math.PI / 180.0))) * 180.0 / Math.PI;
-            bool ground = Noise.Unit(Noise.Hash(h ^ 0x13u)) < 0.3f * c.Strength + 0.05f;
+            // (to the ground only where there is ground: on Jool every flash is within the cloud. Until 0.2.2 three in ten of a strong
+            // storm's flashes there went down a channel to the height the model takes for ground where it knows none, 100 m.)
+            bool ground = w.Grounded && Noise.Unit(Noise.Hash(h ^ 0x13u)) < 0.3f * c.Strength + 0.05f;
+#if DEV
+            if (ground) madeToGround++; else madeInCloud++;
+#endif
             float groundH = Math.Max(0f, w.Ground(lat, lon));
             return new WeatherFlash
             {
@@ -172,7 +178,7 @@ namespace NaturalWeather
             float dist = (float)((Vector3d)cam.transform.position - foot).magnitude;
             nearestKm = nearestKm < 0f || dist / 1000f < nearestKm || lately.Count <= 1 ? dist / 1000f : nearestKm;
             if (dist > 80000f) return;
-            var b = new Bolt { F = f, Body = f.Body, Born = Time.realtimeSinceStartup, Distance = dist };
+            var b = new Bolt { F = f, Body = f.Body, Born = Time.realtimeSinceStartup, BornFrame = Time.frameCount, Distance = dist };
             b.Strokes = new float[Math.Max(1, f.Strokes)];
             var rng = new System.Random(f.Seed);
             float t = 0f;
@@ -237,7 +243,7 @@ namespace NaturalWeather
         {
 #if DEV
             // (a flash held at its brightest for so long, for a picture of it: a stroke is over in a fiftieth of a second)
-            if (t < heldFor) return b.F.Brightness;
+            if (t < heldFor || Time.frameCount - b.BornFrame < heldFrames) return b.F.Brightness;
 #endif
             float v = 0f;
             for (int k = 0; k < b.Strokes.Length; k++)
@@ -252,6 +258,19 @@ namespace NaturalWeather
             return v * b.F.Brightness;
         }
 
+        /// <summary>How bright the channel itself still shows at a moment after the flash began: each stroke's glow dying away over about a tenth of a second.</summary>
+        static float Lingers(Bolt b, float t)
+        {
+            float v = 0f;
+            for (int k = 0; k < b.Strokes.Length; k++)
+            {
+                float dt = t - b.Strokes[k];
+                if (dt < 0f) continue;
+                v = Mathf.Max(v, Mathf.Exp(-dt / 0.09f) * (k == 0 ? 1f : 0.75f));
+            }
+            return v * b.F.Brightness;
+        }
+
         void Animate(Camera cam)
         {
             float lightNow = 0f, nearNow = 0f;
@@ -262,7 +281,12 @@ namespace NaturalWeather
                 Bolt b = bolts[i];
                 float t = Time.realtimeSinceStartup - b.Born;
                 float env = Envelope(b, t);
-                if (t > 0.3f && env < 0.004f) { Drop(b); bolts.RemoveAt(i); continue; }
+                // (the channel itself is seen for longer than the light it throws on the scene: it goes on glowing for some tens of
+                // thousandths of a second after each stroke, and the eye keeps so bright a line longer still. And a line a pixel
+                // wide that is there for one frame hardly shows at all: the game's smoothing between frames lets a new thing in
+                // over three or four of them.)
+                float seen = Mathf.Max(env, Lingers(b, t));
+                if (t > 0.3f && seen < 0.004f) { Drop(b); bolts.RemoveAt(i); continue; }
                 if (cam == null || b.Body == null) continue;
                 Vector3d foot = b.Body.GetWorldSurfacePosition(b.F.Latitude, b.F.Longitude, b.F.Bottom);
                 Vector3 camPos = cam.transform.position;
@@ -280,7 +304,7 @@ namespace NaturalWeather
                 // drawn as before, and a cloud in front of it hides it.)
                 b.Front = Clouds.Drawing && b.Shift == Vector3.zero && (!Clouds.Split || b.Distance > 450f)
                           && (b.Under >= 1e6f || b.Body.GetAltitude(camPos) < b.F.Bottom + b.Under);
-                if (b.Drawn) Draw(b, cam, foot, e, n, u, env);
+                if (b.Drawn) Draw(b, cam, foot, e, n, u, seen);
             }
             if (flashLight != null)
             {
@@ -337,8 +361,8 @@ namespace NaturalWeather
                 if (side.sqrMagnitude < 1e-8f) continue;
                 side.Normalize();
                 float w = b.Weight[i] * fade;
-                Strip(p0, p1, side * Mathf.Max(0.6f, d * pixel * 1.3f) * (0.5f + 0.5f * w), new Color(1f, 1f, 1f, w), tris1);
-                Strip(p0, p1, side * Mathf.Max(4f, d * pixel * 9f) * (0.5f + 0.5f * w), new Color(1f, 1f, 1f, w * 0.35f), tris0);
+                Strip(p0, p1, side * Mathf.Max(0.6f, d * pixel * 1.6f) * (0.5f + 0.5f * w), new Color(1f, 1f, 1f, w), tris1);
+                Strip(p0, p1, side * Mathf.Max(4f, d * pixel * 10f) * (0.5f + 0.5f * w), new Color(1f, 1f, 1f, w * 0.5f), tris0);
             }
             b.Mesh.Clear();
             b.Mesh.SetVertices(verts); b.Mesh.SetUVs(0, uvs); b.Mesh.SetColors(cols);
@@ -348,10 +372,14 @@ namespace NaturalWeather
 #if DEV
             Drew = "bolt: front " + b.Front + ", under " + b.Under.ToString("F0") + " m, " + b.Distance.ToString("F0") + " m off, " + verts.Count + " corners, strength " + env.ToString("F2") + ", the clouds " + (Clouds.Drawing ? "drawing" : "not drawing") + (Clouds.Split ? " (two cameras)" : " (one camera)") + ", foot " + ((Vector3)foot).ToString("F0") + ", camera " + camPos.ToString("F0") + ", box " + b.Mesh.bounds.size.ToString("F0");
 #endif
-            // (the legacy additive shader doubles its tint; the core runs well past white in a picture kept in more than white, and blooms)
+            // (The legacy additive shader doubles its tint, and what it adds falls off across the strip as the square of the soft
+            // dot: with the core five and a half times white at its middle in a full stroke, a pixel and a half of it is white
+            // in a picture that holds nothing brighter (the far camera's), and in one that does (the near camera's) it blooms.
+            // Until 0.2.2 the core was just white at its very middle, two thirds of a pixel wide: a quarter-grey hair once the
+            // game had smoothed it, measured on film.)
             float c = Mathf.Clamp(env, 0f, 4f);
-            core.SetColor("_TintColor", new Color(0.46f * c, 0.48f * c, 0.52f * c, 0.5f));
-            glow.SetColor("_TintColor", new Color(0.22f * c, 0.25f * c, 0.36f * c, 0.5f));
+            core.SetColor("_TintColor", new Color(2.3f * c, 2.4f * c, 2.6f * c, 0.5f));
+            glow.SetColor("_TintColor", new Color(0.33f * c, 0.37f * c, 0.54f * c, 0.5f));
         }
 
         /// <summary>(Called by the clouds as they finish laying themselves on a camera's picture: the channels seen from under their cloud.)</summary>
@@ -606,10 +634,24 @@ namespace NaturalWeather
 #if DEV
         static string Drew = "", DrewInFront = "";
         static float heldFor;
-        /// <summary>(For the development build: every flash from now on is held at its brightest for so many seconds, so that a picture can be taken of it. Nought: as they are.)</summary>
-        public static string Hold(string seconds) { heldFor = string.IsNullOrEmpty(seconds) ? 0f : float.Parse(seconds, System.Globalization.CultureInfo.InvariantCulture); return heldFor > 0f ? "flashes held for " + heldFor + " s" : "flashes as they are"; }
+        static int heldFrames;
+        /// <summary>
+        /// (For the development build: every flash from now on is held at its brightest for so many seconds, or for so many
+        /// frames ("6 frames"), so that a picture can be taken of it or a film can show it; after that it goes on as it would
+        /// have. Nought: as they are. A film recorded frame by frame wants frames: its frames are a thirtieth to a tenth of a
+        /// second apart by the clock a flash goes by, as the scene costs, and a stroke is at its brightest for a fiftieth.)
+        /// </summary>
+        public static string Hold(string arg)
+        {
+            arg = (arg ?? "").Trim();
+            heldFor = 0f; heldFrames = 0;
+            if (arg.EndsWith("frames") || arg.EndsWith("frame")) heldFrames = Math.Max(0, int.Parse(arg.Substring(0, arg.IndexOf('f')).Trim()));
+            else if (arg.Length > 0) heldFor = float.Parse(arg, System.Globalization.CultureInfo.InvariantCulture);
+            return heldFrames > 0 ? "flashes held for " + heldFrames + " frames" : heldFor > 0f ? "flashes held for " + heldFor + " s" : "flashes as they are";
+        }
         /// <summary>(For the development build: what the last channel drawn was, and whether the clouds drew it after themselves.)</summary>
-        public static string Last() => Drew + " | " + DrewInFront;
+        public static string Last() => Drew + " | " + DrewInFront + " | flashes the storms have made since this build began: " + madeToGround + " to the ground, " + madeInCloud + " within cloud";
+        static int madeToGround, madeInCloud;
 
         /// <summary>(For the development build: a flash to the ground at a distance (km) in front of the camera, now.)</summary>
         public static string Flash(string arg)

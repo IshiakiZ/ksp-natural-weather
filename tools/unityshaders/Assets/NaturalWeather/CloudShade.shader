@@ -29,6 +29,7 @@ Shader "NaturalWeather/CloudShade"
             #define hlslcc_mtx4x4unity_MatrixV transpose(UNITY_MATRIX_V)
             #define SampleLod(S, uv, lod) S.SampleLevel(sampler##S, uv, lod)
             #define SampleFlat(S, uv) S.SampleLevel(sampler##S, uv, 0.0)
+            #define SampleGradient(S, uv, dx, dy) S.SampleGrad(sampler##S, uv, dx, dy)
             #define Mod(x, y) ((x) - (y) * floor((x) / (y)))
             #define GreaterThan(a, b) ((a) > (b))
             #define GreaterThanEqual(a, b) ((a) >= (b))
@@ -38,6 +39,13 @@ Shader "NaturalWeather/CloudShade"
             float4 TexelFetch(Texture3D t, int3 p, int lod) { return t.Load(int4(p, lod)); }
             int2 TextureSize(Texture2D t, int lod) { uint w, h; t.GetDimensions(w, h); return int2(w, h); }
             bool AllZero(float4 v) { return !any(v); }
+            // (one of a vector's numbers, chosen by a variable, read and given a new value: see chosen in tools/unityshaders/port.py)
+            float Pick(float2 v, int n) { return n <= 0 ? v.x : v.y; }
+            float Pick(float3 v, int n) { return n <= 0 ? v.x : n == 1 ? v.y : v.z; }
+            float Pick(float4 v, int n) { return n <= 0 ? v.x : n == 1 ? v.y : n == 2 ? v.z : v.w; }
+            float2 Put(float2 v, int n, float x) { return float2(n == 0 ? x : v.x, n == 1 ? x : v.y); }
+            float3 Put(float3 v, int n, float x) { return float3(n == 0 ? x : v.x, n == 1 ? x : v.y, n == 2 ? x : v.z); }
+            float4 Put(float4 v, int n, float x) { return float4(n == 0 ? x : v.x, n == 1 ? x : v.y, n == 2 ? x : v.z, n == 3 ? x : v.w); }
             // gl_FragCoord: which pixel is being drawn, its rows counted from the bottom, as every picture's are read here. Direct3D counts
             // the rows of what it draws into from the top, and the game draws into its pictures upside down to make up for it (saying so with
             // _ProjectionParams.x at -1): so where it is drawing straight to the screen, the row is turned over, or each picture read by pixel
@@ -75,7 +83,7 @@ Shader "NaturalWeather/CloudShade"
                 v2f OUT = (v2f)0;
                 OUT.pos = float4(in_POSITION0.xy * _CloudSheet.xy, _CloudSheet.z, _CloudSheet.w);
                 // (drawn into whatever the camera is drawing into, which may lie either way: as for the lens's second go, above; Natural
-                // Light's veil the same)
+                // Light's veil and the sea's lens in the water the same)
                 float way = 1.0;
 #if UNITY_UV_STARTS_AT_TOP
                 way = _ProjectionParams.x;

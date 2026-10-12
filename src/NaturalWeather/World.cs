@@ -62,6 +62,7 @@ namespace NaturalWeather
         public uint Seed;
         public Climate Climate;
         public bool Air;
+        public bool Grounded;                  // whether there is ground under the air (Jool has none)
 
         // where the sun stands over the world (the point it is straight above), and when that was so
         public double SunLat, SunLon, SunAt;
@@ -94,6 +95,7 @@ namespace NaturalWeather
         World(CelestialBody body)
         {
             Body = body; Name = body.bodyName; Radius = body.Radius; Air = body.atmosphere;
+            Grounded = body.hasSolidSurface && (object)body.pqsController != null;      // (asked so that any thread may: no call into the game)
             Depth = body.atmosphere ? body.atmosphereDepth : 0.0;
             Spin = body.rotationPeriod;
             Day = body.solarDayLength > 1.0 ? body.solarDayLength : Math.Max(1.0, body.rotationPeriod);

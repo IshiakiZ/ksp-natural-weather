@@ -47,7 +47,7 @@ namespace NaturalWeather
             WeatherHere h = Model.Here(w, lat, lon, ut);
             Column col = Model.ColumnAt(w, lat, lon, ut);
             var b = new StringBuilder();
-            b.Append(body.bodyName).Append(" ").Append(lat.ToString("F3")).Append(", ").Append(lon.ToString("F3")).Append(" at ").Append(alt.ToString("F0")).Append(" m (").Append(agl.ToString("F0")).Append(" above ground; the map says ground ").Append(col.B.Ground.ToString("F0")).Append(")\n");
+            b.Append(body.bodyName).Append(" ").Append(lat.ToString("F3")).Append(", ").Append(lon.ToString("F3")).Append(" at ").Append(alt.ToString("F0")).Append(" m (").Append(agl.ToString("F0")).Append(" above ground; the map says ground ").Append(col.B.Ground.ToString("F0")).Append(w.Grounded ? ")" : "; the world has no ground under its air)").Append("\n");
             b.Append(Panel.Words(h)).Append("\n");
             foreach (var pair in new[] { ("low", h.Low), ("middle", h.Middle), ("high", h.High) })
                 b.Append(pair.Item1).Append(": ").Append(pair.Item2.Kind).Append(" ").Append(pair.Item2.Cover.ToString("F2")).Append(" ").Append(pair.Item2.Base.ToString("F0")).Append("-").Append(pair.Item2.Top.ToString("F0")).Append(" water ").Append(pair.Item2.Water.ToString("F2")).Append("\n");
@@ -127,6 +127,56 @@ namespace NaturalWeather
             b.Append("a new column ").Append((t.Elapsed.TotalMilliseconds / 20).ToString("F2")).Append(" ms");
             return b.ToString();
         }
+
+        /// <summary>
+        /// (For the development build: the model's atlas of the world against the weather asked place by place, at so many
+        /// places all over the world (4000 by default) and at as many within 300 km of the craft: how many answers differ in
+        /// their clouds, rain or storm, and what each way costs.)
+        /// </summary>
+        public static string Atlas(string arg)
+        {
+            if (!WeatherDriver.Place(out CelestialBody body, out double lat0, out double lon0, out _, out _)) return "nowhere";
+            int count = string.IsNullOrEmpty(arg) ? 4000 : int.Parse(arg);
+            World w = World.Of(body);
+            double ut = Math.Floor(Planetarium.GetUniversalTime() / 2.0) * 2.0;
+            var t = Stopwatch.StartNew();
+            var atlas = new Model.Atlas(w, ut);
+            double made = t.Elapsed.TotalMilliseconds;
+            var rng = new System.Random(12345);
+            var places = new double[count * 2][];
+            double near = 300000.0 / (w.Radius * Math.PI / 180.0);
+            for (int n = 0; n < places.Length; n++)
+            {
+                double la = n < count ? Math.Asin(rng.NextDouble() * 2.0 - 1.0) * 180.0 / Math.PI : lat0 + (rng.NextDouble() * 2.0 - 1.0) * near;
+                double lo = n < count ? rng.NextDouble() * 360.0 - 180.0 : lon0 + (rng.NextDouble() * 2.0 - 1.0) * near;
+                places[n] = new[] { Math.Max(-89.9, Math.Min(89.9, Math.Round(la * 20.0) / 20.0)), Math.Round(lo * 20.0) / 20.0 };
+            }
+            var mine = new WeatherHere[places.Length];
+            t.Restart();
+            for (int n = 0; n < places.Length; n++) mine[n] = atlas.At(places[n][0], places[n][1]);
+            double fast = t.Elapsed.TotalMilliseconds * 1000.0 / places.Length;
+            Model.Forget();
+            t.Restart();
+            int differ = 0, stormy = 0;
+            string first = "";
+            for (int n = 0; n < places.Length; n++)
+            {
+                WeatherHere a = mine[n], b = Model.Here(w, places[n][0], places[n][1], ut);
+                if (b.Storm > 0.01f || b.Low.Kind == CloudKind.Cumulonimbus) stormy++;
+                bool same = Same(a.Low, b.Low) && Same(a.Middle, b.Middle) && Same(a.High, b.High) && Math.Abs(a.Rain - b.Rain) < 0.004f && Math.Abs(a.Storm - b.Storm) < 0.03f;
+                if (same) continue;
+                differ++;
+                if (first.Length == 0)
+                    first = " (the first at " + places[n][0].ToString("F2") + ", " + places[n][1].ToString("F2") + ": low " + a.Low.Kind + " " + a.Low.Cover.ToString("F3") + " " + a.Low.Base.ToString("F0") + "-" + a.Low.Top.ToString("F0") + " against " + b.Low.Kind + " " + b.Low.Cover.ToString("F3") + " " + b.Low.Base.ToString("F0") + "-" + b.Low.Top.ToString("F0")
+                            + ", rain " + a.Rain.ToString("F3") + " against " + b.Rain.ToString("F3") + ", storm " + a.Storm.ToString("F3") + " against " + b.Storm.ToString("F3") + ")";
+            }
+            double slow = t.Elapsed.TotalMilliseconds * 1000.0 / places.Length;
+            return body.bodyName + ": the atlas made in " + made.ToString("F1") + " ms, " + (atlas.Storms < 0 ? "its storms not counted (each place finds its own)" : atlas.Storms + " storms and showers on the world") + "; " + places.Length + " places (half all over, half within 300 km): "
+                + differ + " differ" + first + "; " + stormy + " of them have a storm near; a place costs " + fast.ToString("F1") + " us by the atlas, " + slow.ToString("F1") + " us asked by itself; so a map of 32,768 places " + ((made + fast * 32.768) / 1000.0).ToString("F2") + " s against " + (slow * 32.768 / 1000.0).ToString("F2") + " s";
+        }
+
+        static bool Same(CloudLayer a, CloudLayer b) =>
+            a.Kind == b.Kind && Math.Abs(a.Cover - b.Cover) < 0.004f && (a.Cover < 0.01f || Math.Abs(a.Base - b.Base) < 32f && Math.Abs(a.Top - b.Top) < 64f && Math.Abs(a.Water - b.Water) < 0.004f);
 
         public static string City(string path) => NaturalWeather.City.FromFile(path);
 

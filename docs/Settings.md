@@ -33,7 +33,9 @@ centre), the launch go / no go with its rules and forecast, and the box for a ci
 | Use the city's weather | on | with a city typed in the box below, Kerbin's weather round the space centre is that city's |
 
 The clouds' own settings (whether they are drawn, how finely, how much, how thick, how bright, their shadows,
-hiding EVE's clouds) are on the same page, under "Clouds".
+hiding EVE's clouds) are on the same page, under "Clouds". "Cloud detail" as installed is "middle"; "lower" draws
+them as far and as tall in longer steps and a smaller picture (since 0.2.2: before, it drew no storm towers);
+"higher" walks further before giving up and draws the cloud about the camera in a larger picture.
 
 **The city box** sends what is typed in it to Open-Meteo (open-meteo.com), to find the city and fetch its
 weather, every quarter of an hour while the game runs; nothing else is sent, and nothing at all while it is

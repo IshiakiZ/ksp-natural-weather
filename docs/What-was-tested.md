@@ -199,6 +199,153 @@ wind of -3.3 to -4.1 and 2.5 to 3.1 (within 0.2 m/s), 137 m west and 97 m north 
 ochre, streaks of dust blowing past; 530 m of seeing, wind 22 m/s at 10 m, the launch rules no go on the wind.
 
 **Not tried at all:** Linux; FAR; the Kerbal Weather Project or Advanced Atmosphere Tools alongside;
-the AI Bridge's aeroplanes in wind; rain against a low sun (the glint); Jool; the rainbow; splashes; the sounds by
+the AI Bridge's aeroplanes in wind; rain against a low sun (the glint); the rainbow; splashes; the sounds by
 ear (on Windows they were recorded and measured, above, but nobody who can hear has listened to them); the go / no go
 page's forecast as drawn (worked out and read through the development build only); a full flight.
+
+## 0.2.2, 2026-10-10 (evening), on the Mac
+
+One turn at the game of some seventeen minutes (development build, the test save's pad; the game was then wanted for
+other work), the cloud shader's lab between and after, the weather's model run by itself outside the game, and two more
+turns late that night of ten and eleven minutes (at the end of this part). The clouds' part is on their own page
+([Clouds](Clouds.md), "0.2.2"); in short, and the rest:
+
+**A new build loads a newly packed cloud shader** (the shaders are loaded once for each build of the mod: a
+development build swapped in loads them again; a game on the release build has to be started again).
+
+**The silver lining, the far heaps, the lower setting, the first map, what the clouds cost**: see the clouds' page.
+Seen in the game: sunrise looking at the sun with the new shader (lit rims and thin places, where 0.2.1 had dark shapes;
+not the same heaps in the two pictures), a storm held on the middle and the lower setting (the same towers on both),
+the first map of a flight in 0.32 s, and the frame with clouds 14.03 ms with the old shader and 14.06 with the new, by
+turns in one scene. Not seen in the first turn: the far heaps side by side on the same sky, and how long after a flight
+begins the clouds are there (both taken up in the later turns, below).
+
+**The weather's model outside the game.** `Model.cs`, `Noise.cs`, `World.cs` and `Overrides.cs` compiled by themselves
+against the game's libraries (a scratch program, not part of the mod), six worlds (Kerbin, Laythe, Eve, Duna, Jool
+and a small one of 90 km), the weather as it comes and a storm and rain held, four moments each: the atlas of each
+world's storms made in 2 to 22 ms, and at 6,000 places a time (1,500 on Jool; one in seven within ten degrees of a
+pole, one in eleven within three degrees of the line where longitude wraps), 126,000 in all, the clouds, rain, snow,
+storm, fog, dust, seeing and temperature the atlas gives were the same as the place asked by itself gives, to the last
+figure, places with two and more storms in reach included (the storms have to be taken in the same order for that).
+A place cost 1.3 to 2.4 µs by the atlas and 14 to 16 µs by itself there; in the game, by itself, 220 µs.
+
+**Jool, from a 260 km orbit, day and night side** (the first look): a flat pale grey disc with a fuzzy round edge under
+the craft, the rest of the planet a plain dark green (EVE's clouds of it hidden), Scatterer's bright limb beyond; the
+map of it took 8.2 s. Mended by not drawing these clouds where there is no ground (see the clouds' page); the mend was
+looked at in the later turns (below). With it, no map of Jool is made at all.
+
+**Duna's nearest ground** (`duna_landed`, warped 30,000 s, the sun 39 degrees up, the lander lying on a slope; each of
+three views). On a clear day the ground is all but black in every view across it (the lower third of the picture
+0.017, 0.003, 0.002 as shown), and a dark blood red looking down on it from 8 m (0.086, 0.016, 0.008), with the
+lander's shadow plain on it: the sun is on that ground, and that is how dark Duna's ground there is in the picture as
+the game is set up now (the ground's own dark red, next to no light from Duna's thin sky, and the film look's darks).
+In the storm held ("Dust storm", 530 m of seeing, 40.1% of a clear day's light on level ground by Natural Light's own
+figure, its eye open 1.3 stops for it) the same lower third is 0.177, 0.023, 0.003: brighter than on the clear day, but
+an oxblood red with no green or blue in it, under a sky and a distance of bright ochre: the storm's veil, 0.83, 0.49,
+0.27 as it shows, takes a hundred metres to cover anything, and the ground within twenty has almost none of it. So the
+near ground is not short of light against a clear day: it is short of the storm. A dust storm's dust is thickest in its
+lowest metre or two, and the ground about the camera is seen through that. **Not mended in this version.** A mend was
+written and looked at in the later turns (below), and left out: Natural Light's veil given the dust blown
+along the ground (thinning by e every metre and a half above the ground under the camera, the ground's own slope taken
+from a line straight down; by its figures as first set, 27% of veil on ground ten metres from a camera three metres
+up, 59% at thirty, 9% straight down, 14 to 20% on a craft fourteen metres off).
+
+**Lightning on film.** The film's first storm shot, measured frame by frame: its frames were 0.031 s apart by the
+computer's clock (not a tenth: a dark scene is quick to draw); each flash lit the ground for ten frames or so, brightest
+on the three or four a stroke fell near (the picture's mean 0.14 to 0.21 against 0.087 before and after) and dim
+between; and the sky's part of the picture did not change at all through either flash (0.014 throughout): no channel
+was drawn against the sky on any frame. That shot was recorded before the channel was drawn after the clouds (above:
+they had been laid over it wherever there was cloud behind it), which is most of why it showed none; what a flash's
+own timing adds is that its strokes fall on single frames, at whatever strength the frame happens to catch. The
+development build's `Lightning.Hold` now takes a number of frames as well as seconds ("6 frames": the flash at its
+brightest for six frames drawn, a tenth of a second of film, then on as it would have gone), so that it does not depend
+on how far apart the frames are by the clock, and the film tool's shot asks for six and lets go afterwards
+(`tools/reel.py`: `stage_storm`, `weather_back`). The shot was recorded again twice in the later turns (below).
+
+### Later that night: two more turns at the game
+
+Ten and eleven minutes, the development build, the test save; the navball left minimised throughout; the game given
+back each time with the pad's quicksave loaded, nothing held and the settings as the user's.
+
+**How soon the clouds are there, and the frame meanwhile; the atlas asked in the game; Jool after the change; what the
+clouds cost among the heaps**: on the clouds' page. In short: clouds 0.8 s after the mods start at the pad and 1.1 s
+from orbit (0.2.1: none within twelve seconds); the atlas' answers the same as place by place at 12,000 places in the
+game; Jool plain green with no grey disc, EVE's clouds of it left alone, every flash there within cloud; no dearer
+among the heaps than 0.2.1's shader.
+
+**The same sky twice: not to be had by loading.** Tried as the first turn's notes proposed (the weather held, the
+clock set, then the mods started again) and then with a development switch that stops the wind carrying the clouds'
+noise (`Clouds.Still on`) besides: the two loads' skies differ every time. The clouds' readout shows why: with the
+game's clock the same to half a second (9,325,010.3 and 9,325,009.9 s), the wind over the pad came out in the clouds'
+"planet's own axes" as -0.60, -6.97, 1.50 m/s in the one load and 6.99, 0.41, 1.50 in the other. Those axes are the
+scene's, not the planet's: see the clouds' page ("Found and not mended") for what that means for where the weather,
+the storms and the flashes' light are drawn. So the far heaps of 0.2.1's shader and this one were photographed on two
+different skies (six pairs), and say little: heaps to the horizon in both, the farthest band more distinct in this
+one's.
+
+**Lightning on film, recorded again** (the shot `nw_lightning` into a folder of its own; the film itself not made
+again). With the six-frame hold alone, the first time: each flash lit the scene for five frames (the picture's mean
+0.23 to 0.29 against 0.10) and the channel was there, but as a dark grey crooked hair above the rocket: its brightest
+dot against the frame before rose 0.01, 0.07 to 0.13, 0.15 to 0.20 and stayed at 0.21 to 0.27. The channel's white core
+was two thirds of a pixel wide, and the game's smoothing of thin lines over frames leaves a line that thin a quarter
+grey however long it is held: holding the flash was not what the shot lacked. The core was made a pixel and a half of
+white in a strip three pixels wide, the glow round it stronger, and the channel left glowing for about a tenth of a
+second after each stroke (it does). Recorded again (570 frames, 0.030 s apart, two flashes): the channel is a crooked
+blue-white line from the top of the picture down onto the rocket's nose, with a kink and a short branch, plain against
+the black sky from the third frame of the flash and for eight frames more while the ground's light dies away; measured
+as before (the sky part of the picture shrunk four times, against the frame before the flash) its brightest dot rose
+0.08, 0.14, 0.24, 0.27, 0.30, 0.36 to 0.42 in the first flash and to 0.53 in the second, with 30 to 80 of the 23,040
+dots brighter by a sixth of white. Still so: it is at its faintest on the first lit frame
+and takes five or six frames to come to full brightness (the smoothing again), where a real channel is brightest at
+the first instant; it is a thin line, two pixels at this size of picture; the flash lights the ground flatly and
+brightly; and the sky above stays black through the flash, with no cloud lit by it (the light of a flash within the
+clouds is placed by the mistaken axes, above).
+
+**Duna's nearest ground, with the dust blown along the ground** (Natural Light's veil, the branch `sky-ground-dust`;
+`duna_landed` warped 30,000 s as in the first turn, the sun 39 degrees up; four views: the lander from 14 m and from
+30 m with the camera some three metres up, down onto it from 8 m, and from 6 m with the camera 0.3 m above the
+ground; the dust's thickness at the ground in the thickest storm set to nothing, 0.05, 0.085 (as written) and 0.12 a
+metre by a development call).
+*Clear day, nothing against 0.085*: the lower third of the picture 0.006 and 0.006, 0.007 and 0.007, 0.018 and 0.018
+in three views, and the whole picture the same to three places in all three: unchanged, as it must be (the dust is
+nothing when there is no storm: 0.0000 a metre by its readout). In the fourth view (down onto the lander) 0.029 against
+0.024, the ground's grain smeared differently in the two pictures and the lander the same: put down to the camera
+not having come to rest in that view (not proved); the dust has no way to darken a clear day's ground, and would have
+shown most in the views across the ground, which did not change.
+The ground itself is all but black on the clear day, as the first turn found, under a bright ochre sky. *The storm
+held*: with no
+ground dust (as 0.2.1) the near ground is a black-maroon slab in every view, the lower third 0.055, 0.053, 0.084, 0.050
+(red 0.18 to 0.23, green 0.01 to 0.05), ending in a hard line against the bright far dunes where the ground crests.
+With 0.085: 0.166, 0.191, 0.168, 0.108 (red 0.28 to 0.37, green 0.07 to 0.15): from a few metres out the ground comes
+a dim orange-brown, grading smoothly into the far dunes, no band or edge to it. What is not right: the ground in the
+first two or three metres before a low camera stays a dark maroon (the fourth view, where it fills the lower third:
+0.108 against 0.050, and 0.130 at 0.12 a metre: no thickness mends it, a couple of metres of any dust glows little, and
+the ground itself has next to no light on it); and the lander thirty metres off is a pale ghost at 0.085 and nearly
+gone at 0.12, in a storm said to let one see 530 m (at 0.05 it is veiled and plain, and the near ground a dimmer
+red-brown: 0.124, 0.140, 0.136, 0.082). So: the near ground better in every view, right from above and from a few
+metres out, not right at the camera's feet, and the dust too thick for a craft thirty metres away. **Left on its
+branch.**
+What the pictures point to is that the ground in a storm wants the storm's light on it (the glowing dust all round
+lights real ground from every side), which is the scene's light, not a veil's. Also seen, in every Duna picture with
+and without the change, clear day and storm: a brighter frame a hundredth of the picture wide along its left, right
+and lower edges.
+
+## The axes mended, and run in the game (2026-10-10, midnight)
+
+The mend of the fault above (the planet's axes taken in the scene's frame, storms and flashes placed by
+`GetWorldSurfacePosition`: the branch `sky-true-axes`) was merged and run on the Mac in the development build, three
+ways, as its notes asked (pictures in `~/.ksp-ai-bridge/pictures/sky/axes/`):
+
+* **The camera's longitude by the game and by the clouds' axes** (`Clouds.Stats`): -74.56 by both, apart by 0.00, on
+  six loads, in which the scene stood turned -140.1, -141.3, -72.0, -2.9 and -184.7 degrees against the planet.
+* **The same sky twice.** Two loads of the pad at midday with fair weather held, fair-weather heaps and the noise held
+  still (`Clouds.Still on`), photographed straight up, to the east and to the north: the same heaps in the same
+  places in all three views (`same_sheet.jpg`); only the smallest tufts differ. Before the mend no two loads had the
+  same sky (above).
+* **A flash within cloud lights the cloud it is in.** At night under storm cloud, on a load turned 184.7 degrees, a
+  flash by the weather's own route (by latitude and longitude, 4 km in front of the camera) lit the cloud the camera
+  was looking at, three times (`flash2_sheet.jpg`: faint, and there). Turned that far, the old axes would have lit
+  the sky behind the camera. (A first try proved nothing: `Lightning.Flash` draws a channel to the ground and does
+  not go by latitude and longitude, and that load happened to stand turned 2.9 degrees.)
+
+Still so: a flash's light on the cloud is faint in a picture taken a third of a second after it; the channel is thin.

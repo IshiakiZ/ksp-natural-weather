@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """The mods' shaders for Direct3D 11, the Windows version of the game, made without the Unity editor (route A of WITHOUT-UNITY.md).
 
-    python3 tools/unityshaders/windows.py "<KSP folder>"
+    python3 tools/unityshaders/windows.py "<KSP folder>" [shader ...]
+
+(With shaders named, as tools/shaderpack/make_bundle.py names them, only the bundles those are in are made: for trying a
+change to one without waiting for the rest. The clouds alone take the compiler some minutes.)
 
 On Windows only. Every shader of tools/shaderpack is turned into HLSL (port.py), compiled by Windows' own compiler
 (d3dcompiler_47.dll, which is part of Windows: nothing is installed), created once by Direct3D 11 itself as a check, and
@@ -11,11 +14,14 @@ packed into the bundles the mods look for when the game runs on Direct3D:
     src/Keystone/Shaders/lens-windows.bundle                   Keystone's lens
     src/NaturalLight/Shaders/light-windows.bundle             Natural Light's three: Shafts, Clean, Veil
     src/NaturalWeather/Shaders/clouds-windows.bundle          Natural Weather's clouds: Clouds, CloudsOver, CloudShade
+    src/NaturalOcean/Shaders/ocean-windows.bundle (and oceanfoam-, oceanweed-, oceanunder-)   Natural Ocean's four, one each
 
 Run it again after any change to a GLSL file (so after each `git pull origin main`): it makes every bundle afresh from the
 GLSL as it is. The game folder is only read, for a pattern, as tools/shaderpack/make_bundle.py does for OpenGL: the game's own
 UnlitAlpha, which carries Direct3D 11 programs of its own, and the index of one of its bundles. What the compiler made and
-said is left in build/windows-shaders/: each shader's HLSL, its two programs as text, and the compiler's messages.
+said is left in build/windows-shaders/: each shader's HLSL, its two programs as text, and the compiler's messages; and, under
+kept/, each program as compiled, to be taken again for the same HLSL from the same compiler (the clouds' walk alone takes the
+compiler nine minutes; delete the folder to have everything compiled afresh).
 
 How a Direct3D 11 program sits in a bundle was worked out from the game's own (tools/unityshaders/d3d11.py, WITHOUT-UNITY.md):
 each stage lists the constant buffers it uses (a material's values in $Globals, Unity's own in UnityPerCamera, UnityPerDraw
@@ -47,6 +53,12 @@ BUNDLES = [
     ("src/Keystone/Shaders/lens-windows.bundle", ["lens"]),
     ("src/NaturalLight/Shaders/light-windows.bundle", ["shafts", "clean", "veil"]),
     ("src/NaturalWeather/Shaders/clouds-windows.bundle", ["clouds", "cloudsover", "cloudshade"]),
+    # (Natural Ocean looks for one bundle a shader, Sea.Load: listed 2026-10-11, compiled and seen in the game that evening.
+    # What Direct3D wanted of them that no rule could see is in port.py's SPECIAL and OWN.)
+    ("src/NaturalOcean/Shaders/ocean-windows.bundle", ["ocean"]),
+    ("src/NaturalOcean/Shaders/oceanfoam-windows.bundle", ["oceanfoam"]),
+    ("src/NaturalOcean/Shaders/oceanweed-windows.bundle", ["oceanweed"]),
+    ("src/NaturalOcean/Shaders/oceanunder-windows.bundle", ["oceanunder"]),
 ]
 OUT = os.path.join(ROOT, "build", "windows-shaders")
 
@@ -63,7 +75,7 @@ D3DCOMPILE_OPTIMIZATION_LEVEL3 = 1 << 15
 PROGRAM_TYPE = {("vs", "4_0"): 15, ("vs", "5_0"): 16, ("ps", "4_0"): 17, ("ps", "5_0"): 18}
 # Direct3D's kinds of binding (D3D_SHADER_INPUT_TYPE) and texture shapes (D3D_SRV_DIMENSION, as Unity's TextureDimension).
 CBUFFER, TEXTURE, SAMPLER = 0, 2, 3
-SHAPE = {4: 2, 8: 3, 9: 4}
+SHAPE = {4: 2, 5: 5, 8: 3, 9: 4}                 # (flat, a stack of flat ones, of three dimensions, a cube)
 
 
 # ---------------------------------------------------------------- Windows' own compiler, and Direct3D 11 itself
@@ -255,7 +267,16 @@ def compiled(which, compiler, device):
     out, log = {}, []
     for stage, entry in (("vs", "vert"), ("ps", "frag")):
         for model in ("4_0", "5_0"):
-            dxbc, said = compiler(source.encode(), name + ".hlsl", entry, stage + "_" + model)
+            # (the same HLSL from the same compiler gives the same program: what was made before is taken again)
+            key = hashlib.sha256("\0".join((compiler.version, entry, stage + "_" + model, source)).encode()).hexdigest()
+            kept = os.path.join(OUT, "kept", key + ".dxbc")
+            if os.path.exists(kept):
+                dxbc, said = open(kept, "rb").read(), "(as compiled before: the same HLSL, the same compiler)"
+            else:
+                dxbc, said = compiler(source.encode(), name + ".hlsl", entry, stage + "_" + model)
+                if dxbc:
+                    os.makedirs(os.path.dirname(kept), exist_ok=True)
+                    open(kept, "wb").write(dxbc)
             log.append("== %s_%s (%s): %s\n%s" % (stage, model, entry, "compiled" if dxbc else "FAILED", said))
             if dxbc: break
         if not dxbc:
@@ -301,7 +322,7 @@ def packed_shader(which, programs, pattern, number_base):
     source, dest = spec.get("blend", (1.0, 10.0))
     for key, value in (("srcBlend", source), ("destBlend", dest), ("srcBlendAlpha", source), ("destBlendAlpha", dest)):
         state["rtBlend0"][key]["val"] = value
-    state["zWrite"]["val"] = 0.0
+    state["zWrite"]["val"] = spec.get("zwrite", 0.0)                 # (1: the sea, which is solid and writes how far off it is)
     state["zTest"]["val"] = spec.get("ztest", 8.0)
     state["culling"]["val"] = spec.get("cull", 1.0)
     state["gpuProgramID"] = spec["program"] + number_base
@@ -396,12 +417,15 @@ def check(path, which_ones):
     return found
 
 
-def main(ksp):
+def main(ksp, only=()):
     if os.name != "nt": raise SystemExit("this compiles with Windows' own compiler, so it runs on Windows only (see WITHOUT-UNITY.md for the other routes)")
     os.makedirs(OUT, exist_ok=True)
     compiler, device = Compiler(), Direct3D()
     print("compiler: %s, version %s; checked by Direct3D 11 on %s" % (compiler.path, compiler.version, device.what))
+    for name in only:
+        if not any(name in which_ones for _, which_ones in BUNDLES): raise SystemExit("no bundle here has a shader called %s" % name)
     for path, which_ones in BUNDLES:
+        if only and not set(only) & set(which_ones): continue
         # (a repository of one mod has that mod's shaders and not the others': those bundles are passed over)
         if not all(os.path.exists(os.path.join(port.PACK, make_bundle.SHADERS[w]["code"])) for w in which_ones):
             print("left out: %s (its GLSL is not here)" % path)
@@ -417,5 +441,5 @@ def main(ksp):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2: raise SystemExit(__doc__)
-    main(sys.argv[1])
+    if len(sys.argv) < 2: raise SystemExit(__doc__)
+    main(sys.argv[1], sys.argv[2:])

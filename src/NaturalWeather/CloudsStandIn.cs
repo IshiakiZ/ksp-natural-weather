@@ -47,8 +47,8 @@ namespace NaturalWeather
                 {
                     case "clear": return w;
                     case "cirrus": w.High = Layer(CloudKind.Cirrus, 0.9f, 7500f, 8500f); return w;
-                    case "fair": w.Low = Layer(CloudKind.Cumulus, 0.32f * vary, b, b + 1300f + 500f * local); w.High = Layer(CloudKind.Cirrus, 0.3f, 7500f, 8500f); return w;
-                    case "cumulus": w.Low = Layer(CloudKind.Cumulus, 0.5f * vary, b, b + 2200f + 900f * local); w.High = Layer(CloudKind.Cirrus, 0.2f, 7500f, 8500f); return w;
+                    case "fair": w.Low = Layer(CloudKind.Cumulus, 0.26f * vary, b, b + 380f + 220f * local); w.High = Layer(CloudKind.Cirrus, 0.3f, 7500f, 8500f); return w;
+                    case "cumulus": w.Low = Layer(CloudKind.Cumulus, 0.4f * vary, b, b + 800f + 400f * local); w.High = Layer(CloudKind.Cirrus, 0.2f, 7500f, 8500f); return w;
                     case "towering": w.Low = Layer(CloudKind.Cumulus, 0.45f * vary, 950f, 5500f + 1200f * local, 0.2f); w.High = Layer(CloudKind.Cirrus, 0.3f, 7500f, 8500f); return w;
                     case "storm": w.Low = Layer(CloudKind.Cumulonimbus, 0.5f * vary, 800f, 4500f, 0.6f); w.High = Layer(CloudKind.Cirrus, 0.5f, 7500f, 8500f); w.Storm = 1f; w.Rain = 0.5f; return w;
                     case "layer": w.Low = Layer(CloudKind.Stratocumulus, 0.85f * vary, 1100f, 2000f); return w;
@@ -62,7 +62,7 @@ namespace NaturalWeather
             w.High = Layer(CloudKind.Cirrus, high * 0.8f, 7500f, 8500f);
             float fair = Mathf.Clamp01(0.16f + 0.24f * (0.5f + 0.5f * local) + 0.2f * (wet - 0.5f)) * Mathf.Clamp01((wet - 0.25f) * 4f);
             float bottom = 950f + 250f * local2 + 300f * (0.6f - wet);
-            float tall = 1200f + 1800f * Mathf.Clamp01(wet - 0.45f) * 2f + 400f * local;
+            float tall = 320f + 280f * local + 2600f * Mathf.Clamp01((wet - 0.6f) * 2.5f);
             w.Low = Layer(CloudKind.Cumulus, fair, bottom, bottom + tall);
             float sheet = Mathf.Clamp01((wet - 0.8f) * 7f);
             if (sheet > 0f)

@@ -55,6 +55,9 @@ uniform vec4 _CloudHaze;     // x: 1 if the noise has smaller copies to read far
 uniform vec4 _CloudFlashA;   // xyz: a flash of lightning, from the camera (m, the scene's axes); w: its brightness (0: none)
 uniform vec4 _CloudFlashB;
 uniform vec4 _CloudFlashTint; // rgb: the flash's colour; w: how far its light spreads in cloud (m)
+uniform vec4 _CloudHoleA;    // xyz: a heap made as smoke is made (Heaps.cs), the middle of its base from the camera (m, the scene's axes); w: how far round it the noise's own heaps are cleared (m; 0: none)
+uniform vec4 _CloudHoleB;
+uniform vec4 _CloudHoleC;
 uniform vec4 _CloudPrevAt;   // xyz: where the camera is from where it was last frame (m, the planet's axes); w: 1 if last frame's picture can be used
 uniform vec4 _CloudPrevRight; // last frame's camera, in the planet's axes: right over the tangent of half the width of view; w: how much of this frame is taken (0 to 1)
 uniform vec4 _CloudPrevUp;   // up over the tangent of half the height of view
@@ -65,6 +68,14 @@ uniform vec4 _CloudShadowY;
 uniform vec4 _CloudSunFixed; // xyz: towards the sun, in the planet's axes
 uniform vec4 _CloudStreets;  // xyz: across the wind, level, in the planet's axes (a unit; changed only when the wind has turned well round); w: how strongly heaps line up in streets along the wind (0 to 1)
 uniform vec4 _CloudAlong;    // xyz: along the wind, the same way (for the high cloud's fibres)
+uniform vec4 _CloudFieldA;   // the heaps made beforehand (see _CloudField). x: repeats of the field per metre; y: metres over which its number runs from none to all; zw: how far the wind has carried it east and north, in repeats
+uniform vec4 _CloudFieldB;   // x: 1 if there is such a field (0: the heaps are carved from the noise, as before 0.3.0); yz: how many metres east and north the top of the layer leans with the wind from its base; w: how many metres the small lumps stand proud of the creases between them
+uniform vec4 _CloudHabit;    // how the heaps come today. x: how much the small heaps that stand alone are left out (0: all of them there, a sky of many small puffs, which is a rare day; 1: the usual sky, fewer and larger); y: how many times larger over the ground the field is read than the layer's depth alone would have it (1; 1.6 on the usual day: broader, flatter heaps); z: how far a heap that reaches the layer's top spreads out under it, m (the lid: see layerAt); w: how far the heaps' outlines are pushed about, m (no heap round)
+uniform vec4 _CloudFieldLevA; // the level of the field above which is cloud, for so much of the sky covered: 1/32, 3/32, 5/32 and 7/32 of it;
+uniform vec4 _CloudFieldLevB; // 9/32 to 15/32;
+uniform vec4 _CloudFieldLevC; // 17/32 to 23/32;
+uniform vec4 _CloudFieldLevD; // 25/32 to 31/32
+uniform sampler3D _CloudField;   // heaps made beforehand, lumps upon lumps (tools/clouds/heapfield.swift): a square of sky that repeats east and north, base to top. r: how far inside a heap's surface a place is (above a half) or outside it, less the heap's own number; g: the most r reaches within two cells of there (at every size of the field: for walking through clear air in long strides without stepping over a heap)
 uniform sampler3D _CloudShape;   // the large noise: r, the rounded heaps (Perlin noise swelled by cells); g, b, a: cells at three sizes
 uniform sampler3D _CloudDetail;  // the small noise: cells at three sizes
 uniform vec4 _CloudCellA0;    // storms and showers near the camera (up to six): xyz, the middle on the ground, from the planet's centre (the scene's axes, m); w, how far it reaches (m)
@@ -216,7 +227,10 @@ float streetsAt(vec3 g, vec4 wm)
 float heightShape(float hf, float kind)
 {
     float sheet = clamp(hf / 0.12, 0.0, 1.0) * clamp((1.0 - hf) / 0.4, 0.0, 1.0);
-    float heap = clamp(hf / 0.025, 0.0, 1.0) * clamp((1.0 - hf) / 0.7, 0.0, 1.0);
+    // (a heap is full nearly to its top and domed there: 1 - h^2.6. Until the rework of 2026-10-11 it thinned in a straight line
+    // from three tenths of the way up, which with the cover's threshold left heaps a few hundred metres thick and kilometres
+    // wide: pancakes, of which one saw the grey base from the ground and a pad of cotton wool from above)
+    float heap = clamp(hf / 0.025, 0.0, 1.0) * (1.0 - pow(hf, 2.6));
     float tower = clamp(hf / 0.02, 0.0, 1.0) * clamp((1.0 - hf) / 0.1, 0.0, 1.0);
     float a = clamp(kind * 2.0, 0.0, 1.0), b = clamp(kind * 2.0 - 1.0, 0.0, 1.0);
     return mix(mix(sheet, heap, a), tower, b);
@@ -233,21 +247,161 @@ float heapsOf(vec4 s)
     heap = clamp((heap - 0.74) * 5.5, 0.0, 1.0);
     // The cells themselves swell the outline: billows on billows (the formula above leaves them almost no say: its slope with
     // the cells is about a fifth). Heaps of cauliflower, not balls.
-    float billow = clamp((s.g * 0.5 + s.b * 0.3 + s.a * 0.2 - 0.3) * 1.7, 0.0, 1.0);
-    return clamp(heap * (0.5 + 0.62 * billow) + 0.05, 0.0, 1.0);
+    // (the finer cells count for as much as the coarse: turrets a few hundred metres across on a heap a kilometre wide)
+    float billow = clamp((s.g * 0.3 + s.b * 0.35 + s.a * 0.35 - 0.3) * 1.9, 0.0, 1.0);
+    return clamp(heap * (0.52 + 0.6 * billow) + 0.05, 0.0, 1.0);
+}
+
+// How much of the sky the place last read of the field of heaps sees (its third number); less than nothing: no such reading.
+float heapsOpen;
+// And how many metres inside a heap's surface that place is, small lumps and all; far below nothing: no such reading.
+float heapsInside;
+// How near any cloud can be to the place last asked about (cloudAt): less than nothing, at least so many metres off, and the
+// walk may stride that far through clear air; nothing or more, here or unknown. Every source of cloud whose shape is kept as
+// a distance says how near it is (the field's heaps, the storms' towers; a layer the place is above or below, by how far);
+// one carved from noise, which knows no distances, says unknown (a great number).
+float heapsNear;
+
+// The level of the field above which is cloud, for so much of the sky to be covered (sixteen levels given, read between).
+float fieldLevelAt(int i)
+{
+    vec4 v = i < 4 ? _CloudFieldLevA : i < 8 ? _CloudFieldLevB : i < 12 ? _CloudFieldLevC : _CloudFieldLevD;
+    int j = i - (i / 4) * 4;
+    return j == 0 ? v.x : j == 1 ? v.y : j == 2 ? v.z : v.w;
+}
+
+float fieldLevel(float cover)
+{
+    float x = cover * 16.0 - 0.5;
+    if (x <= 0.0) return mix(1.0, _CloudFieldLevA.x, clamp(cover * 32.0, 0.0, 1.0));
+    x = min(x, 15.0);
+    int i = int(x);
+    return mix(fieldLevelAt(i), fieldLevelAt(min(i + 1, 15)), x - float(i));
+}
+
+// The heaps made beforehand, at a place (from the planet's centre, the scene's axes) so far up its layer (0 base to 1 top):
+// how many metres inside the surface that the cover picks it is (outside it, less than nothing).
+// Where in the field: east and north over the ground. The planet is a ball and the field is flat, so the ground is taken in
+// bands of latitude, each with its own scale east and west (a band is as wide as the cosine of the latitude takes to fall
+// by a tenth: nowhere are the heaps stretched or squeezed by more than a twentieth); the band round the equator reaches to
+// 18 degrees each way.
+vec3 heapsPlace(vec3 p)
+{
+    vec3 f = vec3(dot(p, _CloudFixedX.xyz), dot(p, _CloudFixedY.xyz), dot(p, _CloudFixedZ.xyz));
+    float r = max(length(f), 1.0);
+    float lat = asin(clamp(f.z / r, -1.0, 1.0)), lon = atan(f.y, f.x);
+    // (the equator in the middle of its band: as an edge it fell wherever the cosine of the latitude, worked out in single
+    // precision, first came to less than one, 150 m to either side of the equator: a strip of other heaps across the sky of
+    // a space centre that stands a kilometre from it)
+    float band = floor(log2(max(cos(lat), 0.02)) * 7.0 + 0.5);
+    return vec3(lon * exp2(band / 7.0) * _CloudCam.w, lat * _CloudCam.w, band);
+}
+
+// The field read at a place in it (heapsPlace: metres east and north, and which band), `size` times larger over the ground
+// than it was made (for a deeper layer: see layerAt).
+float heapsAt(vec3 place, float hf, float level, vec4 wm, float lod, float pixel, bool seek, float size)
+{
+    float per = _CloudFieldA.x / size;
+    vec2 uv = (place.xy + wm.yz * 5400.0 + _CloudFieldB.yz * (hf * size)) * per + _CloudFieldA.zw / size + (place.z + size) * vec2(0.37, 0.61);
+    // (Seeking: whether there may be any heap within a stride and a half of here, the stride being three hundredths of the
+    // distance from the camera. The field's second number at the copy of it whose cells are a third of that stride: never
+    // less than the number anywhere within the stride. The stride is 0.03 of the distance, the distance 25 km times two to
+    // the power of `lod` less one (the seeker asks one size coarser than the walk reads), a cell 25 m times `size`.)
+    if (seek) return (textureLod(_CloudField, vec3(uv, hf), ceil(max(lod + 2.33 - log2(size), 0.0))).g - level) * _CloudFieldA.y * size;
+    // (Not seeking: the copy of the field whose cells are as wide as a pixel of the picture is there, `pixel` metres.)
+    vec4 cell = textureLod(_CloudField, vec3(uv, hf), max(log2(pixel * per * 256.0) + 0.3, 0.0));
+    heapsOpen = cell.b;
+    // (The usual sky. The field has heaps of every size, many small and few large, as a count of real ones has; but all
+    // of them in the sky at once, the hundreds of small ones each by itself, is a sky that does come and is not the
+    // common one ("super noisy": the user, of a picture from above, 2026-10-11). Commonly the small ones stand round
+    // the large or are not there. So unless today is such a day the small heaps that stand alone are left out: the field
+    // read very coarsely, near its base, is high only where a wide heap is, and away from there the level is raised by
+    // more than a small heap has. The seeker is not told: it may say "perhaps cloud" where there is now none, never the
+    // other way.)
+    for (int once = _CloudHabit.x > 0.01 ? 0 : 1; once < 1; once++)
+    {
+        float wide = textureLod(_CloudField, vec3(uv, 0.22), 3.6).r;
+        level += _CloudHabit.x * 0.24 * (1.0 - smoothstep(0.36, 0.5, wide));
+    }
+    return (cell.r - level) * _CloudFieldA.y * size;
+}
+
+// How large the field is read for a layer so deep. Its heaps are made up to 1500 m tall, and its top is the layer's top: a
+// layer much deeper than that would stretch them into pillars (a 3 km layer made columns of every heap, seen from beside
+// them), and a much shallower one press them into plates. So for a deeper layer the field is read larger over the ground,
+// heaps as much wider as they are taller (which they are: a tower three kilometres high stands on a base kilometres across):
+// five sizes, each 1.6 times the last, each serving layers from seven tenths of its own depth to one and fifteen hundredths
+// of it. Where one size gives way to the next (the last eighth of its range: `next` then runs from 0 to 1) both are read,
+// the heaps of the one shrinking away as the other's grow.
+float heapsSize(float deep, out float next)
+{
+    float sizing = log2(max(deep, 200.0) / 1500.0) / 0.678 + 0.703;
+    // (And smaller for a shallower one, three sizes down: fair weather's layer is a few hundred metres deep, and the field
+    // read at its own size under so low a top was pressed into plates lying on the air, saucers in stacks.)
+    float which = clamp(floor(sizing), -3.0, 4.0);
+    next = which < 3.5 ? clamp((sizing - which - 0.88) / 0.12, 0.0, 1.0) : 0.0;
+    // (and as much larger again as the day has them: on the usual day a shallow layer's heaps are broader than they are
+    // tall, the flat-topped heaps of fair weather; the tall layers' heaps are large already and are left)
+    return exp2(0.678 * which) * mix(max(_CloudHabit.y, 1.0), 1.0, clamp(which / 2.0, 0.0, 1.0));
+}
+
+// The heaps made beforehand at a place, for a layer so deep with so much of the sky covered: how many metres inside a
+// heap's surface it is, before the small lumps (seeking: the most that could be, anywhere within a stride). `size`: how
+// large the field was read.
+float heapsMetres(vec3 p, float hf, float deep, float cover, vec4 wm, float lod, float pixel, bool seek, bool turned, vec2 pushed, out float size)
+{
+    float next;
+    size = heapsSize(deep, next);
+    vec3 place = heapsPlace(p);
+    // (no heap is round: where each stands is pushed about by a pattern that changes over a kilometre or two, more for
+    // the larger readings of the field, so that an outline runs out in one place and is bitten into in another)
+    place.xy += pushed * size;
+    if (turned) place = vec3(place.y + 2371.0, -place.x + 1289.0, place.z);
+    // (six hundredths less than asked: measured from straight above over 37 km by 21, the heaps hid 0.17, 0.26, 0.36, 0.45,
+    // 0.55 and 0.70 of the ground where 0.1, 0.2, 0.3, 0.4, 0.5 and 0.65 were asked for; the clusters and gaps that the cover
+    // is given do not come out even)
+    float level = fieldLevel(max(cover - 0.06, cover * 0.4));
+    float inside = heapsAt(place, hf, level, wm, lod, pixel, seek, size) - next * 300.0 * size;
+    for (int again = next > 0.0 ? 0 : 1; again < 1; again++)
+    {
+        float open = heapsOpen, other = heapsAt(place, hf, level, wm, lod, pixel, seek, size * 1.6) - (1.0 - next) * 480.0 * size;
+        if (other > inside) inside = other; else heapsOpen = open;
+    }
+    return inside;
+}
+
+// The lumps too small for the field's cells (25 m), carved at the pixel: cells of 50, 25 and 12 m, lumps upon lumps, each
+// standing proud of the creases round it by about its own half-width, as the lumps of a cauliflower do. Their middle is left
+// where the field has the surface (the carving is taken about its mean, which is also what the small noise comes to when
+// read coarsely, far off: no carving there, and as much cloud). Where the field is read larger, its cells are larger too,
+// and lumps of the sizes between are carved as well.
+float heapsLumps(float inside, vec3 at, float pixel, float size)
+{
+    if (inside <= -60.0 * size || inside >= 60.0 * size) return inside;
+    float lumps = textureLod(_CloudDetail, at * 45.0 + vec3(0.0, 0.0, _CloudDrift.w), clamp(log2(pixel / 3.1) + 0.3, 0.0, 6.0) * _CloudHaze.x).r;
+    inside += (lumps - 0.48) * _CloudFieldB.w;
+    for (int more = size > 1.5 ? 0 : 1; more < 1; more++)
+    {
+        float larger = textureLod(_CloudDetail, at.yzx * (45.0 / size) + vec3(0.31, 0.57, _CloudDrift.w * 0.6), clamp(log2(pixel / (3.1 * size)) + 0.3, 0.0, 6.0) * _CloudHaze.x).r;
+        inside += (larger - 0.48) * _CloudFieldB.w * size * 0.8;
+    }
+    return inside;
 }
 
 // How much cloud of one layer there is at a point: q is the point in the noise (lengths of the large noise), h its height
 // above the radius; then the layer: how much of the sky it covers, what kind, its base and top, how wet. "fine" says
 // whether the small noise is used (it is left out in the light's walk and far away); lod which size of the large noise to
 // read (0 its full size, below 0 nearer than that; the small noise is read 2.2 sizes finer).
-float layerAt(vec3 q, float h, float cover, float kind, float base, float top, float wet, vec4 wm, bool fine, float lod)
+float layerAt(vec3 q, vec3 p, float field, float h, float cover, float kind, float base, float top, float wet, vec4 wm, bool fine, float lod)
 {
+    // (a size of the noise past 50 says: seeking. Is there any cloud within a long stride of here? See the walk.)
+    bool seek = lod > 50.0;
+    if (seek) lod -= 100.0;
     top = max(top, base + 50.0);
     float hf = (h - base) / (top - base);
-    if (hf <= 0.0 || hf >= 1.0) return 0.0;
+    if (hf <= 0.0 || hf >= 1.0) { heapsNear = max(heapsNear, hf <= 0.0 ? h - base : top - h); return 0.0; }
     cover = clamp(cover * _CloudLook.z, 0.0, 1.0);
-    if (cover <= 0.001) return 0.0;
+    if (cover <= 0.001) { heapsNear = max(heapsNear, -200.0); return 0.0; }
     // (clusters, gaps and streets; a sheet over the whole sky is left whole: they are for skies of separate heaps)
     // (as a power, not a factor: a cluster thickens the cover towards all of the sky but never to all of it, where a factor
     // filled the layer from base to top in slabs with flat tops and straight sides)
@@ -257,9 +411,42 @@ float layerAt(vec3 q, float h, float cover, float kind, float base, float top, f
     // (and a second reading of the large noise, turned and at a scale that does not divide its repeat (20.7 km against 9),
     // says whether the heaps of the first grow here: the two together repeat only every 207 km; coarsely read, it changes
     // over kilometres, as a heap's surroundings do)
-    float other = textureLod(_CloudShape, at.yzx / 2.3 + vec3(0.13, 0.47, 0.29), (max(lod, 0.0) + 1.0) * _CloudHaze.x).r;
-    cover = pow(cover, 1.0 / mix(0.55, 1.6, smoothstep(0.62, 0.86, other)));
-    vec4 s = textureLod(_CloudShape, at, max(lod, 0.0) * _CloudHaze.x);
+    vec4 otherAll = textureLod(_CloudShape, at.yzx / 2.3 + vec3(0.13, 0.47, 0.29), (max(lod, 0.0) + 1.0) * _CloudHaze.x);
+    float other = otherAll.r;
+    // (On the usual day far more so: the heaps stand crowded together in gatherings some kilometres across, touching, with
+    // clear sky between the gatherings and only a straggler in it. With the spreading under the lid, below, a gathering
+    // is one sprawling mass of cloud, lumpy on top and full of holes, and not a scatter of separate puffs.)
+    float gathered = _CloudHabit.x;
+    cover = pow(cover, 1.0 / mix(mix(0.55, 0.36, gathered), mix(1.6, 2.4, gathered), smoothstep(mix(0.62, 0.5, gathered), mix(0.86, 0.8, gathered), other)));
+    // (heaps are read from the large noise half as fine again as sheets and towers are: a real fair-weather heap is some
+    // hundreds of metres to two kilometres across and about as tall as it is wide; read at the noise's own size they came
+    // out two to five kilometres across)
+    // (heaps, from fair-weather ones to towering ones, are read from the field made beforehand, where there is one: the
+    // rest of this, sheets and storms' towers, is carved from the noise)
+    // (0.3.0: lumpy layers too, from a kind of 0.26: a layer of heaps pressed flat and crowded together until they touch is
+    // what such a layer is; the field's heaps under a shallow top with most of the sky covered. `field` 2: the middle clouds,
+    // which read the field turned and moved over, so that they are not the low clouds' own heaps again higher up.)
+    float made = min(field, 1.0) * _CloudFieldB.x * smoothstep(0.2, 0.26, kind) * (1.0 - smoothstep(0.86, 0.95, kind));
+    // (how wide a pixel of the picture is at this distance, in metres: what is read of the field and of the small noise is
+    // no finer than that, and no coarser; `lod` is the distance, as a power of two of 25 km)
+    float pixel = 25000.0 * exp2(lod) * 2.0 * length(_CloudRight.xyz) / max(_CloudHigh.w, 1.0);
+    // From so far off that a pixel is wider than a small heap (120 to 260 m: beyond some forty to eighty kilometres from
+    // the ground, and all of it from orbit) the noise's heaps stand in for the field's: no one heap can be told there, and the
+    // field, a square of 6.4 km laid side by side, showed from orbit as the weave of a cloth. The noise's own heaps cover
+    // far less than they are asked for (measured from straight above: 0.19 when asked for 0.46, 0.46 for 0.65, 0.79 for
+    // 0.8), so they are asked for as much more as gives the cover wanted.
+    float standIn = made * smoothstep(120.0, 260.0, pixel);
+    made -= standIn;
+    float asked = standIn > 0.0 ? min(1.0, 1.04 * pow(cover, 0.48) * (1.0 - 0.22 * cover)) : cover;
+    float c = 0.0, spread = 0.0;
+    // (Each of the two ways, the noise's and the field's, stands in a loop that runs once or not at all. Written as plain
+    // "if this kind, else that", the graphics card's compiler works both out at every place and keeps one: a sky of heaps
+    // from the field then paid for the noise's heaps as well, and a sky of sheets for the field, three times over in all.)
+    for (int once = made < 0.999 ? 0 : 1; once < 1; once++)
+    {
+    heapsNear = 1e9;
+    float narrow = mix(1.0, 1.45, smoothstep(0.3, 0.5, kind) * (1.0 - smoothstep(0.75, 0.9, kind)));
+    vec4 s = textureLod(_CloudShape, at * narrow, max(lod, 0.0) * _CloudHaze.x);
     float heap = heapsOf(s);
     // Far off (beyond 40 km or so, where a heap is a few pixels and seen from high up a hundred of them at once, in the noise's
     // lattice), the heaps of a third reading of it, at a scale that does not divide its repeat either (10.35 km), taken in with
@@ -273,14 +460,51 @@ float layerAt(vec3 q, float h, float cover, float kind, float base, float top, f
     heap = mix(mix(0.6, 1.0, heap), heap, clamp(kind * 3.0, 0.0, 1.0));
     float shape = heightShape(hf, kind);
     // (storm towers spread out at the top into an anvil)
-    float spread = clamp(kind * 2.0 - 1.0, 0.0, 1.0) * smoothstep(0.65, 0.9, hf);
+    spread = clamp(kind * 2.0 - 1.0, 0.0, 1.0) * smoothstep(0.65, 0.9, hf);
     // (and the anvil is an even canopy, the noise counting for less in it and eating less of its edge: ragged with holes, it
     // read as scraps of cloud above the tower, not its anvil)
     heap = mix(heap, mix(0.65, 1.0, heap), spread);
     // Only the strongest of the noise is cloud where the cover is small: separate heaps, each dense inside (the cover is
     // not a thinning of the cloud, which would make thin smoke of a fair-weather sky).
-    float c = clamp(remap(heap * shape, 1.0 - min(1.0, cover * (1.0 + 1.5 * spread)), 1.0, 0.0, 1.0), 0.0, 1.0);
+    c = clamp(remap(heap * shape, 1.0 - min(1.0, asked * (1.0 + 1.5 * spread)), 1.0, 0.0, 1.0), 0.0, 1.0);
+    }
+    for (int once = made > 0.001 ? 0 : 1; once < 1; once++)
+    {
+        // (level underneath: the base is where the rising air begins to condense, the same height for every heap, and only
+        // a little ragged)
+        // (seeking: anywhere the small lumps could reach counts, and the base's own height does not)
+        float size;
+        float inside = heapsMetres(p, hf, top - base, cover, wm, lod, pixel, seek, field > 1.5, (otherAll.gb - 0.5) * (2.0 * _CloudHabit.w), size);
+        // The lid. The layer's top is where the air stops rising: a warmer layer that the heaps cannot go through. A heap
+        // that reaches it does not end in a dome there: it spreads out under it, into a pad wider than the heap that
+        // feeds it, and the pads of neighbours run together. That, and not a sky of separate bulbs, is the usual sky
+        // (the user, 2026-10-11: "usually the clouds aren't huge bulbs ... They're kind of sprawled out"; see
+        // wiki/ksp-natural-weather/Kinds-of-cloud.md, 2). So towards the layer's top the heaps are grown outward, by more
+        // in one stretch of sky than in another; a heap that does not come near the top is left as it is. Shallow layers
+        // only (fair-weather heaps and lumpy sheets): a tower has its own top far above.
+        // (never by as far as the field's numbers reach from a heap, 240 m at its own size: past that it knows only "far
+        // from any heap", everywhere alike, and a pad grown so far was a sheet over all the sky with the small lumps'
+        // lattice printed on it; and not evenly: holes and bays by a finer pattern)
+        float lid = min(_CloudHabit.z * smoothstep(0.55, 0.88, hf) * (0.12 + 1.1 * smoothstep(0.42, 0.75, other)) * (0.45 + 1.1 * otherAll.b), 190.0) * size * (1.0 - smoothstep(0.52, 0.62, kind));
+        inside += lid;
+        // (seeking: anywhere the small lumps could reach counts, and the base's own height does not)
+        if (seek) return inside + 0.52 * _CloudFieldB.w * size > 0.0 || c > 0.0 ? 1.0 : 0.0;
+        // (how near a heap can be: its surface as the field has it, less what the small lumps can stand out by; taken at six
+        // tenths, the field being pressed or stretched by the layer's depth and bent by what changes over kilometres)
+        heapsNear = max(heapsNear, (inside + 0.52 * _CloudFieldB.w * size * (size > 1.5 ? 1.8 : 1.0) + 6.0 + 0.6 * pixel) * 0.6);
+        inside = heapsLumps(inside, at, pixel, size);
+        // (The surface is a few metres of clear air mixing in, no more; far off, as wide as a pixel of the picture: how much
+        // of the pixel is inside the surface, taking the surface to cross it straight. Cut off sharply there instead, a far
+        // heap is a pile of plates.)
+        float edge = max(9.0, 1.2 * pixel);
+        heapsInside = inside;
+        float heaps = clamp(inside / edge + 0.5, 0.0, 1.0) * clamp(hf / 0.02, 0.0, 1.0);
+        c = mix(c, heaps, made);
+        spread *= 1.0 - made;
+        fine = fine && made < 0.999;
+    }
     if (c <= 0.0) return 0.0;
+    float whole = c;
     if (fine)
     {
         // The small noise eats the edges: wisps at the bottom, rounded billows higher up, at two sizes (a kilometre to 60 m,
@@ -302,32 +526,94 @@ float layerAt(vec3 q, float h, float cover, float kind, float base, float top, f
     // (full density a third of the way in from where the noise begins it: a real heap's edge is a few metres of clear air
     // mixing in, not a hundred metres of thin mist, which softened every heap into cotton wool; a sheet's underside stays
     // softer, else a deck seen far off ends in a hard line above the horizon)
-    c = min(c * mix(1.3, 3.0, smoothstep(0.15, 0.45, kind)), 1.0);
+    // (never solid at once: a soft curve in place of a limit, so that a cloud's edge is a gradient however dense its middle;
+    // taken, as the next two changes are, from how the Solas shader pack's clouds are made, which the user likes)
+    { float d = c * mix(1.3, 2.3, smoothstep(0.15, 0.45, kind)); c = d / sqrt(d * d + 0.4); }
     // (a sheet is thinner stuff than the core of a heap: a grey overcast lets a share of the light through, where a sheet as
     // dense as a heap's core is dark as a storm's base)
     c *= mix(0.3, 1.0, smoothstep(0.1, 0.45, kind));
     // (the thinnest wisps let go: else a clear sky is speckled with crumbs of cloud)
-    c *= smoothstep(0.0, 0.1, c);
+    // (and among heaps, what was barely cloud before the small noise ate at it: the crumbs that floated round every heap)
+    c *= smoothstep(0.0, 0.1, c) * mix(1.0, smoothstep(0.04, 0.2, whole), smoothstep(0.3, 0.5, kind));
     // (rain clouds are thicker and darker underneath)
     return c * (1.0 + wet * (1.0 - hf));
 }
 
-// One storm or shower: a tower round its middle, narrowing upward and spreading into an anvil at the top, its edges
-// broken by the same noise as the heaps; and under it, its rain.
+// The storms near the camera by number (0 the nearest), and how many there are. They are walked in a loop whose length is
+// not known until the picture is drawn, and so is written out once: written out six times over, one after another (as until
+// 0.3.0), the six copies of a storm's tower cost a sky with no storm in it two thirds of its time on this Mac's graphics card.
+vec4 stormA(int k) { return k < 3 ? (k == 0 ? _CloudCellA0 : k == 1 ? _CloudCellA1 : _CloudCellA2) : (k == 3 ? _CloudCellA3 : k == 4 ? _CloudCellA4 : _CloudCellA5); }
+vec4 stormB(int k) { return k < 3 ? (k == 0 ? _CloudCellB0 : k == 1 ? _CloudCellB1 : _CloudCellB2) : (k == 3 ? _CloudCellB3 : k == 4 ? _CloudCellB4 : _CloudCellB5); }
+int storms() { return _CloudCellA0.w <= 0.0 ? 0 : _CloudCellA1.w <= 0.0 ? 1 : _CloudCellA2.w <= 0.0 ? 2 : _CloudCellA3.w <= 0.0 ? 3 : _CloudCellA4.w <= 0.0 ? 4 : _CloudCellA5.w <= 0.0 ? 5 : 6; }
+
+// One storm or shower. Where there is a field of heaps made beforehand: a tower of rising air round its middle, widest at the
+// base, with the field's heaps crowded on it and round it (all of them at the middle, fewer outward: the flanking towers of a
+// real storm, each lower than the last), lumps carved on the lot; and at its top the anvil, ice spread out downwind under the
+// height where the air stops rising, thin and streaked. Where there is no field, as before 0.3.0: a tower and its anvil
+// carved from the noise.
 float cellAt(vec3 p, float h, vec3 q, vec4 a, vec4 b, vec4 wm, bool fine, float lod)
 {
     if (b.z < 0.15 || a.w <= 0.0) return 0.0;
-    float frac = (h - b.x) / max(b.y - b.x, 100.0);
-    if (frac <= 0.0 || frac >= 1.0) return 0.0;
+    float deep = max(b.y - b.x, 100.0);
+    float frac = (h - b.x) / deep;
+    if (frac <= 0.0 || frac >= 1.0) { heapsNear = max(heapsNear, frac <= 0.0 ? h - b.x : b.y - h); return 0.0; }
     vec3 mid = a.xyz / max(length(a.xyz), 1.0);
     // (the anvil is carried downwind of the tower, the more the higher: the wind at the top of the air is the strongest)
     vec3 wind = _CloudDrift.x * _CloudFixedX.xyz + _CloudDrift.y * _CloudFixedY.xyz + _CloudDrift.z * _CloudFixedZ.xyz;
     vec3 from = p - wind * (a.w * 0.9 * smoothstep(0.6, 1.0, frac));
     float d = length(from - mid * dot(from, mid));
-    float r = a.w * (0.68 + 0.12 * (1.0 - frac)) * (1.0 + 1.4 * smoothstep(0.7, 0.95, frac));
-    if (d > r * 1.3) return 0.0;
-    float inside = smoothstep(r * 1.3, r * 0.45, d) * smoothstep(0.15, 0.5, b.z);
-    return layerAt(q + vec3(0.31, 0.17, 0.53), h, inside, 1.0, b.x, b.y, b.w, vec4(1.0, wm.yzw), fine, lod);
+    float strength = smoothstep(0.15, 0.5, b.z);
+    for (int once = _CloudFieldB.x > 0.5 ? 1 : 0; once < 1; once++)
+    {
+        float r = a.w * (0.68 + 0.12 * (1.0 - frac)) * (1.0 + 1.4 * smoothstep(0.7, 0.95, frac));
+        if (d > r * 1.3) { heapsNear = max(heapsNear, r * 1.3 - d); return 0.0; }
+        heapsNear = 1e9;
+        float within = smoothstep(r * 1.3, r * 0.45, d) * strength;
+        return layerAt(q + vec3(0.31, 0.17, 0.53), p, 0.0, h, within, 1.0, b.x, b.y, b.w, vec4(1.0, wm.yzw), fine, lod);
+    }
+    float reach = a.w, anvilReach = a.w * 2.2;
+    if (d > max(reach * 1.15, anvilReach * 1.05)) { heapsNear = max(heapsNear, max(reach * 1.15, anvilReach * 1.05) - d); return 0.0; }
+    bool seek = lod > 50.0;
+    if (seek) lod -= 100.0;
+    float pixel = 25000.0 * exp2(lod) * 2.0 * length(_CloudRight.xyz) / max(_CloudHigh.w, 1.0);
+    // The tower: widest where it stands, narrowing upward, leaning a third as far as the anvil is carried, and nowhere
+    // round: its width swells and shrinks by a third with the large noise, read over kilometres (a straight column with
+    // lumps on it was a pillar of popcorn). Rounded off under the top, where the anvil takes over.
+    vec3 lean = p - wind * (a.w * 0.3 * frac);
+    vec3 off = lean - mid * dot(lean, mid);
+    vec4 swell = textureLod(_CloudShape, (q + vec3(0.31, 0.17, 0.53)) * 1.7, 2.0 * _CloudHaze.x);
+    float column = reach * (0.60 - 0.30 * frac + 0.10 * frac * frac) * (0.55 + 0.45 * strength) * (0.62 + 0.8 * swell.r) - length(off);
+    column = min(column, (0.97 - frac) * deep);
+    // (the field's heaps on it and round it: only as far out as there are any)
+    float size = 1.0, heaps = -1e5;
+    float crowd = clamp(1.1 - d / reach, 0.0, 0.93) * strength;
+    for (int once = crowd > 0.01 ? 0 : 1; once < 1; once++) heaps = heapsMetres(p, frac, deep, crowd, wm, lod, pixel, seek, false, vec2(0.0), size);
+    float inside = max(column, heaps);
+    // The anvil: ice spread out under the height where the air stops rising, downwind: thickest round the tower, thinning
+    // to a ragged edge drawn out along the wind, its underside hanging lower near the tower; a third as thick as the tower.
+    float out_ = d / anvilReach;
+    float under = mix(0.80, 0.70, 1.0 - smoothstep(0.1, 0.5, out_));
+    // (how far the place is from where the anvil can be: below its underside, or out beyond its rim)
+    float anvilOff = max((under - 0.06 - frac) * deep, d - anvilReach);
+    if (seek) return inside + 0.52 * _CloudFieldB.w * size > 0.0 || anvilOff < 0.04 * 25000.0 * exp2(lod) ? 1.0 : 0.0;
+    heapsNear = max(heapsNear, max((inside + 0.52 * _CloudFieldB.w * size * (size > 1.5 ? 1.8 : 1.0) + 6.0 + 0.6 * pixel) * 0.6, -anvilOff));
+    // (how much sky is seen: of a heap, as the field has it; of the tower, by how high and how deep in it)
+    float open = heaps >= column ? heapsOpen : clamp(0.1 + frac - column / 500.0, 0.02, 1.0);
+    float c = 0.0;
+    for (int once = inside > -400.0 ? 0 : 1; once < 1; once++)
+    {
+        float next;
+        if (size < 1.5) size = heapsSize(deep, next);
+        inside = heapsLumps(inside, q + wm.yzw * 0.6, pixel, size);
+        float edge = max(9.0, 1.2 * pixel);
+        c = clamp(inside / edge + 0.5, 0.0, 1.0) * clamp(frac / 0.012, 0.0, 1.0);
+    }
+    float slab = smoothstep(under - 0.06, under + 0.03, frac) * (1.0 - smoothstep(0.93, 0.995, frac));
+    float ragged = clamp(0.25 + 1.1 * swell.g, 0.0, 1.0);
+    float anvil = slab * (1.0 - smoothstep(0.25 + 0.5 * ragged, 1.0, out_)) * strength * 0.33;
+    if (anvil > c) { c = anvil; heapsInside = -1e9; heapsOpen = clamp(frac * 1.2 - 0.3, 0.0, 1.0); }
+    else { heapsInside = inside; heapsOpen = open; }
+    return c * (1.0 + b.w * (1.0 - frac));
 }
 
 // Under a raining storm, its rain: a grey curtain from the base to the ground, in streaks (the noise drawn out up and down),
@@ -350,16 +636,33 @@ float rainAt(vec3 p, float h, vec3 q, vec4 a, vec4 b)
 
 // How much cloud there is at a point (q in the noise, p from the planet's centre, h its height): the low clouds, the middle
 // ones, and the storms near the camera, whichever is the most.
+// How much of the noise's low cloud is left at a point, beside a heap that is made as smoke is made: none within its width
+// of the upright through its middle, all of it from 1.7 widths out.
+float holeAt(vec3 p, vec4 hole)
+{
+    if (hole.w <= 0.0) return 1.0;
+    vec3 axis = normalize(_CloudCam.xyz + hole.xyz);
+    return smoothstep(hole.w, hole.w * 1.7, length(p - axis * dot(p, axis)));
+}
+
 float cloudAt(vec3 q, vec3 p, float h, vec4 wa, vec4 wb, vec4 wc, vec4 wm, bool fine, float lod)
 {
-    float c = layerAt(q, h, wa.x, wa.y, wa.z, wa.w, wb.x, wm, fine, lod);
-    if (wb.a > 0.004) c = max(c, layerAt(q.zxy + vec3(0.37, 0.71, 0.13), h, wb.a, wc.x, wc.y, wc.z, wc.w, wm, fine, lod));
-    c = max(c, cellAt(p, h, q, _CloudCellA0, _CloudCellB0, wm, fine, lod));
-    c = max(c, cellAt(p, h, q, _CloudCellA1, _CloudCellB1, wm, fine, lod));
-    c = max(c, cellAt(p, h, q, _CloudCellA2, _CloudCellB2, wm, fine, lod));
-    c = max(c, cellAt(p, h, q, _CloudCellA3, _CloudCellB3, wm, fine, lod));
-    c = max(c, cellAt(p, h, q, _CloudCellA4, _CloudCellB4, wm, fine, lod));
-    c = max(c, cellAt(p, h, q, _CloudCellA5, _CloudCellB5, wm, fine, lod));
+    heapsOpen = -1.0; heapsInside = -1e9; heapsNear = -1e9;
+    float c = layerAt(q, p, 1.0, h, wa.x, wa.y, wa.z, wa.w, wb.x, wm, fine, lod);
+    if (c > 0.0) c *= holeAt(p, _CloudHoleA) * holeAt(p, _CloudHoleB) * holeAt(p, _CloudHoleC);
+    // (the middle clouds and each storm only where there are any: each in a loop that runs once or not at all, see layerAt)
+    for (int mid = wb.a > 0.004 ? 0 : 1; mid < 1; mid++)
+    {
+        float open = heapsOpen, inside = heapsInside, middle = layerAt(q.zxy + vec3(0.37, 0.71, 0.13), p, 2.0, h, wb.a, wc.x, wc.y, wc.z, wc.w, wm, fine, lod);
+        if (middle > c) c = middle; else { heapsOpen = open; heapsInside = inside; }
+    }
+    // (each storm; whichever is thickest here says how much sky is seen and which way its surface faces)
+    int count = storms();
+    for (int k = 0; k < count; k++)
+    {
+        float open = heapsOpen, inside = heapsInside, storm = cellAt(p, h, q, stormA(k), stormB(k), wm, fine, lod);
+        if (storm > c) c = storm; else { heapsOpen = open; heapsInside = inside; }
+    }
     return c;
 }
 
@@ -632,8 +935,13 @@ void main()
     // is small in the picture, coarsely), but never longer than a 24th of this line's stretch through the shell (seen from orbit
     // the layer is crossed in a few kilometres, and still wants two dozen steps), nor shorter than the shortest step given.
     // (Even steps, as at first, gave a storm 12 km off steps of a kilometre when the line went on 90 km: plates.)
-    float least = _CloudHaze.y, longest = max(least, length0 / 24.0);
-    float stepLen = clamp(t0 * 0.01, least, longest);
+    // (With fewer steps to spend than the middle setting's 88, each is as much longer: the lower setting walks as far as the
+    // middle one, more coarsely. With the same steps and fewer of them, as at first, a line ran out before it reached a storm's
+    // tower twelve kilometres off: no tower at all on the lower setting.)
+    float coarser = max(1.0, 88.0 / max(_CloudLook.w, 1.0));
+    float least = _CloudHaze.y * coarser, longest = max(least, length0 / 24.0);
+    float each = 0.01 * coarser;
+    float stepLen = clamp(t0 * each, least, longest);
     // (each pixel's own place in the step, moved on by the golden ratio each frame: over a few frames the places fill the step evenly,
     // and neighbouring pixels differ, so nothing lines up into a pattern)
     // (the pixel's own offset from a hash: a pattern such as interleaved gradient noise changes by a set amount from row to row,
@@ -642,12 +950,13 @@ void main()
     float own = float(mixBits(pix.x + mixBits(pix.y + 7919u)) & 65535u) / 65536.0;
     float jitter = fract(own + 0.61803399 * _CloudStage.y);
     float t = t0 + stepLen * jitter;
-    stepLen = clamp(t * 0.01, least, longest);
+    stepLen = clamp(t * each, least, longest);
 
     vec3 sunDir = _CloudSun.xyz;
     float cosView = dot(dir, sunDir);
-    // light that goes on mostly straight ahead, some of it back; and again for light already scattered (spread more evenly)
-    float ph = mix(phase(cosView, 0.86), phase(cosView, -0.22), 0.27);
+    // light that goes on mostly straight ahead, some of it back (kept apart: what goes straight on is dimmed less by the cloud
+    // it passes, see the silver lining below); and again for light already scattered (spread more evenly)
+    float phOn = 0.73 * phase(cosView, 0.86), phBack = 0.27 * phase(cosView, -0.22);
     float ph2 = mix(phase(cosView, 0.43), phase(cosView, -0.15), 0.3);
     vec3 camFixed = vec3(dot(_CloudCam.xyz, _CloudFixedX.xyz), dot(_CloudCam.xyz, _CloudFixedY.xyz), dot(_CloudCam.xyz, _CloudFixedZ.xyz));
     vec3 dirFixed = vec3(dot(dir, _CloudFixedX.xyz), dot(dir, _CloudFixedY.xyz), dot(dir, _CloudFixedZ.xyz));
@@ -658,22 +967,21 @@ void main()
     float through = 1.0;
     float sumT = 0.0, sumW = 0.0;
     // (the storms' rain first: it hangs below the clouds, nearer than they are along a line of sight from below)
-    rainWalk(_CloudCellA0, _CloudCellB0, dir, dirFixed, sunTop, sunDir, stop, jitter, light, through, sumT, sumW);
-    rainWalk(_CloudCellA1, _CloudCellB1, dir, dirFixed, sunTop, sunDir, stop, jitter, light, through, sumT, sumW);
-    rainWalk(_CloudCellA2, _CloudCellB2, dir, dirFixed, sunTop, sunDir, stop, jitter, light, through, sumT, sumW);
-    rainWalk(_CloudCellA3, _CloudCellB3, dir, dirFixed, sunTop, sunDir, stop, jitter, light, through, sumT, sumW);
-    rainWalk(_CloudCellA4, _CloudCellB4, dir, dirFixed, sunTop, sunDir, stop, jitter, light, through, sumT, sumW);
-    rainWalk(_CloudCellA5, _CloudCellB5, dir, dirFixed, sunTop, sunDir, stop, jitter, light, through, sumT, sumW);
-    vec4 wa = vec4(0.0), wb = vec4(0.0), wc = vec4(0.0), wm0 = vec4(1.0, 0.0, 0.0, 0.0);
-    float weatherAtT = -1e9;
+    int rains = storms();
+    for (int k = 0; k < rains; k++) rainWalk(stormA(k), stormB(k), dir, dirFixed, sunTop, sunDir, stop, jitter, light, through, sumT, sumW);
+    vec4 wa = vec4(0.0), wb = vec4(0.0), wc = vec4(0.0), wmFrom = vec4(1.0, 0.0, 0.0, 0.0), wmTo = vec4(1.0, 0.0, 0.0, 0.0);
+    float weatherAtT = -1e9, wmToT = -1e9;
     int empty = 0;
     bool coarse = false;
+    bool strode = false;     // whether the last move was a long stride through clear air
     int lit = 0;
     bool clear = true;       // whether the last step was in clear air
     float clearT = t0;       // the last place along the line known to be clear air
     float knownT = -1.0, knownC = 0.0;   // a place already looked at (the step after a cloud's edge), and how much cloud is there
     float lastToward = -1.0;
+    float lastFaces = 2.0;   // which way a heap's surface faces at the last lit step, as the cosine of its angle to the sun (2: not known)
     float sigmaScale = _CloudLook.x;
+    float edgeTo = alt < _CloudShell.y + 2000.0 ? 40000.0 : 15000.0;   // how far off a cloud's edge is still searched for (see below)
     for (int n = 0; n < 256; n++)
     {
         if (n >= most || t > t1 || through < 0.01) break;
@@ -681,7 +989,21 @@ void main()
         float h = length(p) - R;
         // (the weather is read again every kilometre or so along the line: it changes over tens of them)
         vec3 q = _CloudNoise.xyz + dirFixed * (t / _CloudNoise.w);
-        if (abs(t - weatherAtT) > 1200.0) { weatherAt(p, wa, wb, wc); wm0 = broadAt(q); weatherAtT = t; }
+        // (What changes over kilometres is read there and 1200 m further on, and taken between the two at each step. Until 0.3.0
+        // it was held as read until the next reading: the cover and the bend of the pattern then jumped at each reading, by a
+        // hundred metres of bend and more, and the readings fall at nearly the same places for every pixel of a row of the
+        // picture: far heaps were cut into level bands, a row of pixels showing the heap and the next the sky beside it.)
+        // (In a loop that runs once or not at all, as the two ways of making heaps are in layerAt, and for the same reason:
+        // written as a plain "if", the nine readings were made at every step and thrown away at all but one in a dozen.)
+        for (int read = t > wmToT || t < weatherAtT - 1.0 ? 0 : 1; read < 1; read++)
+        {
+            weatherAt(p, wa, wb, wc);
+            wmFrom = wmTo;
+            for (int first = wmToT > -1e8 && t <= wmToT + 600.0 ? 1 : 0; first < 1; first++) wmFrom = broadAt(q);
+            weatherAtT = t; wmToT = t + 1200.0;
+            wmTo = broadAt(_CloudNoise.xyz + dirFixed * (wmToT / _CloudNoise.w));
+        }
+        vec4 wm0 = mix(wmFrom, wmTo, clamp((t - weatherAtT) / 1200.0, 0.0, 1.0));
         vec4 wm = vec4(wm0.x * streetsAt(q, wm0), wm0.yzw);
         // (which size of the noise to read: the large noise's full size out to 25 km, the small one's to about 5 km; coarser beyond,
         // where heaps a few pixels across would otherwise sparkle)
@@ -692,21 +1014,35 @@ void main()
             // Through clear air three steps at a time, with the noise read coarsely; at the first sign of cloud, two steps back
             // and on at the usual length (so that where a cloud begins is found to within a step, as the steps' start, which
             // moves from frame to frame, has it: else its edge shows in rings).
-            if (cloudAt(q, p, h, wa, wb, wc, wm, false, lod + 1.0) > 0.0) { coarse = false; empty = 0; t -= stepLen * 2.0; continue; }
-            clearT = t;
-            t += stepLen * 3.0;
-            stepLen = clamp(t * 0.01, least, longest);
-            continue;
+            // (Back only after a stride. Among heaps made beforehand the seeker says "there may be cloud" for some way round
+            // every heap, truly; the walk then went two steps back, four on finding nothing, asked again, went two back: five
+            // readings for every two steps of clear air beside a heap, two and a half times what walking it plainly costs.)
+            if (cloudAt(q, p, h, wa, wb, wc, wm, false, lod + 1.0 + 100.0) > 0.0)
+            {
+                coarse = false; empty = 0;
+                if (strode) { strode = false; t -= stepLen * 2.0; continue; }
+            }
+            else
+            {
+                clearT = t;
+                t += stepLen * 3.0;
+                stepLen = clamp(t * each, least, longest);
+                strode = true;
+                continue;
+            }
         }
         float c = abs(t - knownT) < 0.01 ? knownC : cloudAt(q, p, h, wa, wb, wc, wm, fine, lod);
+        float open = heapsOpen, insideHere = heapsInside, near = heapsNear;
         float dt = stepLen;
         // At the edge of a cloud (the first step into it after clear air): where between the last clear step and here it
         // begins, found to a quarter of the way by halving twice, and a step taken from there to here (lit there) before
         // this one. The edge is what is seen of a dense heap, which hides what is behind it within a few metres, and a step of
         // tens of metres would put it anywhere within the step: a blurred heap, its sunlit side lit as if from deep inside.
         // (Not walked in short steps instead: they spent the steps a line may take, and lines that ran out before the far side
-        // of the heaps showed as stripes. Within 15 km only: beyond, a step is a pixel or two of a small heap.)
-        if (c > 0.001 && clear && t > clearT + 1.0 && t < 15000.0)
+        // of the heaps showed as stripes.)
+        // (From in or under the clouds out to 40 km; until 0.2.2 to 15, as it still is from high above them, where a step is
+        // less than a pixel. And not for a cloud of which eight tenths is already hidden by the cloud in front.)
+        if (c > 0.001 && clear && t > clearT + 1.0 && t < edgeTo && through > 0.2)
         {
             float lo = clearT, hi = t, chi = c;
             for (int b = 0; b < 2; b++)
@@ -716,6 +1052,11 @@ void main()
                 float mc = cloudAt(_CloudNoise.xyz + dirFixed * (mid / _CloudNoise.w), mp, length(mp) - R, wa, wb, wc, wm, fine, lod);
                 if (mc > 0.001) { hi = mid; chi = mc; } else lo = mid;
             }
+            // (Lit from no more than ten metres past the last place known to be clear. The edge is somewhere in the quarter of
+            // a step between that place and the first one known to be cloud: ten metres with a step of forty, near the camera,
+            // but forty at 15 km and a hundred at 40, and lit from the far end of that, as until 0.2.2, a heap's sunlit side
+            // was lit from where no sunlight is: every heap past 10 km a flat grey, a smear beside the nearer ones.)
+            float litAt = min(hi, lo + 10.0);
             if (hi < t - 0.5)
             {
                 knownT = t; knownC = c;
@@ -723,10 +1064,10 @@ void main()
                 c = 0.5 * (chi + c);
                 dt = t - hi;
                 t = hi;
-                p = _CloudCam.xyz + dir * t;
-                h = length(p) - R;
-                q = _CloudNoise.xyz + dirFixed * (t / _CloudNoise.w);
             }
+            p = _CloudCam.xyz + dir * litAt;
+            h = length(p) - R;
+            q = _CloudNoise.xyz + dirFixed * (litAt / _CloudNoise.w);
         }
         clear = c <= 0.001;
         if (clear) clearT = t;
@@ -748,16 +1089,30 @@ void main()
                 toward = 0.0;
                 float lt = 0.0, ls = 28.0;
                 int towardSteps = t > 8000.0 ? 4 : 6;
+                // (each step read at its own place in its stretch, a different one for every pixel and frame: read always at the
+                // middle, six readings of a heap with an edge to it can only come to so many sums, and its shade lay in flat
+                // bands with steps between them, like a drawing shaded with three pencils)
+                float place = fract(jitter * 5.371 + 0.618 * float(lit));
                 for (int k = 0; k < 6; k++)
                 {
                     if (k >= towardSteps) break;
-                    lt += ls * 0.5;
-                    vec3 lp = p + sunDir * lt;
+                    // (the first at the middle of its stretch always: which way the surface faces is taken from it, and taken over a
+                    // different distance each frame it came out different each frame: heaps like sandpaper)
+                    float at = lt + ls * (k == 0 ? 0.5 : place);
+                    vec3 lp = p + sunDir * at;
                     float lh = length(lp) - R;
-                    vec3 lq = q + sunFixed * (lt / _CloudNoise.w);
-                    toward += cloudAt(lq, lp, lh, wa, wb, wc, wm, k < 2 && fine, lod + 0.5) * ls;
-                    lt += ls * 0.5;
+                    vec3 lq = q + sunFixed * (at / _CloudNoise.w);
+                    toward += cloudAt(lq, lp, lh, wa, wb, wc, wm, k < 2 && fine, k == 0 ? lod : lod + 0.5) * ls;
+                    // (Which way the heap's surface faces here, from its first reading towards the sun: the number of metres
+                    // inside the surface falls by a metre for every metre straight out through it, and by less aslant. The
+                    // cosine of the angle between the way out and the sun, near enough.)
+                    if (k == 0) lastFaces = insideHere > -1e8 && heapsInside > -1e8 ? clamp((insideHere - heapsInside) / max(at, 4.0), -1.0, 1.0) : 2.0;
+                    lt += ls;
+                    // (deep in cloud already: what lies further on would dim what little diffuses through by a part of itself;
+                    // taken as half as much again, and the walk left off)
+                    if (toward * sigmaScale > 12.0) { toward *= 1.5; break; }
                     ls *= 1.9;
+                    place = fract(place + 0.618);
                 }
                 // (and one long look further on, for a tower or another cloud kilometres away between here and the sun)
                 {
@@ -771,19 +1126,49 @@ void main()
             else if (again) { toward = 0.0; lastToward = 0.0; }
             // Light scattered once, twice, three times over (each time it carries further and spreads more evenly), and the
             // darkening of a cloud's sunlit edge where little light has yet been scattered towards the eye (the "powder").
-            float powder = 1.0 - 0.3 * exp(-sigma * 140.0) * clamp(0.6 - 0.6 * cosView, 0.0, 1.0);
+            float powder = 1.0 - 0.55 * exp(-c * 6.0) * clamp(0.75 - 0.5 * cosView, 0.0, 1.0);
             // (scattered once, mostly straight on: the silver lining of a heap with the sun behind it; a few times, still forward
             // and carried further (Wrenninge's octaves); and very many times over, spread evenly: what diffuses through a thick
             // cloud falls off as one over its depth, not exponentially (the two-stream rule, 1 / (1 + 0.75 (1 - g) depth) with g
             // 0.85: about a tenth of the sun through a heap a kilometre thick), which is what lights the shaded side of a heap
             // grey and its base a darker grey, and keeps a heap against the sun dark inside its bright rim)
-            vec3 sunlit = sunHere * ((exp(-toward) * ph + 0.35 * exp(-toward * 0.25) * ph2) * (4.0 * PI) + 0.9 / (1.0 + 0.11 * toward)) * powder;
+            // (The silver lining. A drop throws most of the light it scatters on within a few degrees of the way it was going, and
+            // light scattered so is as good as not scattered at all: seen from near the line to the sun it is still sunlight. So
+            // what goes straight on is dimmed by only the rest of what the cloud takes: 1 - g squared of it, 0.28 for g 0.85 (the
+            // delta-Eddington rule), in a real heap, which takes 0.03 to 0.05 of the light in each metre; counted against the
+            // 0.15 a metre these heaps are given (Clouds.cs: thick), a tenth. It comes through the outermost sixty metres or so of
+            // a heap, and lights its billows and thin places from behind, within twenty degrees or so of the sun. Dimmed by all
+            // the cloud takes, as until 0.2.2, it came through seven metres: less than a pixel of rim at any distance, which is
+            // why the linings went thin when the heaps were made dense and sharp.)
+            // (The rework of 2026-10-11: what diffuses through counted for most of the light at every depth (0.9 / (1 + 0.11 depth)), so a
+            // heap was one tone where the sun reached it and another where it did not. Now the light scattered a few times carries most
+            // of it and falls off through the cloud (two more octaves), and the diffused floor is a third of what it was.)
+            // (0.3.0: what diffuses through by the two-stream rule itself, 0.55 / (1 + 0.11 depth): with the floor that stood here
+            // before (a third of that at the base, falling off half as fast) the underside of a heap three hundred metres thick
+            // came out at a fifteenth of its top, a dark plate under every small heap, where a real one's is a third.)
+            // (And the whole of it under a half of what it was: with heaps that have a surface, most of what is seen of a heap is
+            // within a few metres of that surface, where all of these are at their most, and every heap in the game was white
+            // from top to bottom. A sunlit top now comes to about one, a shaded side to a third of that with the sky's blue
+            // in it, the base of a thin heap to a fifth and of a thick one to a tenth.)
+            // (A heap's surface is as bright as the sunlight falling on each square metre of it: the full sun where it faces
+            // the sun, half where it is turned sixty degrees away, as a white wall is. Worked out from the depth of cloud
+            // towards the sun alone, every part of a heap the sun reached at all was as bright as every other, and its sunlit
+            // side one flat white. So what is scattered many times is weighed by the way the surface faces, near the surface
+            // (deep inside there is no surface to speak of); 1 at forty-five degrees.)
+            float skin = lastFaces > 1.5 ? 0.0 : exp(-max(insideHere, 0.0) / 30.0);
+            float faces = mix(1.0, 0.3 + 1.0 * clamp(lastFaces, 0.0, 1.0), skin);
+            vec3 sunlit = sunHere * ((exp(-toward * 0.1) * phOn + exp(-toward) * phBack + 0.35 * exp(-toward * 0.25) * ph2) * (4.0 * PI * 0.45) + (0.30 * exp(-toward * 0.35) + 0.25 * exp(-toward * 0.12) + 0.35 / (1.0 + 0.11 * toward)) * faces) * powder;
             // ---- the sky from above (less of it deep in the cloud and low down), the ground from below
             // (the sky's blue on what the sun does not reach: most on the tops, less on the flat base, which sees the sky only
             // at its horizon; the ground's light on the base)
-            vec3 sky = _CloudSky.rgb * mix(0.42, 1.0, hf) * clamp(sunUp * 3.0 + 0.35, 0.0, 1.0) * (0.35 + 0.65 * dot(sunHere / max(sunTop, vec3(1e-4)), vec3(0.2126, 0.7152, 0.0722)));
+            // (how much of the sky this place sees: for a heap made beforehand, as worked out when it was made, from its own
+            // shape and its neighbours': open on its top and its shoulders, less in the creases between its turrets and on
+            // its sides, none under its middle; for the rest, by how deep in the cloud and how high in the layer)
+            float seesSky = open >= 0.0 ? mix(0.1, 1.3, open * open) : (1.0 - 0.45 * c) * mix(0.2, 1.15, smoothstep(0.0, 0.4, hf));
+            vec3 sky = _CloudSky.rgb * seesSky * clamp(sunUp * 3.0 + 0.35, 0.0, 1.0) * (0.35 + 0.65 * dot(sunHere / max(sunTop, vec3(1e-4)), vec3(0.2126, 0.7152, 0.0722)));
             vec3 below = _CloudGround.rgb * (1.0 - hf) * 0.8;
-            vec3 here = sunlit + sky + below + vec3(_CloudSunTint.w);
+            // (the night's own light, from the sky: more on what sees more of it, so that a heap at night has a top and an underside)
+            vec3 here = sunlit + sky + below + vec3(_CloudSunTint.w) * (open >= 0.0 ? mix(0.35, 1.3, open) : 1.0);
             // ---- lightning inside the cloud (its light spreads through the cloud by being scattered over and over, so it falls
             // off with distance more than it is dimmed by the cloud on the way)
             if (_CloudFlashA.w > 0.0)
@@ -814,9 +1199,18 @@ void main()
             empty++;
             lastToward = -1.0;
             if (empty > 3) coarse = true;
+            // (Clear air, and no cloud within so many metres, as the field and the storms keep their shapes: on by that
+            // much at once, but no more than a dozen steps' worth or 600 m, the cover and the storms being read afresh as
+            // the walk goes. Without this a line of sight that began inside the layer of air the clouds are in, among heaps
+            // or under a storm's anvil, spent its eighty-eight steps of forty metres on clear air and stopped three and a
+            // half kilometres out: sky, where the anvil should have been.)
+            // (And each stride by its own share of that, a half to the whole, a different one for every pixel and frame: striding the
+            // whole way each time, every line of sight came up to a heap at the same places whatever its start, the walk's steps
+            // no longer fell at different places from frame to frame, and the heaps were shaded in level bands.)
+            if (near < 0.0 && near > -1e8) dt = max(dt, min(-near * (0.5 + 0.5 * fract(jitter * 7.13 + 0.618 * float(n))), min(12.0 * stepLen, 600.0)));
         }
         t += dt;
-        stepLen = clamp(t * 0.01, least, longest);
+        stepLen = clamp(t * each, least, longest);
     }
 
     // ---------------------------------------------------------------- the high cloud: a thin sheet, drawn where the line crosses it

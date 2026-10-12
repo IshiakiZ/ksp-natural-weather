@@ -128,13 +128,19 @@ What does not change: the navball's surface speed (it is speed over the ground),
     the hills whiten into the distance; in heavy rain the far side of the pad greys out.
 * **Lightning** (`Lightning.cs`): when each storm flashes is part of the weather (from the storm and the clock),
   several times a minute for a strong one, most within the cloud; each flash is announced through
-  `Keystone.Weather.Flashed` (our clouds light themselves from inside by it). A flash to the ground is drawn as a
-  crooked, branching channel that flickers through its strokes, about two pixels wide at any distance with a
-  glow round it; the scene is lit from it; its thunder is made from the channel's shape (each length of it heard
+  `Keystone.Weather.Flashed` (our clouds light themselves from inside by it: until a mend in 0.2.2, not yet looked at
+  in the game, they put that light at the wrong longitude, see the clouds' page). A flash to the ground is drawn as a crooked, branching
+  channel that flickers through its strokes: a core some three pixels wide at any distance, added to the picture at
+  more than twice white in its middle so that a pixel and a half of it stays white through the game's smoothing of
+  thin lines (until 0.2.2 it was two thirds of a pixel of white, which the smoothing left a quarter-grey hair), a
+  glow of some twenty pixels round it, and the channel still glowing for about a tenth of a second after each stroke,
+  as a real one does; the scene is lit from it; its thunder is made from the channel's shape (each length of it heard
   after its own distance over the speed of sound, high notes lost with distance, a rumble, echoes off the ground)
   and comes as late as the distance makes it. A craft in a storm, or climbing fast through cold cloud with its
   engines burning, can be struck: a flash, a hot spot on the part struck, and its stability assist dropping out
-  for two seconds. **Lightning can strike craft** off forbids it.
+  for two seconds. **Lightning can strike craft** off forbids it. On a world with no ground under its air (Jool)
+  every flash is within the cloud (since 0.2.2; three in ten of a strong storm's had gone down to the height the
+  model takes for ground where it knows none).
 * **Fog and dust in the air** are veiled by Natural Light (0.10.0) from how far the weather says one can see, as
   thick as that up to the fog's or the dust storm's top and thinning out above, in the dust's own colour (the
   ground's, deepened) for dust; as volumes with shape they are for the clouds to draw: the weather gives them a Fog
@@ -175,7 +181,15 @@ its gusts, how the clouds drift, the temperature), `Cloud` (the pattern of the c
 cumulus about two kilometres apart, sheets with gaps, wisps of cirrus, storm towers with anvils), `Cells` (the
 storms and showers near a place), `Wind` (at a point, gusts and all), `Shade` (how the clouds dim the sun and the
 sky), `Flashed` and `Recent` (lightning). `At`, `Cloud` and `Cells` may be asked from any thread (`Cloud` costs
-about 15 microseconds, `At` a few microseconds once the place is known, half a millisecond for a new one).
+about 15 microseconds, `At` a few microseconds once the place is known, a quarter to half a millisecond for a new
+one: most of that is finding the storms about the place, and the wind over it).
+
+For what has to ask at very many places at one moment there is, inside the mod, `Model.Atlas` (since 0.2.2; the
+clouds' map of the planet uses it): every storm and shower on the world found once and sorted into squares of
+latitude and longitude, after which the clouds and what falls at a place (no wind) cost about what the large fields
+alone do, and are the same to the last figure as `At` gives (checked outside the game at 126,000 places: see
+[What was tested](What-was-tested.md)). It is not in Keystone's interface: another mod that wants the weather of a
+whole world asks `At` place by place, as before.
 
 The AI Bridge (which does not need this mod) finds `NaturalWeather.Bridge` by name: its "weather" call, a line in
 "status", and the wind on the craft for its ascent (it keeps near the airflow through the air, not over the
@@ -188,3 +202,8 @@ Measured in the game on 2026-10-09 (development build, Apple M5 Pro): working ou
 storms within 25 km 0.45 ms, everything about a new place 0.5 ms (each place is kept for two seconds). The wind on
 the craft being flown: seven points a physics step, about 0.1 ms a frame. Rain's particles run in Unity's own
 code. Not yet measured: the frame rate with heavy rain, many lamps, or a storm overhead.
+
+Measured again on the evening of 2026-10-10 (the same machine, a quieter game): the large fields at a place 4.6 µs,
+the clouds at a place 11 to 13 µs, the storms within 25 km 0.20 ms, everything about a new place 0.22 ms. The clouds'
+map of the planet, 32,768 places: 0.32 s of a thread for Kerbin by the atlas, where asking each place by itself is
+seven seconds at that rate (see [Clouds](Clouds.md), "0.2.2").

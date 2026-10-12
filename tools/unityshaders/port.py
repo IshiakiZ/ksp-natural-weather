@@ -28,7 +28,8 @@ import make_bundle  # noqa: E402  (for each shader's name, textures and how it i
 
 # Where each goes in the Unity project.
 FOLDER = {"volume": "VolumetricExplosions", "enlarge": "VolumetricExplosions", "layers": "VolumetricExplosions", "mark": "VolumetricExplosions", "shock": "VolumetricExplosions", "shadow": "VolumetricExplosions", "lens": "Keystone",
-          "shafts": "NaturalLight", "clean": "NaturalLight", "veil": "NaturalLight", "clouds": "NaturalWeather", "cloudsover": "NaturalWeather", "cloudshade": "NaturalWeather"}
+          "shafts": "NaturalLight", "clean": "NaturalLight", "veil": "NaturalLight", "clouds": "NaturalWeather", "cloudsover": "NaturalWeather", "cloudshade": "NaturalWeather",
+          "ocean": "NaturalOcean", "oceanfoam": "NaturalOcean", "oceanweed": "NaturalOcean", "oceanunder": "NaturalOcean"}
 
 # What Unity's own headers already declare.
 GIVEN = {"_WorldSpaceCameraPos", "_ProjectionParams", "_ZBufferParams", "_ScreenParams", "_Time"}
@@ -84,9 +85,9 @@ SPECIAL = [
     way = -1.0;
 #endif
     vs_TEXCOORD0 = vec2(in_POSITION0.x * 0.5 + 0.5, in_POSITION0.y * way * 0.5 + 0.5);"""),
-    (("cloudsover", "cloudshade", "veil"), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
+    (("cloudsover", "cloudshade", "veil", "oceanunder"), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
      """    // (drawn into whatever the camera is drawing into, which may lie either way: as for the lens's second go, above; Natural
-    // Light's veil the same)
+    // Light's veil and the sea's lens in the water the same)
     float way = 1.0;
 #if UNITY_UV_STARTS_AT_TOP
     way = _ProjectionParams.x;
@@ -100,7 +101,36 @@ SPECIAL = [
     # down, the game's projection is turned over, and so must this be)
     (("layers",), "vertex", "    gl_Position = vec4(mix(_VolSheet.xy, _VolSheet.zw, in_POSITION0.xy), 0.0, 1.0);",
      "    vec2 corner = mix(_VolSheet.xy, _VolSheet.zw, in_POSITION0.xy);\n    gl_Position = vec4(corner.x, corner.y * _ProjectionParams.x, 0.0, 1.0);"),
+    # The sea (Natural Ocean), 2026-10-11.
+    # (The lens's map: the sea's innermost ring drawn once more from straight above into a small picture of the water's height, its
+    # corners put by hand. A picture of the sea's own: on Direct3D its first row is its top, so the second axis is turned over, to
+    # put every place where the lens's pass (oceanunder.glsl, under) will look for it. And depth: OpenGL's runs from -1 to 1, the
+    # nearer the less; Direct3D's from 0 to 1, in this game the nearer the greater, and anything below 0 is cut away. The higher
+    # of two sheets of water must still win.)
+    (("ocean",), "vertex", "        clip = vec4(dot(off, _OceanAxisA.xyz) * _OceanMapAt.w, dot(off, _OceanAxisB.xyz) * _OceanMapAt.w, clamp(-dot(off, up) * 0.5, -0.99, 0.99), 1.0);",
+     """        float mapWay = 1.0;
+#if UNITY_UV_STARTS_AT_TOP
+        mapWay = -1.0;
+#endif
+#if defined(UNITY_REVERSED_Z)
+        float mapDeep = 0.5 + 0.5 * clamp(dot(off, up) * 0.5, -0.99, 0.99);
+#else
+        float mapDeep = clamp(-dot(off, up) * 0.5, -0.99, 0.99);
+#endif
+        clip = vec4(dot(off, _OceanAxisA.xyz) * _OceanMapAt.w, dot(off, _OceanAxisB.xyz) * _OceanMapAt.w * mapWay, mapDeep, 1.0);"""),
+    # (Which way a thing under water faces, from how its place changes from one pixel to the next. "The next pixel up" is the next
+    # one down where Direct3D draws straight to the screen, and the face would come out turned away from the camera: the sun's
+    # lines of light would lie on the sides of things turned from the sun. So it is turned to face the camera, whichever way it came.)
+    (("oceanunder",), "fragment", "    vec3 faces = -normalize(cross(dFdx(place), dFdy(place)));",
+     "    vec3 faces = -normalize(cross(dFdx(place), dFdy(place)));\n    if (dot(faces, place) > 0.0) faces = -faces;"),
 ]
+
+# The shaders that only ever draw into pictures of their own, by a sheet whose corners are put by hand: the weather's clouds (their
+# walk, the noise's slices, the putting together) and the sea's white water. There a pixel's place (gl_FragCoord) is the place of
+# its point in the picture, the same on Direct3D as on OpenGL, and is handed on as it comes. (Neither is drawn by a camera's own
+# projection, so _ProjectionParams, which FragCoord goes by, says nothing of them: the white water is worked out before any
+# camera has drawn, with whatever the last one of the frame before left there.)
+OWN = ("clouds", "oceanfoam")
 
 UNITYCG = """            #include "UnityCG.cginc"
 """
@@ -157,6 +187,7 @@ COMMON = """
             #define hlslcc_mtx4x4unity_MatrixV transpose(UNITY_MATRIX_V)
             #define SampleLod(S, uv, lod) S.SampleLevel(sampler##S, uv, lod)
             #define SampleFlat(S, uv) S.SampleLevel(sampler##S, uv, 0.0)
+            #define SampleGradient(S, uv, dx, dy) S.SampleGrad(sampler##S, uv, dx, dy)
             #define Mod(x, y) ((x) - (y) * floor((x) / (y)))
             #define GreaterThan(a, b) ((a) > (b))
             #define GreaterThanEqual(a, b) ((a) >= (b))
@@ -166,6 +197,13 @@ COMMON = """
             float4 TexelFetch(Texture3D t, int3 p, int lod) { return t.Load(int4(p, lod)); }
             int2 TextureSize(Texture2D t, int lod) { uint w, h; t.GetDimensions(w, h); return int2(w, h); }
             bool AllZero(float4 v) { return !any(v); }
+            // (one of a vector's numbers, chosen by a variable, read and given a new value: see chosen in tools/unityshaders/port.py)
+            float Pick(float2 v, int n) { return n <= 0 ? v.x : v.y; }
+            float Pick(float3 v, int n) { return n <= 0 ? v.x : n == 1 ? v.y : v.z; }
+            float Pick(float4 v, int n) { return n <= 0 ? v.x : n == 1 ? v.y : n == 2 ? v.z : v.w; }
+            float2 Put(float2 v, int n, float x) { return float2(n == 0 ? x : v.x, n == 1 ? x : v.y); }
+            float3 Put(float3 v, int n, float x) { return float3(n == 0 ? x : v.x, n == 1 ? x : v.y, n == 2 ? x : v.z); }
+            float4 Put(float4 v, int n, float x) { return float4(n == 0 ? x : v.x, n == 1 ? x : v.y, n == 2 ? x : v.z, n == 3 ? x : v.w); }
             // gl_FragCoord: which pixel is being drawn, its rows counted from the bottom, as every picture's are read here. Direct3D counts
             // the rows of what it draws into from the top, and the game draws into its pictures upside down to make up for it (saying so with
             // _ProjectionParams.x at -1): so where it is drawing straight to the screen, the row is turned over, or each picture read by pixel
@@ -240,19 +278,115 @@ def two_argument_atan(text):
     return text
 
 
-def convert(text, stage):
-    """A stretch of GLSL (functions, or the inside of main) as HLSL."""
+KIND = r"(?:float|int|uint|bool)(?:[234](?:x[234])?)?"
+
+
+def declared(text):
+    """The names a stretch of HLSL declares: those that are one vector (with which kind), and those that are lists (of anything)."""
+    vectors, lists = {}, set()
+    text = uncommented(text)
+    for found in re.finditer(r"(?<![\w.])(%s)\s+(?=[A-Za-z_])" % KIND, text):
+        vector = found.group(1)[-1] in "234" and "x" not in found.group(1)
+        at = found.end()
+        while True:
+            name = re.match(r"\s*([A-Za-z_]\w*)\s*", text[at:])
+            if not name or re.fullmatch(KIND + "|in|out|inout|const|static", name.group(1)): break      # (the next of a function's arguments)
+            at += name.end()
+            if text[at:at + 1] == "(": break                                                          # (a function)
+            if text[at:at + 1] == "[": lists.add(name.group(1))
+            elif vector: vectors[name.group(1)] = found.group(1)
+            # (on to the next name of the same statement, past what this one is set to)
+            depth = 0
+            while at < len(text):
+                c = text[at]
+                if c in "([{": depth += 1
+                elif c in ")]}":
+                    if depth == 0: break
+                    depth -= 1
+                elif c in ",;" and depth == 0: break
+                at += 1
+            if text[at:at + 1] != ",": break
+            at += 1
+    return vectors, lists
+
+
+def chosen(text, more):
+    """One of a vector's numbers chosen by a variable, v[n]: GLSL reads and writes it as it stands. Microsoft's compiler does not:
+
+    * Written to (result[n] = x), it can only be done by writing out, turn by turn, the loop that n comes from, which the
+      compiler will not do for a loop marked to be kept as one ("error X3531: can't unroll loops marked with loop attribute").
+      So the whole vector is given anew: result = Put(result, n, x).
+    * Read (n < 4 ? a[n] : b.x), HLSL works out both sides of the choice, and a counter that runs past the vector's end stops
+      the compiler ("error X3504: literal loop terminated early due to out of bounds array access"). So: Pick(a, n), which
+      gives the last number for anything past it.
+
+    Both met in the sea's foam (2026-10-11). Lists are left as they are: any place of a list can be read and written.
+    (more: the vectors declared outside this stretch, each with its kind.)"""
+    vectors, lists = declared(text)
+    vectors = dict(more, **vectors)
+    if set(vectors) & lists: raise SystemExit("declared both as a vector and as a list: " + ", ".join(sorted(set(vectors) & lists)))
+    pattern = re.compile(r"(?<![\w.])([A-Za-z_]\w*)\[")
+    at = 0
+    while True:
+        found = pattern.search(text, at)
+        if not found: break
+        name, depth, close = found.group(1), 0, None
+        for n in range(found.end() - 1, len(text)):
+            if text[n] == "[": depth += 1
+            elif text[n] == "]":
+                depth -= 1
+                if depth == 0: close = n; break
+        if close is None: raise SystemExit("an unclosed bracket in: " + text[found.start():found.start() + 60])
+        index = text[found.end():close]
+        written = re.match(r"\s*([-+*/]?)=(?!=)\s*", text[close + 1:])
+        at = found.end()
+        if name in lists or re.fullmatch(r"\s*\d+\s*", index): continue
+        if text.rfind("//", text.rfind("\n", 0, found.start()) + 1, found.start()) >= 0: continue     # (said of the code, not code)
+        if name not in vectors:
+            if written: raise SystemExit("%s[%s] is written to, and it cannot be told here whether %s is a vector or a list" % (name, index, name))
+            continue
+        if not re.fullmatch(r"float[234]", vectors[name]): raise SystemExit("%s[%s]: a %s's numbers chosen by a variable are not handled (only vectors of floats)" % (name, index, vectors[name]))
+        if written:
+            start = close + 1 + written.end()
+            end = text.index(";", start)
+            value = text[start:end]
+            if written.group(1): value = "%s[%s] %s (%s)" % (name, index, written.group(1), value)
+            new = "%s = Put(%s, %s, %s)" % (name, name, index, value)
+            text = text[:found.start()] + new + text[end:]
+            at = found.start() + len("%s = Put(%s, " % (name, name))                               # (the index and the value are gone through in their turn)
+        else:
+            text = text[:found.start()] + "Pick(%s, %s)" % (name, index) + text[close + 1:]
+            at = found.start() + len("Pick(%s, " % name)
+    return text
+
+
+def convert(text, stage, vectors={}, own=False):
+    """A stretch of GLSL (functions, or the inside of main) as HLSL. (vectors: the vectors declared outside it, each with its kind;
+    own: the shader draws only into pictures of its own, see OWN.)"""
     text = two_argument_atan(text)
     text = re.sub(r"\bivec([234])\b", r"int\1", text)
     text = re.sub(r"\buvec([234])\b", r"uint\1", text)
     text = re.sub(r"\bbvec([234])\b", r"bool\1", text)
     text = re.sub(r"\bvec([234])\b", r"float\1", text)
     text = re.sub(r"\bmat([234])\b", r"float\1x\1", text)
-    for was, now in (("textureLod(", "SampleLod("), ("texture(", "SampleFlat("), ("texelFetch(", "TexelFetch("), ("textureSize(", "TextureSize("), ("mix(", "lerp("), ("fract(", "frac("),
+    for was, now in (("textureLod(", "SampleLod("), ("textureGrad(", "SampleGradient("), ("texture(", "SampleFlat("), ("texelFetch(", "TexelFetch("), ("textureSize(", "TextureSize("), ("mix(", "lerp("), ("fract(", "frac("),
                      ("inversesqrt(", "rsqrt("), ("mod(", "Mod("), ("greaterThanEqual(", "GreaterThanEqual("), ("greaterThan(", "GreaterThan("), ("lessThanEqual(", "LessThanEqual("), ("lessThan(", "LessThan("), ("dFdx(", "ddx("), ("dFdy(", "ddy("), ("floatBitsToInt(", "asint(")):
         text = re.sub(r"(?<![\w.])" + re.escape(was), now, text)
     text = makers(text)
-    text = re.sub(r"\bgl_FragCoord\b", "FragCoord(IN.pos)", text)
+    text = chosen(text, vectors)
+    # (a list made in one go, float4[8](a, b, ...): HLSL writes it in braces)
+    while True:
+        found = re.search(r"\b(?:float[234]?|int|uint)\[\d+\]\(", text)
+        if not found: break
+        end = bracket(text, found.end() - 1)
+        text = text[:found.start()] + "{" + text[found.end():end] + "}" + text[end + 1:]
+    # (which side of a triangle is seen: handed to frag as a value of its own, see program. Seen on Direct3D 11, 2026-10-11: with
+    # the camera under the sea its underside was drawn as the underside and its top as the top, as on OpenGL. The game turns its
+    # triangles over where Direct3D draws into a picture upside down, and which side counts as the front goes with them.)
+    text = re.sub(r"\bgl_FrontFacing\b", "isFront", text)
+    # (which point of the mesh this is, by its number: handed to vert as a value of its own, see program)
+    text = re.sub(r"\bgl_VertexID\b", "int(vertexId)", text)
+    text = re.sub(r"\bgl_FragCoord\b", "IN.pos" if own else "FragCoord(IN.pos)", text)
     text = re.sub(r"\bgl_Position\b", "OUT.pos", text)
     text = re.sub(r"\bSV_Target0\b", "result", text)
     text = re.sub(r"\bSV_Target1\b", "result1", text)
@@ -281,6 +415,9 @@ def stage_of(text):
             if found: matrices.append(found.group(1)); continue
             found = re.match(r"uniform sampler([23])D (\w+);", bare)
             if found: textures.append((found.group(2), int(found.group(1)), line.split("//", 1)[1].strip() if "//" in line else "")); continue
+            # (a stack of flat textures: Natural Ocean's waves. Added 2026-10-11 on the Mac; compiled and seen on Windows the same day.)
+            found = re.match(r"uniform sampler2DArray (\w+);", bare)
+            if found: textures.append((found.group(1), "2DArray", line.split("//", 1)[1].strip() if "//" in line else "")); continue
             found = re.match(r"uniform (\w+) (\w+);", bare)
             if found: uniforms.append((found.group(2), found.group(1), line.split("//", 1)[1].strip() if "//" in line else "")); continue
             found = re.match(r"(in|out) (\w+) (\w+);", bare)
@@ -354,30 +491,40 @@ def program(which, header):
     for stage in (vertex, fragment):
         for name, dims, note in stage["textures"]:
             if name in seen: continue
-            seen.add(name); textures.append("            Texture%dD %s; SamplerState sampler%s;%s" % (dims, name, name, "     // " + note if note else ""))
+            seen.add(name); textures.append("            Texture%s %s; SamplerState sampler%s;%s" % (dims if dims == "2DArray" else "%dD" % dims, name, name, "     // " + note if note else ""))
     statics = ["            static %s %s;" % (kind(t), n) for n, t in fragment["statics"] + vertex["statics"]]
     passed = ["                float4 pos : SV_POSITION;"] + ["                %s %s : TEXCOORD%s;" % (kind(t), n, n[-1]) for n, t in vertex["outs"]]
+
+    # (the vectors each stage's code can name without declaring them: for chosen)
+    outside = {}
+    for stage in (vertex, fragment):
+        for name, glsl_type, _ in stage["uniforms"]:
+            if re.fullmatch(r"[iub]?vec[234]", glsl_type): outside[name] = {"v": "float", "i": "int", "u": "uint", "b": "bool"}[glsl_type[0]] + glsl_type[-1]
+        for name, glsl_type in stage["statics"]:
+            if re.fullmatch(r"vec[234]", glsl_type): outside[name + "_" if name in clash else name] = "float" + glsl_type[-1]
 
     out = [header + COMMON]
     out.append("\n".join(declared))
     out.append("\n".join(textures))
     if statics: out.append("\n".join(statics))
     out.append("\n            struct v2f\n            {\n%s\n            };\n" % "\n".join(passed))
-    if vertex["helpers"].strip(): out.append(indented(convert(vertex["helpers"], "vertex"), "            ") + "\n")
-    out.append("            v2f vert(float3 in_POSITION0 : POSITION)\n            {\n                v2f OUT = (v2f)0;")
-    out.append(indented(re.sub(r"\breturn;", "return OUT;", convert(vertex["main"], "vertex")), "            "))
+    if vertex["helpers"].strip(): out.append(indented(convert(vertex["helpers"], "vertex", outside, which in OWN), "            ") + "\n")
+    numbered = ", uint vertexId : SV_VertexID" if re.search(r"\bgl_VertexID\b", uncommented(vertex["main"] + vertex["helpers"])) else ""
+    out.append("            v2f vert(float3 in_POSITION0 : POSITION%s)\n            {\n                v2f OUT = (v2f)0;" % numbered)
+    out.append(indented(re.sub(r"\breturn;", "return OUT;", convert(vertex["main"], "vertex", outside, which in OWN)), "            "))
     out.append("                return OUT;\n            }\n")
-    if fragment["helpers"].strip(): out.append(indented(convert(fragment["helpers"], "fragment"), "            ") + "\n")
+    if fragment["helpers"].strip(): out.append(indented(convert(fragment["helpers"], "fragment", outside, which in OWN), "            ") + "\n")
     if any(name == "SV_Target1" for name, _ in fragment["outs"]):
         # (a second picture drawn into at the same time: see volume.glsl's SV_Target1)
         out.append("            struct both\n            {\n                float4 result : SV_Target0;\n                float4 result1 : SV_Target1;\n            };\n")
         out.append("            both Both(float4 a, float4 b) { both o; o.result = a; o.result1 = b; return o; }\n")
         out.append("            both frag(v2f IN)\n            {\n                float4 result = float4(0.0, 0.0, 0.0, 0.0);\n                float4 result1 = float4(0.0, 0.0, 0.0, 0.0);")
-        out.append(indented(re.sub(r"\breturn;", "return Both(result, result1);", convert(fragment["main"], "fragment")), "            "))
+        out.append(indented(re.sub(r"\breturn;", "return Both(result, result1);", convert(fragment["main"], "fragment", outside, which in OWN)), "            "))
         out.append("                return Both(result, result1);\n            }")
     else:
-        out.append("            float4 frag(v2f IN) : SV_Target\n            {\n                float4 result = float4(0.0, 0.0, 0.0, 0.0);")
-        out.append(indented(re.sub(r"\breturn;", "return result;", convert(fragment["main"], "fragment")), "            "))
+        facing = ", bool isFront : SV_IsFrontFace" if re.search(r"\bgl_FrontFacing\b", uncommented(fragment["main"] + fragment["helpers"])) else ""
+        out.append("            float4 frag(v2f IN%s) : SV_Target\n            {\n                float4 result = float4(0.0, 0.0, 0.0, 0.0);" % facing)
+        out.append(indented(re.sub(r"\breturn;", "return result;", convert(fragment["main"], "fragment", outside, which in OWN)), "            "))
         out.append("                return result;\n            }")
     return out, clash
 
@@ -391,7 +538,7 @@ def hlsl(which):
 
 def port(which):
     spec = make_bundle.SHADERS[which]
-    properties = ["        %s (\"%s\", %s) = \"\" {}" % (name, name[1:], "3D" if dims == 3 else "2D") for name, dims in spec["textures"][:-spec.get("given", 1)]]
+    properties = ["        %s (\"%s\", %s) = \"\" {}" % (name, name[1:], "3D" if dims == 3 else "2DArray" if dims == 5 else "2D") for name, dims in spec["textures"][:-spec.get("given", 1)]]
     source, dest = spec.get("blend", (1.0, 10.0))
     body, clash = program(which, UNITYCG)
 
@@ -399,7 +546,7 @@ def port(which):
     out.append("// %s: made from tools/shaderpack/%s by tools/unityshaders/port.py. Do not edit: edit the GLSL and run that again." % (spec["name"], spec["code"]))
     out.append("Shader \"%s\"\n{\n    Properties\n    {\n%s\n    }\n    SubShader\n    {" % (spec["name"], "\n".join(properties)))
     out.append("        Tags { \"Queue\" = \"Transparent\" \"RenderType\" = \"Transparent\" \"IgnoreProjector\" = \"True\" }\n        Pass\n        {")
-    out.append("            Blend %s %s\n            ZWrite Off\n            ZTest %s\n            Cull %s\n" % (BLEND[source], BLEND[dest], ZTEST[spec.get("ztest", 8.0)], CULL[spec.get("cull", 1.0)]))
+    out.append("            Blend %s %s\n            ZWrite %s\n            ZTest %s\n            Cull %s\n" % (BLEND[source], BLEND[dest], "On" if spec.get("zwrite", 0.0) else "Off", ZTEST[spec.get("ztest", 8.0)], CULL[spec.get("cull", 1.0)]))
     out.append("            CGPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            #pragma target 4.5\n            #pragma only_renderers d3d11 glcore metal vulkan")
     out += body
     out.append("            ENDCG\n        }\n    }\n}")
@@ -412,7 +559,8 @@ def port(which):
 
 if __name__ == "__main__":
     asked = sys.argv[1:]
-    for name in asked or ["volume", "enlarge", "layers", "mark", "shock", "shadow", "lens", "shafts", "clean", "veil", "clouds", "cloudsover", "cloudshade"]:
+    for name in asked or ["volume", "enlarge", "layers", "mark", "shock", "shadow", "lens", "shafts", "clean", "veil", "clouds", "cloudsover", "cloudshade",
+                          "ocean", "oceanfoam", "oceanweed", "oceanunder"]:
         # (a repository of one mod has that mod's shaders and not the others': those are passed over)
         if not asked and not os.path.exists(os.path.join(PACK, make_bundle.SHADERS[name]["code"])):
             print("left out: %s (tools/shaderpack/%s is not here)" % (name, make_bundle.SHADERS[name]["code"]))

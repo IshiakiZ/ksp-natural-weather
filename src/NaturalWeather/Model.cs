@@ -176,9 +176,7 @@ namespace NaturalWeather
             double cycle = CellCycle / (Pace <= 0.05f ? 0.05f : Pace);
             for (int lattice = 0; lattice < 2; lattice++)
             {
-                double shifted = ut + lattice * cycle * 0.5;
-                int c = Noise.Floor(shifted / cycle);
-                double since = shifted - c * cycle;            // seconds since this lattice's cycle began
+                Cycle(w, lattice, ut, cycle, out double since, out uint seed);
                 float drift = BandDrift(w, lat) * 0.8f;
                 double cosLat = Math.Max(0.2, Math.Cos(lat * Deg));
                 double lonD = lon - drift * since / (w.Radius * cosLat) / Deg;      // where the place is in the frame the cells are born in
@@ -187,55 +185,178 @@ namespace NaturalWeather
                 int reach = (int)Math.Ceiling((radius + 9000.0) / CellBox) + 1;
                 int ix = Noise.Floor(px), iy = Noise.Floor(py), iz = Noise.Floor(pz);
                 double rr = w.Radius / CellBox;
-                uint seed = w.Seed ^ (uint)(lattice * 0x51ed27u) ^ (uint)c * 0x2c1b3c6du;
                 for (int a = -reach; a <= reach; a++)
                     for (int bb = -reach; bb <= reach; bb++)
                         for (int cc = -reach; cc <= reach; cc++)
                         {
-                            int x = ix + a, y = iy + bb, z = iz + cc;
-                            // (only the boxes the planet's surface passes through)
-                            double cx = x + 0.5, cy = y + 0.5, cz = z + 0.5, cd = Math.Sqrt(cx * cx + cy * cy + cz * cz);
-                            if (Math.Abs(cd - rr) > 1.0) continue;
-                            uint h = Noise.Hash(x, y, z, seed);
-                            if (Noise.Unit(h) > 0.5f) continue;                       // half of them have a chance at all
-                            float born = 0.45f * Noise.Unit(Noise.Hash(h ^ 0x1234567u));
-                            float life = 0.5f + 0.1f * Noise.Unit(Noise.Hash(h ^ 0x89abcdu));
-                            float age = (float)(since / cycle) - born;
-                            if (age < 0f || age > life) continue;
-                            float through = age / life;
-                            // its place: a random point in the box, put on the surface
-                            double qx = x + Noise.Unit(Noise.Hash(h ^ 0x9e3779b9U)), qy = y + Noise.Unit(Noise.Hash(h ^ 0x7f4a7c15U)), qz = z + Noise.Unit(Noise.Hash(h ^ 0x94d049bbU));
-                            double ql = Math.Sqrt(qx * qx + qy * qy + qz * qz);
-                            double cLat = Math.Asin(qz / ql) / Deg, cLonD = Math.Atan2(qy, qx) / Deg;
-                            double cCos = Math.Max(0.2, Math.Cos(cLat * Deg));
-                            float cDrift = BandDrift(w, cLat) * 0.8f;
-                            double cLon = cLonD + cDrift * since / (w.Radius * cCos) / Deg;
+                            if (!Born(w, ix + a, iy + bb, iz + cc, seed, since, cycle, rr, out uint h, out float through, out double cLat, out double cLon, out float cDrift)) continue;
                             // how far from the place
                             double dist = Distance(w, lat, lon, cLat, cLon);
                             if (dist > radius + 9000.0) continue;
-                            Base cb = Sample(w, cLat, cLon, ut);
-                            float potential = cb.Inst * Noise.Smooth(0.32f, 0.68f, cb.M) + 0.55f * cb.Front * Noise.Smooth(0.5f, 0.7f, cb.M);
-                            potential = potential * w.Climate.Storms * (0.75f + 0.5f * Noise.Unit(Noise.Hash(h ^ 0xfeedu))) + cb.StormBias;
-                            float most = Noise.Smooth(0.28f, 0.7f, potential);
-                            if (most <= 0.02f) continue;
-                            float shape = Noise.Smooth(0f, 0.3f, through) * (1f - Noise.Smooth(0.65f, 1f, through));
-                            float strength = most * shape;
-                            if (strength <= 0.02f) continue;
-                            float radiusM = (float)(2500.0 + 5500.0 * most * (0.6f + 0.8f * Noise.Unit(Noise.Hash(h ^ 0xabcu))));
-                            if (dist > radius + radiusM) continue;
-                            bool thunder = w.Climate.Lightning > 0f && potential > 0.5f && Noise.Unit(Noise.Hash(h ^ 0x777u)) < 0.85f;
-                            float baseH = cb.Ground + CumulusBase(cb);
-                            float top = baseH + 1500f + (thunder ? 1f : 0.55f) * most * Math.Max(0f, w.Climate.Tops - baseH - 1500f);
-                            into.Add(new WeatherCell
-                            {
-                                Id = (int)(h & 0x7fffffff), Latitude = cLat, Longitude = cLon, Radius = radiusM, Base = baseH, Top = top, Life = through,
-                                Strength = strength, Rain = Noise.Clamp01((float)Math.Pow(strength, 1.2) * (thunder ? 1f : 0.65f) * w.Climate.Water),
-                                Thunder = thunder, Drift = new Vector3d(cDrift, 0.0, 0.0),
-                            });
+                            if (!Grown(w, h, through, cLat, cLon, cDrift, ut, out WeatherCell cell)) continue;
+                            if (dist > radius + cell.Radius) continue;
+                            into.Add(cell);
                             found++;
                         }
             }
             return found;
+        }
+
+        /// <summary>One of the two lattices storms are born on, at a moment: how long its cycle has run, and the cycle's own number in its seed.</summary>
+        static void Cycle(World w, int lattice, double ut, double cycle, out double since, out uint seed)
+        {
+            double shifted = ut + lattice * cycle * 0.5;
+            int c = Noise.Floor(shifted / cycle);
+            since = shifted - c * cycle;            // seconds since this lattice's cycle began
+            seed = w.Seed ^ (uint)(lattice * 0x51ed27u) ^ (uint)c * 0x2c1b3c6du;
+        }
+
+        /// <summary>Whether a box of a lattice has a storm alive in it now, and if so where the storm is and how far through its life (cheap: no weather is asked).</summary>
+        static bool Born(World w, int x, int y, int z, uint seed, double since, double cycle, double rr, out uint h, out float through, out double cLat, out double cLon, out float cDrift)
+        {
+            h = 0u; through = 0f; cLat = 0.0; cLon = 0.0; cDrift = 0f;
+            // (only the boxes the planet's surface passes through)
+            double cx = x + 0.5, cy = y + 0.5, cz = z + 0.5, cd = Math.Sqrt(cx * cx + cy * cy + cz * cz);
+            if (Math.Abs(cd - rr) > 1.0) return false;
+            h = Noise.Hash(x, y, z, seed);
+            if (Noise.Unit(h) > 0.5f) return false;                       // half of them have a chance at all
+            float born = 0.45f * Noise.Unit(Noise.Hash(h ^ 0x1234567u));
+            float life = 0.5f + 0.1f * Noise.Unit(Noise.Hash(h ^ 0x89abcdu));
+            float age = (float)(since / cycle) - born;
+            if (age < 0f || age > life) return false;
+            through = age / life;
+            // its place: a random point in the box, put on the surface
+            double qx = x + Noise.Unit(Noise.Hash(h ^ 0x9e3779b9U)), qy = y + Noise.Unit(Noise.Hash(h ^ 0x7f4a7c15U)), qz = z + Noise.Unit(Noise.Hash(h ^ 0x94d049bbU));
+            double ql = Math.Sqrt(qx * qx + qy * qy + qz * qz);
+            cLat = Math.Asin(qz / ql) / Deg;
+            double cLonD = Math.Atan2(qy, qx) / Deg;
+            double cCos = Math.Max(0.2, Math.Cos(cLat * Deg));
+            cDrift = BandDrift(w, cLat) * 0.8f;
+            cLon = cLonD + cDrift * since / (w.Radius * cCos) / Deg;
+            return true;
+        }
+
+        /// <summary>The storm of a box that has one (see Born), as the weather where it stands makes it: false if that leaves nothing of it.</summary>
+        static bool Grown(World w, uint h, float through, double cLat, double cLon, float cDrift, double ut, out WeatherCell cell)
+        {
+            cell = default(WeatherCell);
+            Base cb = Sample(w, cLat, cLon, ut);
+            float potential = cb.Inst * Noise.Smooth(0.32f, 0.68f, cb.M) + 0.55f * cb.Front * Noise.Smooth(0.5f, 0.7f, cb.M);
+            potential = potential * w.Climate.Storms * (0.75f + 0.5f * Noise.Unit(Noise.Hash(h ^ 0xfeedu))) + cb.StormBias;
+            float most = Noise.Smooth(0.28f, 0.7f, potential);
+            if (most <= 0.02f) return false;
+            float shape = Noise.Smooth(0f, 0.3f, through) * (1f - Noise.Smooth(0.65f, 1f, through));
+            float strength = most * shape;
+            if (strength <= 0.02f) return false;
+            float radiusM = (float)(2500.0 + 5500.0 * most * (0.6f + 0.8f * Noise.Unit(Noise.Hash(h ^ 0xabcu))));
+            bool thunder = w.Climate.Lightning > 0f && potential > 0.5f && Noise.Unit(Noise.Hash(h ^ 0x777u)) < 0.85f;
+            float baseH = cb.Ground + CumulusBase(cb);
+            float top = baseH + 1500f + (thunder ? 1f : 0.55f) * most * Math.Max(0f, w.Climate.Tops - baseH - 1500f);
+            cell = new WeatherCell
+            {
+                Id = (int)(h & 0x7fffffff), Latitude = cLat, Longitude = cLon, Radius = radiusM, Base = baseH, Top = top, Life = through,
+                Strength = strength, Rain = Noise.Clamp01((float)Math.Pow(strength, 1.2) * (thunder ? 1f : 0.65f) * w.Climate.Water),
+                Thunder = thunder, Drift = new Vector3d(cDrift, 0.0, 0.0),
+            };
+            return true;
+        }
+
+        /// <summary>
+        /// The weather of a whole world at one moment, for what asks at very many places at once (the clouds' map of the planet,
+        /// 32,768 places): the clouds and what falls at each, as Layers gives them, without the wind. What costs most in the
+        /// weather at one place is finding the storms about it (some seven hundred boxes of the lattice looked into, and the
+        /// weather asked where each storm stands, for every place); here every storm on the world is found once, sorted into
+        /// squares of latitude and longitude, and each place looks only into the squares round it. On a world too large for
+        /// that (Jool: a million boxes) each place finds its own, as before. One thread at a time.
+        /// </summary>
+        public sealed class Atlas
+        {
+            struct Kept { public WeatherCell Cell; public int Order; }
+
+            readonly World w;
+            readonly double ut;
+            readonly List<Kept>[] squares;             // (null: each place finds its own storms)
+            readonly int rows, columns;
+            readonly double square;                    // degrees to a square's side
+            readonly List<Kept> found = new List<Kept>();
+            readonly List<WeatherCell> near = new List<WeatherCell>();
+            /// <summary>How many storms and showers the world has at this moment (-1: not counted, the world is too large).</summary>
+            public readonly int Storms = -1;
+
+            public Atlas(World world, double moment)
+            {
+                w = world; ut = moment;
+                double rr = w.Radius / CellBox;
+                if (w.Climate.Storms <= 0f && Chosen != 6) { Storms = 0; return; }
+                if (rr > 64.0) return;
+                // (squares as wide as a storm can reach: Cells takes those within 25 km and their own radius, or 9 km if that is less)
+                square = Math.Max(1.0, 36000.0 / (w.Radius * Deg));
+                rows = Math.Max(1, (int)Math.Ceiling(180.0 / square));
+                columns = Math.Max(1, (int)Math.Ceiling(360.0 / square));
+                squares = new List<Kept>[rows * columns];
+                double cycle = CellCycle / (Pace <= 0.05f ? 0.05f : Pace);
+                int n = (int)Math.Ceiling(rr) + 2;
+                Storms = 0;
+                // (the boxes gone through in the order Cells goes through them, and each storm's turn kept: where two storms
+                // overlap, which of them names the cloud depends on the order they come in)
+                for (int lattice = 0; lattice < 2; lattice++)
+                {
+                    Cycle(w, lattice, ut, cycle, out double since, out uint seed);
+                    for (int x = -n; x <= n; x++)
+                        for (int y = -n; y <= n; y++)
+                            for (int z = -n; z <= n; z++)
+                            {
+                                if (!Born(w, x, y, z, seed, since, cycle, rr, out uint h, out float through, out double cLat, out double cLon, out float cDrift)) continue;
+                                if (!Grown(w, h, through, cLat, cLon, cDrift, ut, out WeatherCell cell)) continue;
+                                int at = Row(cell.Latitude) * columns + Column(cell.Longitude);
+                                if (squares[at] == null) squares[at] = new List<Kept>();
+                                squares[at].Add(new Kept { Cell = cell, Order = Storms });
+                                Storms++;
+                            }
+                }
+            }
+
+            int Row(double lat) { int r = (int)((lat + 90.0) / square); return r < 0 ? 0 : r >= rows ? rows - 1 : r; }
+            int Column(double lon) { int c = Noise.Floor((lon + 180.0) / square) % columns; return c < 0 ? c + columns : c; }
+
+            /// <summary>The clouds and what falls at a place (no wind): what Here gives for them, to the last figure.</summary>
+            public WeatherHere At(double lat, double lon)
+            {
+                Base b = Sample(w, lat, lon, ut);
+                near.Clear();
+                if (squares == null) { if (Storms != 0) Cells(w, lat, lon, 25000.0, ut, near); }
+                else if (Storms > 0)
+                {
+                    // (the storms Cells finds within 25 km of the place: from the squares round it, as many to each side as 36 km of
+                    // longitude come to in the row nearer the pole, and all of them near a pole)
+                    double perDegree = w.Radius * Deg, cosLat = Math.Cos(Math.Min(90.0, Math.Abs(lat) + square) * Deg);
+                    int row = Row(lat), column = Column(lon);
+                    int aside = cosLat > 0.05 ? (int)Math.Ceiling(1.0 / cosLat) : columns;
+                    bool round = 2 * aside + 1 >= columns;       // (all the way round the world: every square of the row, once)
+                    int first = round ? 0 : column - aside, last = round ? columns - 1 : column + aside;
+                    found.Clear();
+                    for (int r = Math.Max(0, row - 1); r <= Math.Min(rows - 1, row + 1); r++)
+                        for (int k = first; k <= last; k++)
+                        {
+                            List<Kept> held = squares[r * columns + (k % columns + columns) % columns];
+                            if (held == null) continue;
+                            for (int i = 0; i < held.Count; i++)
+                            {
+                                WeatherCell cell = held[i].Cell;
+                                double reach = 25000.0 + Math.Min(9000.0, cell.Radius);
+                                double dLat = (cell.Latitude - lat) * perDegree;
+                                if (dLat > reach + 100.0 || dLat < -reach - 100.0) continue;
+                                if (Distance(w, lat, lon, cell.Latitude, cell.Longitude) > reach) continue;
+                                // (kept in their turn: a few at most)
+                                int at = found.Count;
+                                while (at > 0 && found[at - 1].Order > held[i].Order) at--;
+                                found.Insert(at, held[i]);
+                            }
+                        }
+                    for (int i = 0; i < found.Count; i++) near.Add(found[i].Cell);
+                }
+                return Build(w, lat, lon, ut, ref b, near);
+            }
         }
 
         /// <summary>The distance along the surface between two places, metres.</summary>
@@ -315,10 +436,16 @@ namespace NaturalWeather
             }
             else
             {
+                // (How deep the heaps are, and how much of the sky they take. On the usual fair day the air stops rising at
+                // a lid a few hundred metres above where it first condenses: flat heaps, wider than tall, a quarter of the
+                // sky. Only where the air is both unstable and damp is there no lid to speak of, and the heaps tower and
+                // crowd. As it first was, a fair day's heaps were 900 m deep over half the sky: the showery day every day,
+                // and the user: "usually the clouds aren't huge bulbs like they are now". See Kinds-of-cloud.md.)
+                float unsettled = b.Inst * b.M;
                 here.Low.Kind = CloudKind.Cumulus;
-                here.Low.Cover = cu;
+                here.Low.Cover = cu * (0.5f + 0.5f * Noise.Smooth(0.3f, 0.7f, unsettled));
                 here.Low.Base = b.Ground + CumulusBase(b);
-                here.Low.Top = here.Low.Base + 300f + 2600f * b.Inst * b.M;
+                here.Low.Top = here.Low.Base + 220f + 900f * unsettled + 2400f * Noise.Smooth(0.42f, 0.8f, unsettled);
                 here.Low.Water = 0.15f + 0.5f * Noise.Clamp01((here.Low.Top - here.Low.Base) / 3000f);
             }
             if (here.Low.Cover < 0.01f) { here.Low.Kind = CloudKind.None; here.Low.Cover = 0f; }

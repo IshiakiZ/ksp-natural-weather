@@ -140,11 +140,13 @@ SHADERS = {
                      ("_CloudAhead", 4, False), ("_CloudFixedX", 4, False), ("_CloudFixedY", 4, False), ("_CloudFixedZ", 4, False), ("_CloudNoise", 4, False), ("_CloudDrift", 4, False),
                      ("_CloudShell", 4, False), ("_CloudLook", 4, False), ("_CloudSun", 4, False), ("_CloudSunTint", 4, False), ("_CloudSky", 4, False), ("_CloudGround", 4, False),
                      ("_CloudAir", 4, False), ("_CloudHaze", 4, False), ("_CloudFlashA", 4, False), ("_CloudFlashB", 4, False), ("_CloudFlashTint", 4, False),
+                     ("_CloudHoleA", 4, False), ("_CloudHoleB", 4, False), ("_CloudHoleC", 4, False),
+                     ("_CloudFieldA", 4, False), ("_CloudFieldB", 4, False), ("_CloudFieldLevA", 4, False), ("_CloudFieldLevB", 4, False), ("_CloudFieldLevC", 4, False), ("_CloudFieldLevD", 4, False),
                      ("_CloudPrevAt", 4, False), ("_CloudPrevRight", 4, False), ("_CloudPrevUp", 4, False), ("_CloudPrevAhead", 4, False),
                      ("_CloudShadowAt", 4, False), ("_CloudShadowX", 4, False), ("_CloudShadowY", 4, False), ("_CloudSunFixed", 4, False),
-                     ("_CloudStreets", 4, False), ("_CloudAlong", 4, False)]
+                     ("_CloudStreets", 4, False), ("_CloudAlong", 4, False), ("_CloudHabit", 4, False)]
                     + [("_CloudCellA%d" % n, 4, False) for n in range(6)] + [("_CloudCellB%d" % n, 4, False) for n in range(6)],
-        "textures": [("_CloudShape", 3), ("_CloudDetail", 3), ("_CloudMap", 2), ("_CloudMapB", 2), ("_CloudMapC", 2), ("_CloudAirLut", 2), ("_CloudNow", 2), ("_CloudNowD", 2),
+        "textures": [("_CloudField", 3), ("_CloudShape", 3), ("_CloudDetail", 3), ("_CloudMap", 2), ("_CloudMapB", 2), ("_CloudMapC", 2), ("_CloudAirLut", 2), ("_CloudNow", 2), ("_CloudNowD", 2),
                      ("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2)],
         "vertex": [("_CloudSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,
@@ -156,7 +158,69 @@ SHADERS = {
         "fragment": [("_ZBufferParams", 4, False), ("_CloudRight", 4, False), ("_CloudUp", 4, False), ("_CloudAhead", 4, False), ("_CloudOver", 4, False)],
         "textures": [("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2)],
         "vertex": [("_CloudSheet", 4, False)],
-        "cull": 0.0, "ztest": 8.0,       # (laid over what is there by how much the cloud hides: colour already multiplied by that)
+        # (laid over what is there by how much the cloud hides: colour already multiplied by that. The sheet stands as far off
+        # as the nearest cloud can be (Clouds.cs, Setup) and is hidden by whatever is drawn nearer: 4, nearer or as near)
+        "cull": 0.0, "ztest": 4.0,
+    },
+    # Natural Ocean's sea: a mesh moved by the waves in its vertex program, drawn solid (it writes how far off it is, so that
+    # what is drawn after it, smoke and spray, goes behind the waves it is behind). (Numbers from 201 up.)
+    "ocean": {
+        "name": "NaturalOcean/Sea", "path": "assets/naturalocean/sea.shader", "id": 7307199000000000201, "program": 1987650201,
+        "bundle": "naturalocean", "file": "CAB-6e61747572616c6f6365616e00000000", "code": "ocean.glsl",
+        "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ZBufferParams", 4, False), ("_ScreenParams", 4, False), ("_ProjectionParams", 4, False),
+                     ("_OceanRoughA", 4, False), ("_OceanRoughB", 4, False), ("_OceanSun", 4, False), ("_OceanSunTint", 4, False), ("_OceanSkyTop", 4, False), ("_OceanSkyLow", 4, False),
+                     ("_OceanWater", 4, False), ("_OceanFoam", 4, False), ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanLaceAt", 4, False), ("_OceanLaceAtB", 4, False), ("_OceanLaceCount", 4, False), ("_OceanLaceCountB", 4, False), ("_OceanLaceTurn", 4, False), ("_OceanLaceMix", 4, False),
+                     ("_OceanMirrorX", 4, False), ("_OceanMirrorY", 4, False), ("_OceanMirrorW", 4, False), ("_OceanAtSpot", 4, False),
+                     ("_OceanHighA", 4, False), ("_OceanHighB", 4, False), ("_UnderwaterFogColor", 4, False), ("_OceanStreak", 4, False), ("_OceanStreakAt", 4, False),
+                     ("_WeedUp", 4, False), ("_WeedFirst", 4, False), ("_WeedSecond", 4, False), ("_UnderLight", 4, False)],
+        "vertex": [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True), ("_OceanMid", 4, False), ("_OceanAxisA", 4, False), ("_OceanAxisB", 4, False),
+                   ("_OceanLay", 4, False), ("_OceanTwin", 4, False), ("_OceanShore", 4, False), ("_OceanMapAt", 4, False), ("_OceanWind", 4, False), ("_SeabedAtA", 4, False), ("_SeabedAtB", 4, False), ("_SeabedCell", 4, False),
+                   ("_OceanHighA", 4, False), ("_OceanHighB", 4, False), ("_OceanSurfA", 4, False), ("_OceanSurfB", 4, False), ("_OceanAtSpot", 4, False),
+                   ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanBreaks", 4, False), ("_OceanBreakHow", 4, False)]
+                  + [("_OceanAt%d" % n, 4, False) for n in range(8)],
+        # (the waves: two stacks of eight textures each, 5 being a stack of flat textures)
+        "textures": [("_OceanMoved", 5), ("_OceanSlope", 5), ("_OceanFoamMap", 2), ("_OceanLace", 2), ("_OceanMirror", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanScene", 2), ("_CameraDepthTexture", 2)],
+        "given": 2,                      # (the picture so far and how far off each pixel of it is: the game's own, handed over as they are)
+        "blend": (1.0, 0.0), "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,
+    },
+    # Natural Ocean's white water: worked out from the waves and from itself as it was (a picture of its own, not the screen).
+    "oceanfoam": {
+        "name": "NaturalOcean/Foam", "path": "assets/naturalocean/foam.shader", "id": 7307199000000000202, "program": 1987650202,
+        "bundle": "naturaloceanfoam", "file": "CAB-6e61747572616c6f6365616e666f616d", "code": "oceanfoam.glsl",
+        "fragment": [("_OceanLay", 4, False), ("_OceanTwin", 4, False)] + [("_OceanAt%d" % n, 4, False) for n in range(5)]
+                    + [("_Foam" + n, 4, False) for n in ("Texel", "CellA", "CellB", "MovedA", "MovedB", "SnapA", "SnapB", "AtA", "AtB", "Breaks", "Time", "Count", "Mode", "Ragged", "Coarse", "Front", "Pass", "Rows", "RowsAt")]
+                    + [("_SeabedAtA", 4, False), ("_SeabedAtB", 4, False), ("_SeabedCell", 4, False), ("_OceanHighA", 4, False), ("_OceanHighB", 4, False),
+                       ("_OceanSurfA", 4, False), ("_OceanSurfB", 4, False), ("_OceanAtSpot", 4, False)]
+                    + [("_FoamHull%d" % n, 4, False) for n in range(12)],
+        "textures": [("_OceanSlope", 5), ("_FoamPrev", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanLace", 2), ("_FoamFronts", 2)],
+        "vertex": [],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),
+    },
+    # Natural Ocean's seaweed: ribbons laid out and swayed in the vertex program from a mesh that only says where each plant stands.
+    "oceanweed": {
+        "name": "NaturalOcean/Weed", "path": "assets/naturalocean/weed.shader", "id": 7307199000000000203, "program": 1987650203,
+        "bundle": "naturaloceanweed", "file": "CAB-6e61747572616c6f6365616e77656564", "code": "oceanweed.glsl",
+        "fragment": [("_WeedLight", 4, False), ("_WeedSky", 4, False), ("_WeedWater", 4, False), ("_OceanMirrorX", 4, False), ("_OceanMirrorY", 4, False), ("_OceanMirrorW", 4, False),
+                     ("_WeedUpHere", 4, False)],
+        "vertex": [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True), ("_WeedSway", 4, False), ("_WeedClock", 4, False), ("_WeedEye", 4, False)],
+        "textures": [("_OceanMirror", 2)],
+        "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,
+        "blend": (1.0, 0.0),
+    },
+    # Natural Ocean's lens in the water: laid over the finished picture while the camera's glass is at the water or under it.
+    "oceanunder": {
+        "name": "NaturalOcean/Under", "path": "assets/naturalocean/under.shader", "id": 7307199000000000204, "program": 1987650204,
+        "bundle": "naturaloceanunder", "file": "CAB-6e61747572616c6f6365616e756e6465", "code": "oceanunder.glsl",
+        "fragment": [("_ZBufferParams", 4, False), ("_UnderLens", 4, False), ("_UnderPlane", 4, False), ("_UnderUp", 4, False), ("_UnderMapA", 4, False), ("_UnderMapB", 4, False),
+                     ("_UnderLight", 4, False), ("_UnderSky", 4, False), ("_UnderTakes", 4, False), ("_UnderSun", 4, False), ("_UnderEye", 4, False),
+                     ("_UnderSunWay", 4, False),
+                     ("_OceanLay", 4, False), ("_OceanTwin", 4, False), ("_OceanAt3", 4, False), ("_OceanAt4", 4, False), ("_OceanAt5", 4, False), ("_OceanAt6", 4, False)],
+        "textures": [("_OceanSlope", 5), ("_UnderScene", 2), ("_UnderMap", 2), ("_CameraDepthTexture", 2)],
+        "given": 3,                      # (the picture so far, the map of the water's height at the glass, and how far off each pixel is: handed over as they are)
+        "vertex": [],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),
     },
     "cloudshade": {
         "name": "NaturalWeather/CloudShade", "path": "assets/naturalweather/cloudshade.shader", "id": 7307199000000000103, "program": 1987650103,
@@ -215,24 +279,31 @@ def fixed_locations(code, textures):
     at all (a 2D and a 3D texture on one unit)."""
     text = code.decode("utf-8")
     at = text.index("#ifdef FRAGMENT")
+
+    def placed_in(stage, what):
+        out, placed = [], False
+        for line in stage.split("\n"):
+            m = re.match(r"uniform (sampler\w+) (\w+);(.*)$", line)
+            if m and m.group(2) in textures:
+                where = textures.index(m.group(2))
+                out += ["#ifdef GL_ARB_explicit_uniform_location",
+                        "layout(location = %d) uniform %s %s;%s" % (where, m.group(1), m.group(2), m.group(3)),
+                        "#else", line, "#endif"]
+                continue
+            out.append(line)
+            # (the extension asked for straight after the program's #version line, before anything that is not a directive)
+            if not placed and line.startswith("#version"):
+                out.append("#extension GL_ARB_explicit_uniform_location : enable")
+                placed = True
+        assert placed, "no #version line in the %s program" % what
+        return "\n".join(out)
+
+    # (The vertex program too, where it reads textures: the sea's does, for its waves. Left without places of their own there,
+    # on NVIDIA's OpenGL the sea's two stacks of waves read as nothing and the sea lay flat as glass, with no word in the log:
+    # seen on Windows started with -force-glcore, 2026-10-11.)
     head, body = text[:at], text[at:]
-    lines = body.split("\n")
-    out, placed = [], False
-    for line in lines:
-        m = re.match(r"uniform (sampler\w+) (\w+);(.*)$", line)
-        if m and m.group(2) in textures:
-            where = textures.index(m.group(2))
-            out += ["#ifdef GL_ARB_explicit_uniform_location",
-                    "layout(location = %d) uniform %s %s;%s" % (where, m.group(1), m.group(2), m.group(3)),
-                    "#else", line, "#endif"]
-            continue
-        out.append(line)
-        # (the extension asked for straight after the program's #version line, before anything that is not a directive)
-        if not placed and line.startswith("#version"):
-            out.append("#extension GL_ARB_explicit_uniform_location : enable")
-            placed = True
-    assert placed, "no #version line in the fragment program"
-    return (head + "\n".join(out)).encode("utf-8")
+    if re.search(r"^uniform sampler\w+ \w+;", head, re.M): head = placed_in(head, "vertex")
+    return (head + placed_in(body, "fragment")).encode("utf-8")
 
 
 def build(ksp, out_path, which):
@@ -265,7 +336,7 @@ def build(ksp, out_path, which):
     source, dest = spec.get("blend", (1.0, 10.0))                        # (as a rule: colour already multiplied by opacity)
     for key, value in (("srcBlend", source), ("destBlend", dest), ("srcBlendAlpha", source), ("destBlendAlpha", dest)):
         state["rtBlend0"][key]["val"] = value
-    state["zWrite"]["val"] = 0.0
+    state["zWrite"]["val"] = spec.get("zwrite", 0.0)      # 1: it writes how far off it is (the sea, which is solid); as a rule nothing does
     state["zTest"]["val"] = spec.get("ztest", 8.0)       # 8, always: the shader itself stops at whatever is in front
     state["culling"]["val"] = spec.get("cull", 1.0)      # 1: draw the far faces of the box, so it still works with the camera inside
     state["gpuProgramID"] = spec["program"]

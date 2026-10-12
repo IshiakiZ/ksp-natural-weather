@@ -22,6 +22,22 @@ namespace NaturalWeather
             return Model.Here(World.Of(body), latitude, longitude, ut);
         }
 
+        /// <summary>
+        /// The clouds and what falls at very many places at one moment (no wind), where this is the weather mod that answers
+        /// Keystone: the model's atlas of the world, or clear skies where the weather is switched off. Null where another
+        /// weather mod answers. For the clouds' map; what is handed back is for one thread.
+        /// </summary>
+        public static Func<double, double, WeatherHere> Many(CelestialBody body, double ut)
+        {
+            if (!(Keystone.Weather.Provider is Provider)) return null;
+            if (!Allowed(body)) { WeatherHere clear = Keystone.Weather.Clear(body); return (latitude, longitude) => clear; }
+            var atlas = new Model.Atlas(World.Of(body), ut);
+            return atlas.At;
+        }
+
+        /// <summary>Whether the model has its map of this world's land and seas (see World.Keep); true where it needs none.</summary>
+        public static bool Knows(CelestialBody body) => body == null || !body.atmosphere || World.Of(body).Mapped;
+
         public Vector3d Wind(CelestialBody body, Vector3d world, double ut)
         {
             if (!Allowed(body) || !OnMain) return Vector3d.zero;

@@ -39,7 +39,7 @@ distance), [Volumetric Explosions](https://github.com/IshiakiZ/ksp-volumetric-ex
 
 ## Install
 
-Copy the `Keystone` and `NaturalWeather` folders from the download's `GameData` into your KSP `GameData`.
+Copy the `Keystone` and `NaturalWeather` folders from the download into your KSP `GameData`.
 
 ## Settings
 
@@ -55,11 +55,18 @@ sends nothing. Weather data by Open-Meteo.com (CC BY 4.0).
 
 ## Good to know
 
+* **Its clouds are in the middle of being remade** (2026-10-11), and it shows: a fair day's heaps are too
+  alike and too evenly strewn, with edges that look made; seen from space, from very far off, or while flying
+  towards them, they have faults in how they are drawn and how they come into being; and from among or above the
+  clouds, far cloud can still be drawn over near smoke. [What is wrong and what is next](docs/Clouds.md).
+  Rain that looks real, wet ground and drops on the camera are still to come.
 * Made on a Mac, and tried on Windows (see below). Its clouds are shaders of its own, packed for the game's
   OpenGL and built for Direct3D (`PluginData/clouds-windows.bundle`); the veil of the distance is Natural
   Light's, built for both as well.
 * Its sounds (the rain's hiss, the wind, thunder) are made by the mod and have not yet been listened to by
   anyone.
+* Its clouds are drawn over worlds with ground under their air. Jool has none, and keeps the clouds the game
+  (and EVE) draw it with: its weather is wind, rough air and lightning within the cloud.
 * Wind moves craft only with the Harmony mod (HarmonyKSP) installed. Where another mod already puts wind
   into the game's aerodynamics (the Kerbal Weather Project, Advanced Atmosphere Tools), that one wins.
 
@@ -68,7 +75,11 @@ sends nothing. Weather data by Open-Meteo.com (CC BY 4.0).
 | System | |
 | --- | --- |
 | Mac | Made and tried here (KSP 1.12.5, OpenGL). |
-| Windows | Tried on Windows 11 (KSP 1.12.5, Direct3D 11, with HarmonyKSP), in a development build that held one kind of weather at a time at the launch pad: cloudy, rain, fog, snow and a storm, the clouds drawn by their shaders built for Direct3D, rain's streaks, and the distance veiled by Natural Light as far as the weather said one could see (1.8 km in rain, 150 m in fog, 900 m in snow). With the game started on OpenGL (`-force-glcore`) the clouds drew nothing until the OpenGL bundles were packed again on 2026-10-10 (see [Clouds](docs/Clouds.md)); since then they draw. Later that day: its sounds, recorded where the game's sound leaves it (rain's hiss, the thunder of a flash 1.5 km off arriving 4.5 s after it, the wind's roar in a dust storm; silence in clear weather), lightning at night (its channel was hidden by the clouds wherever there was cloud behind it; now drawn after them, from the ground to the cloud base, on Direct3D and OpenGL), a real city's weather (Reykjavik typed on the page: the space centre's weather became its overcast, 5 °C and southerly wind), the wind carrying a capsule under its parachute (as fast as the wind, within 0.2 m/s; straight down with the push off), and Duna's dust storm. |
+| Windows | Tried on Windows 11 (KSP 1.12.5, Direct3D 11, with HarmonyKSP), in a development build that held one kind of weather at a time at the launch pad: cloudy, rain, fog, snow and a storm, the clouds drawn by their shaders built for Direct3D, rain's streaks, and the distance veiled by Natural Light as far as the weather said one could see (1.8 km in rain, 150 m in fog, 900 m in snow). With the game started on OpenGL (`-force-glcore`) the clouds drew nothing until the OpenGL bundles were packed again on 2026-10-10 (see [Clouds](docs/Clouds.md)); since then they draw. Later that day: its sounds, recorded where the game's sound leaves it (rain's hiss, the thunder of a flash 1.5 km off arriving 4.5 s after it, the wind's roar in a dust storm; silence in clear weather), lightning at night (its channel was hidden by the clouds wherever there was cloud behind it; now drawn after them, from the ground to the cloud base, on Direct3D and OpenGL), a real city's weather (Reykjavik typed on the page: the space centre's weather became its overcast, 5 °C and southerly wind), the wind carrying a capsule under its parachute (as fast as the wind, within 0.2 m/s; straight down with the push off), and Duna's dust storm. Then 0.3.0's remade clouds (2026-10-11, their shaders built for Direct3D again that day, with HarmonyKSP and TUFX): fair weather, a mostly cloudy sky and a storm held in turn, each photographed from the ground at the pad, from 2,500 m among the clouds and from 6 km above them: small white heaps with flat bases on a blue sky; larger heaps under grey sheets, with storms standing as flat-topped towers; an overcast with dark towers; picture for picture as on OpenGL on the same computer. With TUFX taken out (the game drawing straight to the screen) the clouds were seen again over the pad and the sea, behind a launch's smoke and a crash's. Rain's streaks against the sky, and a flash of lightning seen by chance over the sea. Two faults of Direct3D, where one camera draws the whole scene, were found and mended that day: the clouds were laid over smoke, flames and spray however near (a rocket's smoke column stood behind the clouds of the horizon), and over Natural Ocean's nearest waves and, with the camera under water, the underside of its surface (see [Clouds](docs/Clouds.md)). Still so there: with the camera among the clouds or above them, and wherever Scatterer is installed (not tried), far clouds are drawn over near smoke; and from below, a trail that has climbed above the clouds shows in front of them. |
 | Linux | **Never run.** With NVIDIA's driver the clouds would have drawn nothing before 2026-10-10, as on Windows on OpenGL. |
 
 More: [how it works](docs/How-it-works.md), [research](docs/Research.md), [design](docs/Design.md).
+
+## Licence
+
+[CC BY 4.0](LICENSE): use it, change it and pass it on as you like, as long as you credit Ishiaki and link back here.
