@@ -18,13 +18,21 @@ namespace NaturalWeather
         public float T0;             // the temperature at the ground, kelvin
         public float Ground;         // roughly how high the ground is, m (0 at sea)
         public float Freeze;         // the height of freezing, m above sea level
+        public float Nose;           // a layer of air above freezing aloft, over ground that is below it, 0 to 1 (what falls melts in it: freezing rain, ice pellets)
+        public float HailBias;       // a chosen hailstorm: storms' hail more readily
+        public float Cyc;            // how far inside a cyclone's weather the place is, 0 to 1
+        public float Eye, Wall, Band; // and of that: its clear eye, the wall of storms round the eye, a spiral band of storms
+        public float Squall;         // the rain behind a squall line's row of storms, 0 to 1
         public float DriftE, DriftN; // how the weather moves, m/s
         public float Dust;           // dust storm, 0 to 1
         public float Fog;            // 0 to 1
+        public FogKind FogOf;        // how it came about
+        public float FogDeep;        // how deep it lies over the ground, m
         public float Calm;           // how much the wind at the ground is held back, 1 none
         public float WindScale;      // the wind's strength from the settings and a chosen weather
         public float StormBias;      // a chosen storm: storms more readily
         public float Windy;          // a chosen windy weather: the wind above brought down to the ground, 0 to 1
+        public float HeldBreeze;     // a chosen weather's own wind at the ground, m/s: the wind its kind of system blows with (holding it evens out the systems that would have made it)
         public bool Overridden;      // a chosen weather or a city's
     }
 
@@ -47,6 +55,8 @@ namespace NaturalWeather
         public float LowBase, LowTop;     // the low cloud, where there is any (m above sea level)
         public float RefE, RefN;          // what carries the gusts along (m/s)
         public readonly List<WeatherCell> Cells = new List<WeatherCell>();
+        public readonly List<Burst> Bursts = new List<Burst>();          // the downbursts of those storms now
+        public readonly List<Twister> Twisters = new List<Twister>();    // and their tornadoes and waterspouts
     }
 
     /// <summary>
@@ -75,7 +85,11 @@ namespace NaturalWeather
         public static volatile float ChosenWeight;      // eased in and out
         public static Func<CelestialBody, bool> Allowed = b => true;
 
-        public static readonly string[] Choices = { "As it comes", "Clear", "Fair", "Cloudy", "Overcast", "Rain", "Storm", "Fog", "Snow", "Windy", "Dust storm" };
+        // (new kinds go on the end: a saved setting is the number of its place in this list)
+        public static readonly string[] Choices = { "As it comes", "Clear", "Fair", "Cloudy", "Overcast", "Rain", "Storm", "Fog", "Snow", "Windy", "Dust storm", "Freezing rain", "Ice pellets", "Hailstorm",
+                                                    "Downburst", "Tornado", "Waterspout", "Hurricane", "Squall line" };
+        // (the violent ones, held: each is put where it can be looked at from the space centre, on Kerbin; see Violent)
+        public const int HeldBurst = 14, HeldTornado = 15, HeldSpout = 16, HeldCyclone = 17, HeldSquall = 18;
 
         // ---------------------------------------------------------------- the large fields
 
@@ -139,6 +153,10 @@ namespace NaturalWeather
             float t = w.Temperature(lat, Math.Max(0f, b.Ground));
             b.T0 = t + (b.Land > 0.5f ? 6f * (heat - 0.35f) : 1.5f * (heat - 0.35f));
             b.Freeze = w.Freezing(lat) + (b.T0 - t) / 0.0065f * 0.3f;
+            // (Warm air riding up over cold: at the edge of a wet system, where the ground is at or below freezing, the
+            // air a kilometre or two up is often above it. Snow falling through that layer melts; what it does next is
+            // by how deep the cold air under it is: see Build.)
+            b.Nose = b.Front * Noise.Smooth(276f, 272.5f, b.T0);
             b.Calm = 1f; b.WindScale = WindStrength; b.StormBias = 0f;
 
             if (c.Dusty > 0f)
@@ -154,16 +172,122 @@ namespace NaturalWeather
                 float global = Noise.Smooth(0.88f, 0.97f, g + (Often - 0.25f) * 0.1f);
                 b.Dust = Noise.Clamp01(Math.Max(local, global) * c.Dusty);
             }
-            if (c.Fogs > 0f && c.Water > 0f)
-                b.Fog = Noise.Clamp01(c.Fogs * b.Dawn * Noise.Smooth(0.45f, 0.7f, b.M) * (0.45f + 0.55f * (1f - b.Land) + 0.4f * Noise.Bump(b.Land, 0.5f, 0.5f)));
+            if (c.Fogs > 0f && c.Water > 0f) Fogs(w, lat, lon, ut, c, t, ref b);
 
             Overrides.Apply(w, lat, lon, ref b);
+            // ---- a cyclone's own weather: overcast from its rim inward, storms in its wall and its bands, a clear eye
+            List<Cyclone> cyclones = Violent.Cyclones(w, ut);
+            for (int i = 0; i < cyclones.Count; i++)
+            {
+                float inside = Violent.CycloneAt(w, cyclones[i], lat, lon, out float eye, out float wall, out float band);
+                if (inside <= b.Cyc) continue;
+                b.Cyc = inside; b.Eye = eye; b.Wall = wall; b.Band = band;
+            }
+            if (b.Cyc > 0.01f)
+            {
+                float storms = Math.Max(b.Wall, b.Band);
+                b.M += (0.8f + 0.17f * storms - b.M) * b.Cyc;
+                b.M += (0.3f - b.M) * b.Eye;
+                b.Inst += (storms - b.Inst) * b.Cyc;
+                b.Inst *= 1f - b.Eye;
+                b.StormBias += 0.5f * storms * b.Cyc * (1f - b.Eye);
+                b.Fog *= 1f - b.Cyc; b.Dust *= 1f - b.Cyc; b.Calm += (1f - b.Calm) * b.Cyc;
+            }
+            // ---- a squall line: its row of storms is its own (Violent.SquallCells); behind the row, twenty-five
+            // kilometres of steady rain from the spread-out cloud the storms leave
+            List<Squall> squalls = Violent.Squalls(w, ut);
+            for (int i = 0; i < squalls.Count; i++)
+            {
+                Squall q = squalls[i];
+                if (!Violent.SquallAt(w, q, lat, lon, out float ahead, out float along)) continue;
+                float ends = 1f - Noise.Smooth(q.Length * 0.4f, q.Length * 0.5f, Math.Abs(along));
+                float trailing = Noise.Smooth(-32000f, -22000f, ahead) * (1f - Noise.Smooth(-2000f, 4000f, ahead)) * q.Now * ends;
+                b.Squall = Math.Max(b.Squall, trailing);
+                b.M += (0.9f - b.M) * trailing;
+                // (and ahead of it the sky it comes out of: some cloud, no more)
+                float near = (1f - Noise.Smooth(4000f, 26000f, Math.Abs(ahead))) * q.Now * ends;
+                b.M = Math.Max(b.M, 0.6f * near);
+            }
             if (!FogOn) b.Fog = 0f;
             if (!DustOn) b.Dust = 0f;
             return b;
         }
 
+        // ---------------------------------------------------------------- fog
+        //
+        // Fog is cloud on the ground, and it comes about in a handful of ways that have little to do with one another.
+        // Which way says where it lies, how deep it is and when it goes; so each is worked out by itself, from what the
+        // model already has of a place (land or sea, how high, how damp, how cold, the hour), and the thickest is the fog
+        // there. (Until 2026-10-13 there was one fog: about sunrise, mostly at sea.)
+        //
+        // Ground fog (radiation). Over land on a still night under a sky clear enough for the ground to cool by: the air
+        // on the ground cools to its dew point. It gathers from the middle of the night, is thickest at sunrise, lies in
+        // low ground, is shallow (tens of metres: masts stand out of it, and the sky shows overhead), and the sun burns
+        // it off in two or three hours. Wind stirs it away; an overcast stops it forming.
+        // Sea fog (advection). Damp air drifting over cooler sea, cooled from below: banks a hundred kilometres across
+        // that go with the wind, at any hour, a few hundred metres deep; over cool seas more than warm ones; onto the
+        // coast by night and back off it as the land warms.
+        // Hill fog (upslope). Damp air lifted over high ground cools as it climbs: the cloud's base is on the hill.
+        // Steam fog. Air well below freezing come off the land over open water at the end of a still night: the water
+        // smokes, a few metres high. Only where it is cold.
+        // Rain fog (frontal). Under the steady rain of a wet system, in cool air: the rain wets the air beneath it
+        // until it can hold no more.
+
+        static void Fogs(World w, double lat, double lon, double ut, Climate c, float seaLevel, ref Base b)
+        {
+            float hour = (float)b.Hour;
+            bool day = hour > -90f && hour < 90f;
+            // (how far through the night, 0 at sunset to 1 at sunrise; and by day, how long since sunrise, in degrees of the sun's round: 15 to an hour)
+            float night = hour >= 90f ? (hour - 90f) / 180f : hour <= -90f ? (hour + 270f) / 180f : 0f;
+            float since = day ? hour + 90f : 0f;
+            // (where the night is still: patches some hundreds of kilometres across that last half a day)
+            float still = Noise.Smooth(0.4f, 0.56f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 260000.0, 6.0 * 3600.0, 41u, 2, b.DriftE * 0.5f));
+            float damp = Noise.Bump(b.M, 0.55f, 0.21f);
+            float radiation = 1.5f * Noise.Smooth(0.5f, 0.8f, b.Land) * (day ? 1f - Noise.Smooth(15f, 50f, since) : Noise.Smooth(0.4f, 0.85f, night)) * damp * still * (1f - Noise.Smooth(250f, 900f, b.Ground));
+
+            float bank = Noise.Smooth(0.5f, 0.68f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 180000.0, 9.0 * 3600.0, 43u, 3, b.DriftE));
+            float ashore = Noise.Bump(b.Land, 0.5f, 0.3f) * (day ? 1f - 0.85f * Noise.Smooth(15f, 60f, since) * (1f - Noise.Smooth(150f, 178f, since)) : 1f);
+            float where = Noise.Clamp01(1f - Noise.Smooth(0.3f, 0.6f, b.Land) + ashore) * (1f - Noise.Smooth(100f, 400f, b.Ground));
+            float advection = 1.3f * where * Noise.Smooth(0.46f, 0.68f, b.M) * bank * (0.35f + 0.65f * Noise.Smooth(297f, 286f, seaLevel));
+
+            float upslope = 0.85f * Noise.Smooth(450f, 1300f, b.Ground) * Noise.Smooth(0.52f, 0.72f, b.M);
+
+            float steam = Noise.Bump(b.Land, 0.3f, 0.25f) * (day ? 1f - Noise.Smooth(5f, 25f, since) : Noise.Smooth(0.6f, 0.9f, night)) * Noise.Smooth(283f, 273f, seaLevel) * still;
+
+            float frontal = 0.55f * Noise.Smooth(0.7f, 0.86f, b.M) * Noise.Smooth(289f, 279f, b.T0);
+
+#if DEV
+            FogParts = "land " + b.Land.ToString("F2") + " ground " + b.Ground.ToString("F0") + " M " + b.M.ToString("F2") + " T0 " + b.T0.ToString("F0") + " sea-level T " + seaLevel.ToString("F0") + " hour " + hour.ToString("F0") + " still " + still.ToString("F2") + " bank " + bank.ToString("F2") + " where " + where.ToString("F2")
+                     + " | radiation " + radiation.ToString("F2") + " advection " + advection.ToString("F2") + " upslope " + upslope.ToString("F2") + " steam " + steam.ToString("F2") + " frontal " + frontal.ToString("F2");
+#endif
+            // (the thickest of them is the fog there)
+            float most = 0f, deep = 0f;
+            FogKind kind = FogKind.None;
+            Thicker(radiation * c.Fogs, FogKind.Radiation, 20f + 110f * radiation, ref most, ref kind, ref deep);
+            Thicker(advection * c.Fogs, FogKind.Advection, 120f + 330f * advection, ref most, ref kind, ref deep);
+            Thicker(upslope * c.Fogs, FogKind.Upslope, 350f, ref most, ref kind, ref deep);
+            Thicker(steam * c.Fogs, FogKind.Steam, 5f + 14f * steam, ref most, ref kind, ref deep);
+            Thicker(frontal * c.Fogs, FogKind.Frontal, 420f, ref most, ref kind, ref deep);
+            b.Fog = most; b.FogOf = kind; b.FogDeep = deep;
+#if DEV
+            if (Probe.FogHeld) { b.Fog = Probe.FogAmount; b.FogOf = Probe.FogKindHeld; b.FogDeep = Probe.FogDeepHeld; }
+#endif
+        }
+
+#if DEV
+        [ThreadStatic] public static string FogParts;
+#endif
+
+        static void Thicker(float amount, FogKind kind, float deep, ref float most, ref FogKind of, ref float deepest)
+        {
+            amount = Noise.Clamp01(amount);
+            if (amount > most) { most = amount; of = kind; deepest = deep; }
+        }
+
         // ---------------------------------------------------------------- storms and showers
+
+        /// <summary>Whether a weather with storms in it is held (a storm, a hailstorm): then even a world that has none of its own has them.</summary>
+        static bool StormsHeld => Chosen == 6 || Chosen == 13 || Chosen == HeldBurst || Chosen == HeldTornado || Chosen == HeldSquall;
 
         const double CellBox = 22000.0;       // the spacing of the places storms can be born
         const double CellCycle = 6000.0;      // each place has one chance a cycle (two lattices, half a cycle apart)
@@ -171,7 +295,7 @@ namespace NaturalWeather
         /// <summary>The storms and showers within `radius` metres of a place.</summary>
         public static int Cells(World w, double lat, double lon, double radius, double ut, List<WeatherCell> into)
         {
-            if (w.Climate.Storms <= 0f && Chosen != 6) return 0;
+            if (w.Climate.Storms <= 0f && !StormsHeld) return 0;
             int found = 0;
             double cycle = CellCycle / (Pace <= 0.05f ? 0.05f : Pace);
             for (int lattice = 0; lattice < 2; lattice++)
@@ -199,7 +323,7 @@ namespace NaturalWeather
                             found++;
                         }
             }
-            return found;
+            return found + Violent.SquallCells(w, lat, lon, radius, ut, into);
         }
 
         /// <summary>One of the two lattices storms are born on, at a moment: how long its cycle has run, and the cycle's own number in its seed.</summary>
@@ -287,7 +411,7 @@ namespace NaturalWeather
             {
                 w = world; ut = moment;
                 double rr = w.Radius / CellBox;
-                if (w.Climate.Storms <= 0f && Chosen != 6) { Storms = 0; return; }
+                if (w.Climate.Storms <= 0f && !StormsHeld) { Storms = 0; return; }
                 if (rr > 64.0) return;
                 // (squares as wide as a storm can reach: Cells takes those within 25 km and their own radius, or 9 km if that is less)
                 square = Math.Max(1.0, 36000.0 / (w.Radius * Deg));
@@ -313,6 +437,16 @@ namespace NaturalWeather
                                 squares[at].Add(new Kept { Cell = cell, Order = Storms });
                                 Storms++;
                             }
+                }
+                // (and the storms of the squall lines, after the others, as Cells has them)
+                var inRows = new List<WeatherCell>();
+                Violent.SquallCells(w, 0.0, 0.0, 1e9, ut, inRows);
+                for (int i = 0; i < inRows.Count; i++)
+                {
+                    int at = Row(inRows[i].Latitude) * columns + Column(inRows[i].Longitude);
+                    if (squares[at] == null) squares[at] = new List<Kept>();
+                    squares[at].Add(new Kept { Cell = inRows[i], Order = Storms });
+                    Storms++;
                 }
             }
 
@@ -357,6 +491,48 @@ namespace NaturalWeather
                 }
                 return Build(w, lat, lon, ut, ref b, near);
             }
+        }
+
+        /// <summary>
+        /// A storm's hail at a place: how thickly it falls there now, 0 to 1, and the size of the stones (mm).
+        ///
+        /// Hail is ice that a storm's rising air holds up in cloud far colder than freezing while water freezes on to it,
+        /// until it is too heavy to hold or is thrown clear. So it wants a thunderstorm at its strongest (the stronger the
+        /// air rises, the larger the stone it can carry: pea size at 15 m/s, golf ball at 40), with several kilometres of
+        /// its cloud above the freezing level; it comes from about one storm in three or four, falls for five to ten
+        /// minutes of the storm's life, in a shaft a kilometre or two across beside the storm's middle, not all over it;
+        /// and small stones that fall a long way through warm air melt before they land (rain with a cold splash).
+        /// Worked out from the storm's own number, like everything else of it: the same for everyone, every time.
+        /// </summary>
+        public static float Hail(World w, WeatherCell cell, Base b, double lat, double lon, out float size)
+        {
+            size = 0f;
+            if (!cell.Thunder || w.Climate.Water <= 0f) return 0f;
+            uint h = (uint)cell.Id;
+            float deepCold = (cell.Top - Math.Max(b.Freeze, cell.Base)) / 1000f;            // km of the cloud above freezing
+            float able = Noise.Smooth(0.45f, 0.8f, cell.Strength) * Noise.Smooth(3f, 5.5f, deepCold);
+            if (able <= 0.01f) return 0f;
+            // (about one strong storm in three; every one, where a hailstorm is held)
+            if (Noise.Unit(Noise.Hash(h ^ 0x4a11c0deu)) > 0.32f + b.HailBias) return 0f;
+            // (its minutes: a stretch of the storm's life about its height)
+            float mid = 0.4f + 0.2f * Noise.Unit(Noise.Hash(h ^ 0x51ee7u));
+            float now = Noise.Bump(cell.Life, mid, 0.07f + 0.04f * b.HailBias);
+            if (now <= 0.01f) return 0f;
+            // (its shaft: a third of the way out from the storm's middle, in a direction of its own, as wide as a fifth to a third of the storm)
+            double bearing = 6.2831853 * Noise.Unit(Noise.Hash(h ^ 0x0ddba11u));
+            double off = cell.Radius * 0.3;
+            double sLat = cell.Latitude + off * Math.Cos(bearing) / w.Radius / Deg;
+            double sLon = cell.Longitude + off * Math.Sin(bearing) / (w.Radius * Math.Max(0.2, Math.Cos(cell.Latitude * Deg))) / Deg;
+            float shaft = cell.Radius * (0.2f + 0.13f * Noise.Unit(Noise.Hash(h ^ 0x5ca1eu)));
+            float inside = 1f - (float)(Distance(w, lat, lon, sLat, sLon) / shaft);
+            if (inside <= 0f) return 0f;
+            // (the stones: from 6 mm to 50, mostly small; the largest only from the strongest storms)
+            float u = Noise.Unit(Noise.Hash(h ^ 0x57011e5u));
+            size = 6f + 44f * u * u * Noise.Smooth(0.5f, 1f, cell.Strength) + 6f * b.HailBias;
+            // (melting on the way down: a small stone loses about 3 mm for each kilometre of air above freezing it falls through)
+            size -= 3f * Math.Max(0f, b.Freeze - b.Ground) / 1000f * Noise.Smooth(30f, 10f, size);
+            if (size < 4f) { size = 0f; return 0f; }
+            return Noise.Clamp01(able * now * Noise.Smooth(0f, 0.5f, inside) * 1.2f);
         }
 
         /// <summary>The distance along the surface between two places, metres.</summary>
@@ -471,12 +647,49 @@ namespace NaturalWeather
                 if (w.Name == "Eve" && here.Low.Cover < 0.5f) { here.Low.Kind = CloudKind.Stratus; here.Low.Cover = 0.5f; here.Low.Base = 1500f; here.Low.Top = 3500f; here.Low.Water = 0.4f; }
                 if (w.Name == "Jool") { here.Low.Kind = CloudKind.Stratus; here.Low.Cover = 1f; here.Low.Base = 0f; here.Low.Top = 15000f; here.Low.Water = 0.8f; }
             }
+            // ---- a cyclone: its wall and bands are storm cloud to the top of the weather, the rest of it rain cloud; over all of it
+            // a canopy of ice; its eye open to the sky, with a little low cloud on its floor
+            if (b.Cyc > 0.01f)
+            {
+                float storms = Math.Max(b.Wall, 0.85f * b.Band) * b.Cyc * (1f - b.Eye);
+                if (storms > 0.25f)
+                {
+                    here.Low.Kind = CloudKind.Cumulonimbus; here.Low.Cover = Math.Max(here.Low.Cover, 0.6f + 0.4f * storms);
+                    here.Low.Base = b.Ground + 350f; here.Low.Top = Math.Max(here.Low.Top, b.Ground + 2500f + (c.Tops * 0.93f - 2500f) * storms); here.Low.Water = 1f;
+                }
+                else if (b.Eye < 0.5f && b.Cyc > 0.85f)
+                {
+                    here.Low.Kind = CloudKind.Nimbostratus; here.Low.Cover = Math.Max(here.Low.Cover, 0.95f * b.Cyc);
+                    here.Low.Base = b.Ground + 400f; here.Low.Top = Math.Max(here.Low.Top, here.Low.Base + 3500f); here.Low.Water = 0.8f;
+                }
+                else if (b.Eye < 0.5f)
+                {
+                    // (outside its canopy: heaps, more of them towards it. Not rain cloud thinned out: a sheet kilometres
+                    // thick that covers half the sky is, seen from above, a tableland cut by canyons.)
+                    here.Low.Kind = CloudKind.Cumulus; here.Low.Cover = Math.Max(here.Low.Cover * (1f - b.Cyc), 0.15f + 0.3f * b.Cyc);
+                    here.Low.Base = b.Ground + 450f; here.Low.Top = here.Low.Base + 650f + 650f * b.Band; here.Low.Water = 0.25f * b.Band;
+                }
+                if (b.Eye > 0.01f)
+                {
+                    here.Low.Cover *= 1f - 0.75f * b.Eye; here.Middle.Cover *= 1f - b.Eye;
+                    if (b.Eye > 0.5f) { here.Low.Kind = CloudKind.Stratocumulus; here.Low.Base = b.Ground + 500f; here.Low.Top = here.Low.Base + 500f; here.Low.Water = 0.2f; }
+                }
+                // (a sheet of middle cloud under the canopy only)
+                float under = Noise.Smooth(0.7f, 0.9f, b.Cyc);
+                if (under > 0.01f) { here.Middle.Kind = CloudKind.Altostratus; here.Middle.Cover = Math.Max(here.Middle.Cover, 0.9f * under * (1f - b.Eye)); }
+                else here.Middle.Cover *= 1f - b.Cyc;
+                here.High.Kind = CloudKind.Cirrus; here.High.Cover = Math.Max(here.High.Cover, b.Cyc) * (1f - 0.85f * b.Eye);
+            }
             // ---- what falls
             float rain = Noise.Smooth(0.72f, 0.96f, b.M) * 0.42f * c.Water;
-            float storm = 0f;
+            if (b.Cyc > 0.01f) rain = Math.Max(rain, (0.3f + 0.7f * Math.Max(b.Wall, 0.8f * b.Band)) * b.Cyc * (1f - b.Eye) * c.Water);
+            if (b.Squall > 0.01f) rain = Math.Max(rain, 0.35f * b.Squall * c.Water);
+            float storm = 0f, hail = 0f, hailSize = 0f;
             foreach (WeatherCell cell in cells)
             {
                 double d = Distance(w, lat, lon, cell.Latitude, cell.Longitude);
+                float falls = Hail(w, cell, b, lat, lon, out float stones);
+                if (falls > hail) { hail = falls; hailSize = stones; }
                 float inside = Noise.Clamp01(1f - (float)(d / cell.Radius));
                 float core = inside * inside;
                 rain = Math.Max(rain, cell.Rain * Noise.Smooth(0f, 0.6f, core));
@@ -497,7 +710,25 @@ namespace NaturalWeather
             here.Rain = Noise.Clamp01(rain);
             here.Storm = storm;
             here.Snow = Noise.Smooth(275.6f, 272.4f, b.T0);
+            // ---- what has melted aloft and falls into air below freezing. Through a shallow cold layer (the ground a
+            // few degrees under freezing: a few hundred metres of it) the drops have no time to freeze, reach the ground
+            // as water colder than ice, and freeze on whatever they strike: glaze. Through a deep one (the ground five
+            // degrees under and colder) they freeze on the way, and land as ice pellets that bounce. The rest that
+            // falls in such cold is snow.
+            float melted = b.Nose * Noise.Smooth(273.6f, 272.4f, b.T0);
+            float shallow = Noise.Smooth(267f, 270.5f, b.T0);
+            here.Freezing = melted * shallow;
+            here.Pellets = melted * (1f - shallow);
+            here.Snow *= 1f - melted;
+            here.Hail = hail; here.HailSize = hailSize;
             here.Fog = b.Fog;
+            // (what kind, how high its top, and whether it is colder than ice: fog that is, rimes whatever stands in it)
+            if (b.Fog > 0.01f)
+            {
+                here.FogOf = b.FogOf == FogKind.None ? FogKind.Radiation : b.FogOf;
+                here.FogDeep = b.FogDeep > 1f ? b.FogDeep : 60f + 240f * b.Fog;
+                here.FogFreezes = b.T0 < 273.15f;
+            }
             here.Dust = b.Dust;
             if (b.Dust > 0.01f && here.Low.Cover < b.Dust)
             {
@@ -505,18 +736,23 @@ namespace NaturalWeather
             }
             if (b.Fog > 0.3f && here.Low.Cover < b.Fog)
             {
-                here.Low.Kind = CloudKind.Fog; here.Low.Cover = b.Fog; here.Low.Base = b.Ground; here.Low.Top = b.Ground + 60f + 240f * b.Fog; here.Low.Water = 0.3f;
+                here.Low.Kind = CloudKind.Fog; here.Low.Cover = b.Fog; here.Low.Base = b.Ground; here.Low.Top = b.Ground + here.FogDeep; here.Low.Water = 0.3f;
             }
             // ---- how far one can see
             float seeing = 40000f * (1f - 0.55f * Noise.Smooth(0.4f, 0.9f, b.M));
             if (here.Rain > 0.01f) seeing = Math.Min(seeing, 12000f / (1f + 14f * here.Rain * (1f + 1.5f * here.Snow)));
-            if (b.Fog > 0.01f) seeing = Math.Min(seeing, 150f + 20000f * (1f - b.Fog) * (1f - b.Fog) * (1f - b.Fog));
+            // (steam fog is wisps on the water, not a wall: one sees through it; rain fog is never the thickest)
+            float blinds = b.Fog * (b.FogOf == FogKind.Steam ? 0.45f : b.FogOf == FogKind.Frontal ? 0.8f : 1f);
+            if (b.Fog > 0.01f) seeing = Math.Min(seeing, 150f + 20000f * (1f - blinds) * (1f - blinds) * (1f - blinds));
             // (a storm at its height leaves half a kilometre or so: a murk, with the nearest hills gone)
             if (b.Dust > 0.01f) seeing = Math.Min(seeing, 500f + 30000f * (1f - b.Dust) * (1f - b.Dust) * (1f - b.Dust));
             here.Seeing = seeing;
             here.Drift = new Vector3d(b.DriftE, b.DriftN, 0.0);
             here.Temperature = b.T0;
             Overrides.Shape(w, lat, lon, ref here);
+#if DEV
+            Probe.Shape(ref here);
+#endif
             return here;
         }
 
@@ -555,6 +791,8 @@ namespace NaturalWeather
             var col = new Column { W = w, Lat = lat, Lon = lon, Ut = ut };
             Base b = Sample(w, lat, lon, ut);
             Cells(w, lat, lon, 25000.0, ut, col.Cells);
+            Violent.Bursts(w, col.Cells, ut, col.Bursts);
+            Violent.Twisters(w, col.Cells, ut, col.Twisters);
             Climate c = w.Climate;
             float a = (float)Math.Abs(lat);
 
@@ -609,7 +847,22 @@ namespace NaturalWeather
                 near *= 0.55f + 0.45f * Noise.Smooth(0.2f, 0.5f, b.M) + 0.45f * day * (1f - Noise.Smooth(0.2f, 0.5f, b.M));
             }
 #endif
+            // (Not so over the sea: water does not cool at night as land does, and the air over it stays stirred, night and
+            // day; offshore the wind is often strongest at night. At sea the wind above comes down to the surface all but whole.)
+            if (w.Body.ocean && b.Land < 0.98f) near += (Math.Max(near, 0.8f * c.Calm * b.Calm) - near) * (1f - b.Land);
             ue *= near; un *= near;
+            // (a held weather blows as its kind of system does: holding it makes the sky alike everywhere round, and with that
+            // the differences that drive a system's wind are gone; rain held at the pad came with a breath of wind)
+            if (b.HeldBreeze > 0.1f)
+            {
+                float l = Noise.Sqrt(ue * ue + un * un), want = b.HeldBreeze * c.Calm * Math.Max(b.Calm, 0.2f);
+                if (l < want)
+                {
+                    float ae = l > 0.3f ? ue / l : (b.DriftE >= 0f ? 1f : -1f), an = l > 0.3f ? un / l : 0.25f;
+                    float n = Noise.Sqrt(ae * ae + an * an);
+                    ue = ae / n * want; un = an / n * want;
+                }
+            }
             // ---- storms blow out from under them: the gust front
             float sigStorm = 0f;
             foreach (WeatherCell cell in col.Cells)
@@ -624,6 +877,17 @@ namespace NaturalWeather
                 }
                 sigStorm = Math.Max(sigStorm, cell.Strength * (cell.Thunder ? 3.2f : 1.6f) * Noise.Clamp01(2.2f - x * 0.8f));
             }
+            // ---- a cyclone's wind, and a squall line's (neither is held back near the ground: they are the weather's own)
+            float cyclone = 0f;
+            List<Cyclone> cyclones = Violent.Cyclones(w, ut);
+            for (int i = 0; i < cyclones.Count; i++)
+            {
+                float share = Violent.CycloneWind(w, cyclones[i], lat, lon, out float ce, out float cn);
+                if (share <= 0f) continue;
+                ue += ce; un += cn; cyclone = Math.Max(cyclone, share);
+            }
+            List<Squall> squalls = Violent.Squalls(w, ut);
+            for (int i = 0; i < squalls.Count; i++) Violent.SquallWind(w, squalls[i], lat, lon, ref ue, ref un, ref sigStorm);
             // Duna's dust storms are its strong winds
             if (b.Dust > 0.05f)
             {
@@ -645,8 +909,11 @@ namespace NaturalWeather
             float jetLat = c.Bands > 0f ? c.Bands * (float)Math.Cos(lat * Deg * 6.0) : c.Jet * (Noise.Bump(a, 40f, 22f) - 0.25f * (1f - Noise.Smooth(15f, 30f, a)));
             float meander = Drifting(w, lat, lon, ut, 900000.0, 8.0 * 3600.0, 47u, 2, b.DriftE);
             float meander2 = Drifting(w, lat, lon, ut, 900000.0, 8.0 * 3600.0, 53u, 2, b.DriftE);
-            col.JE = (jetLat + c.Jet * 0.55f * meander + ue * 1.2f) * scale;
-            col.JN = (c.Jet * 0.35f * meander2 + un * 1.2f) * scale;
+            // (in a cyclone the wind high up is the cyclone's own, a third as strong as at the ground and dying away: there is
+            // no jet stream over one, or it would be torn apart)
+            float aloft = 1.2f - 0.85f * cyclone, jets = 1f - cyclone;
+            col.JE = ((jetLat + c.Jet * 0.55f * meander) * jets + ue * aloft) * scale;
+            col.JN = (c.Jet * 0.35f * meander2 * jets + un * aloft) * scale;
             col.JetH = c.JetHeight;
             // (and now and then a thin layer aloft where the wind turns and strengthens sharply: what scrubs real launches for shear)
             float layer = Noise.Smooth(0.72f, 0.95f, 0.5f + Drifting(w, lat, lon, ut, 700000.0, 6.0 * 3600.0, 59u, 2, b.DriftE));

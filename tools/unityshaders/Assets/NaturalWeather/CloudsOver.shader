@@ -112,8 +112,8 @@ Shader "NaturalWeather/CloudsOver"
                 float2 corner = floor(at);
                 float4 sum = ((float4)(0.0));
                 float weights = 0.0;
-                [loop] for (int j = 0; j < 2; j++)
-                    [loop] for (int i = 0; i < 2; i++)
+                { [loop] for (int j = 0; j < 2; j++)
+                    { [loop] for (int i = 0; i < 2; i++)
                     {
                         float2 tap = (corner + float2(float(i), float(j)) + 0.5) / size;
                         float w = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y) + 1e-4;
@@ -123,17 +123,23 @@ Shader "NaturalWeather/CloudsOver"
                         if (d > 0.0 && d > scene * 1.03 + 30.0) c = float4(0.0, 0.0, 0.0, 1.0);
                         sum += c * w;
                         weights += w;
-                    }
+                    } } }
                 float4 cloud = sum / weights;
                 float cover = clamp((1.0 - cloud.a) * _CloudOver.y, 0.0, 1.0);
                 if (cover < 0.002) discard;
                 float3 colour = max(cloud.rgb, ((float3)(0.0))) / max(1.0 - cloud.a, 1e-3) * _CloudOver.z;
                 // (a soft shoulder above 0.7: the far camera's picture holds nothing brighter than white, and a sunlit top cut off flat
                 // there loses all its modelling; rolled over, its brighter and dimmer billows still show)
+                // (Thin cloud that is brighter than white: a veil of ice or a heap's edge near the line to the sun, which throw the
+                // sun's light on towards the eye. Laid over the picture as a colour, as all cloud was until 2026-10-13, the brightest
+                // a thin cloud could make a pixel was white times the little it hides: a veil in front of the sun was milk, with no
+                // glare round the sun and nothing of the sun's ring. What it has beyond white is added to the picture instead, where
+                // the cloud is thin (a thick cloud's sunlit top is a surface, and keeps the shoulder below).)
+                float3 beyond = max(colour - 1.0, ((float3)(0.0))) * (0.7 * cover * (1.0 - cover) * (1.0 - cover));
                 float3 over = max(colour - 0.7, ((float3)(0.0)));
                 colour = min(colour, ((float3)(0.7))) + 0.3 * (1.0 - exp(-over / 0.3));
                 colour = pow(colour, ((float3)(_CloudOver.x)));
-                result = float4(colour * cover, cover);
+                result = float4(colour * cover + beyond, cover);
                 return result;
             }
             ENDCG

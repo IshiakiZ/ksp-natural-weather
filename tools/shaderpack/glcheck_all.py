@@ -21,7 +21,8 @@ BUNDLES = {"volume": "src/VolumetricExplosions/Shaders/volume.bundle", "layers":
            "lens": "src/Keystone/Shaders/lens.bundle", "shafts": "src/NaturalLight/Shaders/shafts.bundle", "clean": "src/NaturalLight/Shaders/clean.bundle", "veil": "src/NaturalLight/Shaders/veil.bundle",
            "clouds": "src/NaturalWeather/Shaders/clouds.bundle", "cloudsover": "src/NaturalWeather/Shaders/cloudsover.bundle", "cloudshade": "src/NaturalWeather/Shaders/cloudshade.bundle",
            "ocean": "src/NaturalOcean/Shaders/ocean.bundle", "oceanfoam": "src/NaturalOcean/Shaders/oceanfoam.bundle", "oceanweed": "src/NaturalOcean/Shaders/oceanweed.bundle",
-           "oceanunder": "src/NaturalOcean/Shaders/oceanunder.bundle"}
+           "oceanunder": "src/NaturalOcean/Shaders/oceanunder.bundle", "wet": "src/NaturalWeather/Shaders/wet.bundle", "motion": "src/VolumetricExplosions/Shaders/motion.bundle",
+           "drops": "src/NaturalWeather/Shaders/drops.bundle"}
 bad = 0
 for which, spec in make_bundle.SHADERS.items():
     if not os.path.exists(os.path.join(PACK, spec["code"])):

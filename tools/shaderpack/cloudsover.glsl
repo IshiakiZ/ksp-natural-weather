@@ -62,9 +62,15 @@ void main()
     vec3 colour = max(cloud.rgb, vec3(0.0)) / max(1.0 - cloud.a, 1e-3) * _CloudOver.z;
     // (a soft shoulder above 0.7: the far camera's picture holds nothing brighter than white, and a sunlit top cut off flat
     // there loses all its modelling; rolled over, its brighter and dimmer billows still show)
+    // (Thin cloud that is brighter than white: a veil of ice or a heap's edge near the line to the sun, which throw the
+    // sun's light on towards the eye. Laid over the picture as a colour, as all cloud was until 2026-10-13, the brightest
+    // a thin cloud could make a pixel was white times the little it hides: a veil in front of the sun was milk, with no
+    // glare round the sun and nothing of the sun's ring. What it has beyond white is added to the picture instead, where
+    // the cloud is thin (a thick cloud's sunlit top is a surface, and keeps the shoulder below).)
+    vec3 beyond = max(colour - 1.0, vec3(0.0)) * (0.7 * cover * (1.0 - cover) * (1.0 - cover));
     vec3 over = max(colour - 0.7, vec3(0.0));
     colour = min(colour, vec3(0.7)) + 0.3 * (1.0 - exp(-over / 0.3));
     colour = pow(colour, vec3(_CloudOver.x));
-    SV_Target0 = vec4(colour * cover, cover);
+    SV_Target0 = vec4(colour * cover + beyond, cover);
 }
 #endif

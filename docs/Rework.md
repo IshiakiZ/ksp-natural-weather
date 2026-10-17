@@ -363,3 +363,125 @@ now (they are the whole sky), and as the standard the thermal clouds' light must
     orange and pink; night clouds are flat grey shapes; the overcast and rain sheets are still the noise's; nothing
     on Windows (the Direct3D shader must be built from this on the PC; the field loads by plain file reading and a
     four-number texture, which should work there, untried); the trial of heaps made as smoke is unchanged and off.
+* 2026-10-12: **the low and the middle clouds shaped anew, in metres** (the shader's `formAt`, `formOne`, `heapsRound`,
+  `heapsMap`; `Clouds.Form`, on; in the workspace and the user's game on the development build, not released, the
+  Direct3D shader not rebuilt, so Windows would still draw the shapes of 0.3.0).
+  - *Why.* The heaps made beforehand were one field of shapes pressed to whatever depth a layer had: pressed lumps and
+    all in a shallow layer (plates, lenses), and thinned for a smaller cover by wearing each heap down to its core
+    (pointed hats). A sky could not have small heaps beside large ones, a heap could not grow or die, and nothing
+    could be said about one heap that was not said about all.
+  - *Heaps on a lattice.* Places where air rises are set out on a lattice of triangles laid on the layer's base (on
+    one face of a cube round the planet, so that it has no pole; two faces near where they meet, changing places).
+    Each point has numbers of its own from a table got by chance: when its heaps begin, how they rank among the
+    others, where in its triangle it stands. Over a point with a heap: an egg standing on the base, as tall for its
+    width as the day says (wider than tall in a fair sky's shallow layer, taller than wide where they tower), that
+    comes as a puff, grows over a quarter of its time, stands, and from seven tenths of the way through goes ragged
+    underneath, shrinks and rises as a shred; the next one there is another size. Neighbours run together with a
+    rounded join. How many points have a heap, how large the largest and how alike they are go by the cover: a tenth
+    of the sky is a few small ones, all different; half of it, most points and large ones crowding together.
+  - *Lumps in metres.* On that: round lumps of six sizes read from the noise as a distance to move the surface by
+    (the largest three tenths of a lattice cell on a heap), each lump rounded on top; then the base cut level after
+    the lumps (so its rim is scalloped and its underside smooth), and the top cut where it meets the layer's lid,
+    gently domed. The sunlit level two thirds of what it was: a surface facing the sun came to 1.4, past the
+    picture's roll-off, and every lit lump was one white.
+  - *The kinds.* Heaps as above. A lumpy layer (stratocumulus; the middle sky's dapple, altocumulus, the same but
+    small): the same domes pressed flat under a lid a few hundred metres above their base, at nearly every point and
+    run together: pads with cracks between, the cracks closing as the sky fills. A sheet (stratus, the rain sheet,
+    the middle sky's veil): one slab, thicker here and thinner there, with holes only where the sky is not all
+    covered.
+  - *Banks.* The user, of the first before-and-after: "usually the clouds aren't so scattered. They're like huge
+    plateaus. Look up more photos of clouds." Photographs (Wikimedia Commons: cumulus from the ground and from
+    aircraft, stratocumulus) say the same: a fair day's heaps stand gathered into banks some kilometres across,
+    several times wider than deep, level and grey underneath and lumpy on top, with wide clear sky between and a
+    few small heaps by themselves in it. So on the usual day a pattern that changes over kilometres says where the
+    banks are; a bank is that patch of the layer filled from the base to some way under the lid, with a steep side;
+    the lattice's heaps stand through it as its turrets and by themselves in the clear between.
+  - *Storms.* A storm's cell in the new shapes (`cellNew`): one great tower, three lesser on its flank, an anvil of
+    ice drawn out downwind. Seen in the lab only.
+  - *A craft's wake.* "Clouds swirl when you go through it, like the volumetric explosions." Where the craft being
+    flown has gone through the clouds' layers is kept for four minutes in the cloud's own frame (it goes with the
+    wind as the cloud does), and the cloud near that path is read not where a place is but where what is there came
+    from: dragged along the path, rolled up round it in rings none of them alike, stirred, with a hole where engines
+    burnt it off (`wakeStep`, `CloudsWake.cs`, a setting). A first version: seen behind the test rocket through a
+    layer.
+  - *Faults found on the way, each with its cause* (all said where they are mended, in the shader): level stripes
+    across far heaps (the walk striding further through clear air than it could know to be clear); grooves round
+    heaps (the lattice pushed about so hard that it folded over itself); a base veined like marble and thin slits
+    through heaps (the base's and the lid's unevenness worked out from a pattern that also changes with height);
+    teeth along every bank, in the game only (a bank's distances multiplied by a share where two sizes of lattice
+    overlap, which happens only where the layer's depth changes from place to place); each lattice cut along the
+    line where two faces of the cube meet (it was moved off the other by its place in a pair, not by which face it
+    was: mended on the evening of the 12th, not yet looked at on such a line in the game).
+  - *What they cost, and how that was brought down.* As first made the new shapes took a third of the frames away
+    among fair-weather heaps (58 a second with the old shapes, 38 with the new). By count they asked no more often
+    than the old: each asking cost more, and far more of what is asked is clear air than cloud. In order: the walk
+    no longer asks twice at every step of clear air; what goes by the weather is worked out once a reading and what
+    goes by the gatherings once a step; no heaps of the lattice past 26 km (banks and sheets carry the distance).
+    Then, the evening of the 12th: **the lattice's heaps are drawn once a frame into a map** over the ground round
+    the camera (the shader's go 5: 1,024 dots over 51 km, laid out by where a place is in the noise and coming
+    round, so nothing moves when the camera does; under half a millisecond), and every asking reads its heap there
+    in place of working three heaps out; **a place over the top of everything a layer can hold, or under its base,
+    is told how far its own line goes before it meets that level** (it was told the distance straight up or down,
+    and a line that came down on a layer at three degrees crept up on it); **the walk goes slowly only as near a
+    surface as its lumps can stand out there** (under a shallow layer's lid they are a fifth of their size, and the
+    slow zone was not). Counted in the lab over a fair sky from just above it: 19.7 steps to a pixel for the old
+    shapes, 21.5 for the new before these and 13.8 after.
+    **In the game** (frames a second, the camera held, the same sky by turns; the old shapes, the new before the
+    map, the new now): a fair sky from the pad 60, 52, 56, and from just above it 52, 41, 46; a towering one 47, 40,
+    45, and from among the towers 45, 37, 43; a lumpy layer 48, 46, 50, and from above 42, 37, 42.
+  - *Looked at in the game beside photographs, the same evening, and found wanting.* A storm sky and a towering one,
+    from the ground, from among the towers and from 6 km (Wikimedia Commons beside them: a cumulus congestus by Jacek
+    Halicki, a field of fair-weather cumulus from an airliner by Famartin). Ours: each tower a lump of modelling clay
+    on a round flat coin of its own, grey bruises on its sunlit side, blue caves in its flank, and all of it soft, as
+    if out of focus. The real ones: a sunlit side that is one brilliant white, its lumps shown by the faintest shading
+    and a crisp outline; only cloud in another cloud's shadow is dark; towers stand up out of a deck of lesser heaps
+    with one level base; a fair field from above is flat pads several times wider than deep, evenly white. What was
+    changed for it, in the order it was found:
+    - *The caves were false shadows.* For cloud between a place and the sun further off than its own few steps that
+      way, the walk looked once, always two kilometres on: what a flank took for its neighbour's shadow was the shape
+      of the neighbour where the line happened to cross it at that one distance. Now the clouds' own shadow map (the
+      one that shades the ground) also keeps, for each line to the sun, the height at which the line is first a depth
+      of one into cloud coming down from the sun, and of six, and how much cloud is on it in all (a second picture
+      drawn with the first; the line found where it enters cloud by halving); the walk asks that. Read between the
+      map's dots by hand, among the lines that meet cloud only: read the card's way, a line that meets none was taken
+      in with its neighbour's three kilometres and every shadow's edge was a wall of facets. Off the map, or with the
+      clouds' shadows switched off: three looks over seven kilometres, at different places each frame.
+    - *The bruises were the heap's own folds, lit as stone is.* Light goes a hundred metres and more through cloud
+      before it has forgotten which way it came. So: which way a surface faces is taken mostly from the heap without
+      its lumps; the first hundred and fifty metres of the heap's own cloud towards the sun do not dim what has been
+      scattered many times, and the next few hundred count for less than half; a crease between lumps sees half the
+      sky its lumps see, not a twelfth, and is cut no deeper than three tenths of a lump. Another cloud's shadow counts
+      in full.
+    - *Finer lumps.* The small noise carries three sizes in its one reading and only the coarsest was used: all three
+      now. A tower a few kilometres off had no lump on it under a hundred metres.
+    - *A deck under the towers.* Where the heaps tower there is a bank too (a little less of one), and the towers
+      stand up out of it.
+    - *A heap that is going stays where it stood* and is eaten from below (its base climbs through it, it narrows,
+      a ragged cap is left where its top was). It was lifted off the base whole: an egg afloat and aslant. And where
+      one heap stands in another, the lower base is the base: a dying heap in a living one cut a hollow up into it.
+    - *As fine as the screen.* The walk is done at half the picture's size each way, and what was kept from frame to
+      frame was that size too: no lump smaller than two pixels of the screen was ever seen. What is kept is now the
+      screen's own size; each frame the walk's lines go through a different one of the four pixels each of its dots
+      stands for, and a pixel takes much of a frame whose line went through it and little of the others. Over four
+      frames with the camera still, a picture as fine as the screen, for the same walk (`Clouds.Finer`).
+    - *The shadow map a quarter at a time* (one dot of every four each frame, in turn; all of it when it has just been
+      made or moved, or under time warp), and the weather read at every sixth of its steps: with the new shapes it had
+      come to cost a twelfth of the frames.
+  - **What is still wrong, plainly.** The towers are better and still not photographs: lumps too smooth and too much
+    of a size, the shaded side and the underside of a bank one flat grey with nothing in it, a bank's side a straight
+    wall. A storm sky is towers with clear sky between: no dark base from horizon to horizon, and the storm's own
+    cloud was not in view when it was looked at. **What all this costs against the old shapes is not known tonight.** The last comparison that can be trusted, made
+    before the shadow map was drawn a quarter at a time, had a fair sky from the pad at 48 frames a second against the
+    old shapes' 58, from just above at 48 against 53, and a towering sky level with them (48 and 48, 41 and 41). One
+    round after that change had old and new within a few frames of one another, about 53 a second, in five views of
+    six; then the Mac went to sleep on its battery in the middle of the measuring (frames fell to six a second and
+    the clock jumped by hours), and nothing measured after it counts. To be measured again with the Mac awake. What
+    is known to cost: where a fair layer is
+    shallow its heaps are small and close, the map knows no clear air further than half a lattice cell from a place, and between 10 and 25 km the walk goes in strides of one or two hundred
+    metres where the old shapes' seeker took three to six hundred (to mend: the map's gaps and tops gathered into
+    coarser maps, and the banks drawn into it too). Bank tops want more relief and softer, more ragged edges. Small
+    heaps come into being between 26 and 15 km as the camera nears. With the camera moving, what is kept from frame
+    to frame is read between its dots and the picture softens until it is still again. The walk's shader now reads
+    sixteen textures, which is all this Mac's graphics card allows one shader: nothing more can be added to it
+    without taking something out. Nothing from orbit with the new shapes; nothing on Windows (the Direct3D shader has
+    to be built from this on the PC). The old shapes' code and their field of 14 MB still ship.

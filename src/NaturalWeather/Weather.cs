@@ -26,10 +26,10 @@ namespace NaturalWeather
     /// </summary>
     static class Weather
     {
-        public const string Version = "0.3.1";
+        public const string Version = "0.4.0";
 
         public static Mod Page;
-        public static Toggle On, Push, Tip, Strike, Light, Smoke, Rain, Flashes, Fog, Dust, UseCity;
+        public static Toggle On, Push, Tip, Strike, HailBreaks, Icing, Light, Smoke, Rain, Drops, WetGround, Flashes, Fog, Dust, UseCity;
         public static Toggle Kerbin, Duna, Eve, Laythe, Jool, Others;
         public static Choice Chosen;
         public static Slider Often, Pace, Wind, Gusts, Thunder, Patter, Whoosh;
@@ -57,10 +57,14 @@ namespace NaturalWeather
             Push = Page.Toggle("push", "Wind moves craft", true, "Off: the weather is only seen, never felt.");
             Tip = Page.Toggle("tip", "Wind can tip landed craft", true, "Off: craft standing on the ground or the sea feel no wind.");
             Strike = Page.Toggle("strike", "Lightning can strike craft", true, "Off: no strikes. On: a craft in or climbing through a storm can be struck.");
+            HailBreaks = Page.Toggle("hailbreaks", "Large hail can break panels", true, "Off: hail is only seen and heard. On: stones of 20 mm and more can break deployed solar panels, aerials and radiators.");
+            Icing = Page.Toggle("icing", "Ice on craft", true, "In cloud colder than freezing, in freezing rain and in freezing fog, ice builds on a craft: it is heavier, drags more, and its wings lift less. Speed, engines and warmer air melt it off. Off: no ice.");
             Page.Heading("What is drawn");
             Light = Page.Toggle("light", "Cloud light", true, "Cloud dims the sun and greys the sky (through Natural Light).");
             Smoke = Page.Toggle("smoke", "Smoke in the wind", true, "Smoke and explosions (Volumetric Explosions) drift in the weather's wind.");
-            Rain = Page.Toggle("rain", "Rain and snow", true);
+            Rain = Page.Toggle("rain", "Rain, snow, hail", true, "What falls, drawn round the camera: rain, snow, ice pellets and hail.");
+            Drops = Page.Toggle("drops", "Drops on the camera", true, "Rain leaves drops on the camera's glass: they sit, run and dry. Off: the glass stays clear.");
+            WetGround = Page.Toggle("wetground", "Wet ground", true, "Where rain has fallen the ground is darker and shines, and water stands on level ground until it dries.");
             Flashes = Page.Toggle("lightning", "Lightning", true);
             Thunder = Page.Slider("thunder", "Thunder", 0.8f, 0f, 1f, "", 2, "How loud the thunder is.");
             Patter = Page.Slider("patter", "Rain's sound", 0.6f, 0f, 1f, "", 2, "How loud the rain is.");
@@ -136,7 +140,7 @@ namespace NaturalWeather
         {
             Aero.Start();
             Feed.Start();
-            if (HighLogic.LoadedSceneIsFlight) { gameObject.AddComponent<Rain>(); gameObject.AddComponent<Rainbow>(); }
+            if (HighLogic.LoadedSceneIsFlight) { gameObject.AddComponent<Rain>(); gameObject.AddComponent<Hail>(); gameObject.AddComponent<Rainbow>(); gameObject.AddComponent<Wet>(); gameObject.AddComponent<Icing>(); }
             gameObject.AddComponent<Lightning>();
         }
 
@@ -211,7 +215,8 @@ namespace NaturalWeather
             double ut = Planetarium.GetUniversalTime();
             WeatherHere here = Model.Here(w, lat, lon, ut);
             Vector3 wind = Provider.Local(w, lat, lon, alt, agl, ut, false);
-            return Panel.Words(here) + ", wind " + wind.magnitude.ToString("F0") + " m/s from the " + CityWeather.Compass(Mathf.Atan2(-wind.x, -wind.y) * Mathf.Rad2Deg) + ".";
+            string violent = Violent.Says(w, lat, lon, ut);
+            return Panel.Words(here) + ", wind " + new Vector2(wind.x, wind.y).magnitude.ToString("F0") + " m/s from the " + CityWeather.Compass(Mathf.Atan2(-wind.x, -wind.y) * Mathf.Rad2Deg) + "." + (violent.Length > 0 ? " " + violent : "") + (HighLogic.LoadedSceneIsFlight && Icing.Report.Length > 0 ? " " + Icing.Report : "");
         }
     }
 }

@@ -29,6 +29,7 @@ uniform vec4 _CloudShadeX;   // xyz: the square's two sides, in the scene's axes
 uniform vec4 _CloudShadeY;
 uniform vec4 _CloudShade;    // x: how much brighter the sun makes what faces it straight on than the sky alone (about 1.7 by day); y: how far off the pattern has faded to half (m); z: the least the camera draws (m); w: the most
 uniform vec4 _CloudShadeSun; // x: what the sun was dimmed by for the whole scene (the cloud above the craft), 0 to 1; y: 1 if the world has a sea
+uniform vec4 _CloudWet;      // x: how wet the ground is round the camera (0 to 1: rain has fallen there); y: how far off that still holds (m)
 uniform sampler2D _CloudShadowMap;   // r: how much cloud lies towards the sun; g, b: the lowest and highest of it (km above the radius)
 uniform sampler2D _CameraDepthTexture;
 in vec2 vs_TEXCOORD0;
@@ -39,23 +40,35 @@ void main()
     vec2 uv = vs_TEXCOORD0;
     if (_CloudRight.w < 0.5) discard;
     float z = textureLod(_CameraDepthTexture, uv, 0.0).r;
-    bool nothing = _CloudAhead.w > 0.5 ? z <= 0.000001 : z >= 0.999999;
+    // (Nothing drawn here by this camera: the depth exactly as it was cleared. Not "nearly": on OpenGL the near camera sees
+    // to 400 m, and the last millionth of its depth is the ground from 399.2 m to 400 m, which got no shadow from this
+    // camera's pass and none from the far camera's, whose ground it covers: a pale line across shaded ground.)
+    bool nothing = _CloudAhead.w > 0.5 ? z <= 0.0 : z >= 1.0;
     if (nothing) discard;
     vec3 dir = normalize(_CloudAhead.xyz + _CloudRight.xyz * (uv.x * 2.0 - 1.0) + _CloudUp.xyz * (uv.y * 2.0 - 1.0));
-    float t = 1.0 / (_ZBufferParams.z * z + _ZBufferParams.w) / max(dot(dir, _CloudAhead.xyz), 1e-4);
+    // (how far off what is drawn here is, along the camera's axis, which is how a camera's sight is measured; and along the line of sight)
+    float drawn = 1.0 / (_ZBufferParams.z * z + _ZBufferParams.w);
+    float t = drawn / max(dot(dir, _CloudAhead.xyz), 1e-4);
     // (the sea is drawn by Scatterer after the depth picture is made, which holds the seabed under it: where the line of sight
     // meets the sea's surface first, that is what is shaded)
+    bool sea = false;
     if (_CloudShadeSun.y > 0.5)
     {
         float b = dot(_CloudCam.xyz, dir), c = dot(_CloudCam.xyz, _CloudCam.xyz) - _CloudCam.w * _CloudCam.w;
         float disc = b * b - c;
         if (disc > 0.0 && c > 0.0)
         {
-            float sea = -b - sqrt(disc);
-            if (sea > 0.0 && sea < t) t = sea;
+            float seaAt = -b - sqrt(disc);
+            if (seaAt > 0.0 && seaAt < t) { t = seaAt; sea = true; }
         }
     }
-    if (t < _CloudShade.z || t > _CloudShade.w) discard;
+    // (Each camera's pass shades what that camera has drawn, whatever of it there is: a camera's sight is measured along
+    // its axis, not along the line of sight. Measured along the line of sight, as this first was, ground 300 m to 400 m
+    // off towards the sides of the picture was past the near camera's "400 m" and not yet the far camera's: a pale patch
+    // each side of the picture where the two hand over. And it is the thing drawn that is asked about, not the sea's
+    // surface over it: a seabed the far camera drew is shaded by the far camera's pass though the water over it is the
+    // near camera's, or shallows lying across the hand-over had an unshaded wedge of bottom.)
+    if (drawn < _CloudShade.z || drawn > _CloudShade.w) discard;
     vec3 near = dir * t;                       // from the camera (small numbers: their differences are clean)
     vec3 p = _CloudCam.xyz + near;             // from the planet's centre
     float R = _CloudCam.w;
@@ -63,33 +76,43 @@ void main()
     vec3 up = p / max(r, 1.0);
     vec3 sun = _CloudSun.xyz;
     float sunUp = dot(up, sun);
-    if (sunUp < -0.03) discard;
     // Which way the surface faces (from how the place changes from one pixel to the next, turned to face the camera).
     vec3 facing = cross(dFdx(near), dFdy(near));
     float size = length(facing);
     facing = size > 1e-10 ? facing / size : -dir;
     if (dot(facing, dir) > 0.0) facing = -facing;
-    float ndl = dot(facing, sun);
-    if (ndl <= 0.0) discard;
-    // Down the sun's line to the ground the shadow was worked out on.
-    float h = r - R;
-    vec3 g = p - sun * ((h - _CloudShadeX.w) / max(sunUp, 0.06));
-    vec3 rel = g - _CloudShadeAt.xyz;
-    vec2 st = vec2(dot(rel, _CloudShadeX.xyz), dot(rel, _CloudShadeY.xyz)) / _CloudShadeAt.w + 0.5;
-    if (st.x <= 0.0 || st.x >= 1.0 || st.y <= 0.0 || st.y >= 1.0) discard;
-    vec4 m = textureLod(_CloudShadowMap, st, 0.0);
-    float lowest = m.g * 1000.0, highest = m.b * 1000.0;
-    // (only the cloud above this place takes its sun: a craft flying between two layers is shaded by the upper one alone)
-    float above = m.r * clamp((highest - h) / max(highest - lowest, 60.0), 0.0, 1.0);
-    // (the edge of the square fades, and so does a far shadow, into the light the craft is in)
-    vec2 edge = min(st, 1.0 - st);
-    float fade = clamp(min(edge.x, edge.y) * 12.0, 0.0, 1.0) * _CloudShade.y / (_CloudShade.y + t);
-    float through = mix(_CloudShadeSun.x, exp(-above), fade);
-    // The sun's share of the light on this face, as it would be undimmed; the light as drawn, and as it should be.
-    float k = _CloudShade.x * ndl;
-    float share = k / (k + 1.0);
-    float should = 1.0 - share + share * through, drawn = 1.0 - share + share * _CloudShadeSun.x;
-    float factor = clamp(should / max(drawn, 0.05), 0.0, 2.0);
+    // ---- wet ground is darker ground: water fills the roughness that scattered the light back (three tenths less, on
+    // what faces the sky; walls less; the sea not at all), day and night, as far off as the wet is known
+    float wet = 1.0;
+    if (_CloudWet.x > 0.01 && !sea)
+        wet = 1.0 - 0.3 * _CloudWet.x * smoothstep(0.15, 0.7, dot(facing, up)) * (1.0 - smoothstep(0.5, 1.0, t / max(_CloudWet.y, 1.0)));
+    // ---- the clouds' shadow
+    float factor = 1.0;
+    for (int lit = sunUp >= -0.03 ? 0 : 1; lit < 1; lit++)
+    {
+        float ndl = dot(facing, sun);
+        if (ndl <= 0.0) break;
+        // Down the sun's line to the ground the shadow was worked out on.
+        float h = r - R;
+        vec3 g = p - sun * ((h - _CloudShadeX.w) / max(sunUp, 0.06));
+        vec3 rel = g - _CloudShadeAt.xyz;
+        vec2 st = vec2(dot(rel, _CloudShadeX.xyz), dot(rel, _CloudShadeY.xyz)) / _CloudShadeAt.w + 0.5;
+        if (st.x <= 0.0 || st.x >= 1.0 || st.y <= 0.0 || st.y >= 1.0) break;
+        vec4 m = textureLod(_CloudShadowMap, st, 0.0);
+        float lowest = m.g * 1000.0, highest = m.b * 1000.0;
+        // (only the cloud above this place takes its sun: a craft flying between two layers is shaded by the upper one alone)
+        float above = m.r * clamp((highest - h) / max(highest - lowest, 60.0), 0.0, 1.0);
+        // (the edge of the square fades, and so does a far shadow, into the light the craft is in)
+        vec2 edge = min(st, 1.0 - st);
+        float fade = clamp(min(edge.x, edge.y) * 12.0, 0.0, 1.0) * _CloudShade.y / (_CloudShade.y + t);
+        float through = mix(_CloudShadeSun.x, exp(-above), fade);
+        // The sun's share of the light on this face, as it would be undimmed; the light as drawn, and as it should be.
+        float k = _CloudShade.x * ndl;
+        float share = k / (k + 1.0);
+        float should = 1.0 - share + share * through, drawn = 1.0 - share + share * _CloudShadeSun.x;
+        factor = clamp(should / max(drawn, 0.05), 0.0, 2.0);
+    }
+    factor *= wet;
     if (!(abs(factor - 1.0) > 0.004)) discard;
     // (drawn doubled: what is there is multiplied by twice this, so it can be lightened as well as darkened)
     SV_Target0 = vec4(vec3(factor * 0.5), 1.0);

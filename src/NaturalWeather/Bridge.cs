@@ -48,6 +48,8 @@ namespace NaturalWeather
             o["rain"] = R(h.Rain, 2); o["snow_share"] = R(h.Snow, 2); o["storms_near"] = R(h.Storm, 2); o["fog"] = R(h.Fog, 2); o["dust"] = R(h.Dust, 2);
             o["visibility_m"] = Math.Round(h.Seeing);
             o["temperature_c"] = R(h.Temperature - 273.15, 1);
+            if (HighLogic.LoadedSceneIsFlight && vessel != null && Icing.Now > 0.05f)
+                o["ice_on_craft"] = new Dictionary<string, object> { { "mm", R(Icing.Now, 1) }, { "building", Icing.Building }, { "note", Icing.Report } };
             var layers = new List<object>();
             foreach (CloudLayer l in new[] { h.Low, h.Middle, h.High })
                 if (l.Kind != CloudKind.None && l.Cover > 0.05f)

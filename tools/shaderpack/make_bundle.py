@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pack one of this project's shaders into a Unity asset bundle, without the Unity editor.
 
-    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|enlarge|shadow|mark|shock|lens|shafts|clean|veil|clouds|cloudsover|cloudshade]
+    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|motion|enlarge|shadow|mark|shock|lens|shafts|clean|veil|clouds|cloudsover|cloudshade|wet]
 
 Volumetric Explosions': "volume" (the default) is the smoke, "layers" what puts every patch's smoke on the screen in depth order
 (since 0.5.0; "enlarge" did it a patch at a time before, and is kept for older copies of the mod), "shadow" the shadow it throws
@@ -65,11 +65,22 @@ SHADERS = {
         "textures": [("_VolHalf", 2), ("_CameraDepthTexture", 2)],
         "vertex": VERTEX + [("_VolDrawn", 4, False)],
     },
+    # Where each patch's smoke is going, written into the game's picture of motion, for a game that smooths between frames (see Layers.cs).
+    "motion": {
+        "name": "VolumetricExplosions/Motion", "path": "assets/volumetricexplosions/motion.shader", "id": 7307199000000000011, "program": 1987650011,
+        "bundle": "volumetricexplosionsmotion", "file": "CAB-766f6c756d65747269636d6f74696f6e", "code": "motion.glsl",
+        "fragment": [("_WorldSpaceCameraPos", 3, False), ("_VolCamera", 4, False), ("_VolSlot", 4, False), ("_MotGoes", 4, False), ("_MotFlow", 4, False),
+                     ("_MotAxisX", 4, False), ("_MotAxisY", 4, False), ("_MotAxisZ", 4, False), ("_MotNowX", 4, False), ("_MotNowY", 4, False), ("_MotNowW", 4, False),
+                     ("_MotWasX", 4, False), ("_MotWasY", 4, False), ("_MotWasW", 4, False), ("unity_WorldToObject", 4, True)],
+        "textures": [("_VolAtlas", 2), ("_VolAtlasDepth", 2), ("_Flow", 3)],
+        "given": 0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there
+    },
     "layers": {
         "name": "VolumetricExplosions/Layers", "path": "assets/volumetricexplosions/layers.shader", "id": 7307199000000000010, "program": 1987650010,
         "bundle": "volumetricexplosionslayers", "file": "CAB-766f6c756d65747269636c6179657273", "code": "layers.glsl",
-        "fragment": [("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_VolLayers", 4, False), ("_VolSlots", 4, False)],
-        "textures": [("_VolAtlas", 2), ("_VolAtlasDepth", 2), ("_VolFull", 2), ("_VolFullDepth", 2), ("_CameraDepthTexture", 2)],
+        "fragment": [("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_VolLayers", 4, False), ("_VolSlots", 4, False), ("_WeatherClouds", 4, False)],
+        "textures": [("_VolAtlas", 2), ("_VolAtlasDepth", 2), ("_VolFull", 2), ("_VolFullDepth", 2), ("_CameraDepthTexture", 2), ("_WeatherCloudsPic", 2), ("_WeatherCloudsDist", 2)],
         "vertex": [("_VolSheet", 4, False)],
         "cull": 0.0,                     # a sheet over the part of the screen the smoke is on, whichever way round
     },
@@ -88,8 +99,9 @@ SHADERS = {
         "name": "VolumetricExplosions/Shadow", "path": "assets/volumetricexplosions/shadow.shader", "id": 7307199000000000009, "program": 1987650009,
         "bundle": "volumetricexplosionsshadow", "file": "CAB-766f6c756d6574726963736861646f77", "code": "shadow.glsl",
         "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ProjectionParams", 4, False), ("_ZBufferParams", 4, False), ("_VolCamera", 4, False),
-                     ("_ShadowGridX", 4, False), ("_ShadowGridY", 4, False), ("_ShadowGridZ", 4, False), ("_ShadowSun", 4, False), ("_ShadowSunWorld", 4, False), ("unity_MatrixV", 4, True)],
-        "textures": [("_Volume", 3), ("_CameraDepthTexture", 2)],
+                     ("_ShadowGridX", 4, False), ("_ShadowGridY", 4, False), ("_ShadowGridZ", 4, False), ("_ShadowSun", 4, False), ("_ShadowSunWorld", 4, False), ("unity_MatrixV", 4, True),
+                     ("_VolFlow", 4, False), ("_VolSize", 4, False)],
+        "textures": [("_Volume", 3), ("_Flow", 3), ("_CameraDepthTexture", 2)],
         "blend": (2.0, 0.0),             # what is there is multiplied by what it draws: darkened, and nothing added
     },
     "lens": {
@@ -125,7 +137,7 @@ SHADERS = {
     "veil": {
         "name": "NaturalLight/Veil", "path": "assets/naturallight/veil.shader", "id": 7307199000000000021, "program": 1987650021,
         "bundle": "nlveil", "file": "CAB-6e6c7665696c00000000000000000000", "code": "veil.glsl",
-        "fragment": [("_ZBufferParams", 4, False), ("_VeilView", 4, False), ("_VeilUp", 4, False), ("_VeilAir", 4, False), ("_VeilColour", 4, False), ("_VeilSun", 4, False), ("_VeilSunColour", 4, False)],
+        "fragment": [("_ZBufferParams", 4, False), ("_VeilView", 4, False), ("_VeilUp", 4, False), ("_VeilAir", 4, False), ("_VeilColour", 4, False), ("_VeilSun", 4, False), ("_VeilSunColour", 4, False), ("_VeilSea", 4, False)],
         "textures": [("_CameraDepthTexture", 2)],
         "vertex": [("_VeilSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,       # a sheet over the whole screen, drawn over what is there by as much weather as there is (premultiplied)
@@ -144,10 +156,11 @@ SHADERS = {
                      ("_CloudFieldA", 4, False), ("_CloudFieldB", 4, False), ("_CloudFieldLevA", 4, False), ("_CloudFieldLevB", 4, False), ("_CloudFieldLevC", 4, False), ("_CloudFieldLevD", 4, False),
                      ("_CloudPrevAt", 4, False), ("_CloudPrevRight", 4, False), ("_CloudPrevUp", 4, False), ("_CloudPrevAhead", 4, False),
                      ("_CloudShadowAt", 4, False), ("_CloudShadowX", 4, False), ("_CloudShadowY", 4, False), ("_CloudSunFixed", 4, False),
-                     ("_CloudStreets", 4, False), ("_CloudAlong", 4, False), ("_CloudHabit", 4, False)]
+                     ("_CloudStreets", 4, False), ("_CloudAlong", 4, False), ("_CloudHabit", 4, False), ("_CloudForm", 4, False),
+                     ("_CloudWakeLook", 4, False), ("_CloudWakeMid", 4, False), ("_CloudHeapsAt", 4, False), ("_CloudJitter", 4, False), ("_CloudTwistA", 4, False), ("_CloudTwistB", 4, False), ("_CloudEyeA", 4, False), ("_CloudEyeB", 4, False), ("_CloudEyeC", 4, False), ("_CloudEyeD", 4, False), ("_CloudShelfA", 4, False), ("_CloudShelfB", 4, False), ("_CloudShelfC", 4, False)] + [("_CloudWake%d" % n, 4, False) for n in range(8)]
                     + [("_CloudCellA%d" % n, 4, False) for n in range(6)] + [("_CloudCellB%d" % n, 4, False) for n in range(6)],
         "textures": [("_CloudField", 3), ("_CloudShape", 3), ("_CloudDetail", 3), ("_CloudMap", 2), ("_CloudMapB", 2), ("_CloudMapC", 2), ("_CloudAirLut", 2), ("_CloudNow", 2), ("_CloudNowD", 2),
-                     ("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2)],
+                     ("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2), ("_CloudCells", 2), ("_CloudHeaps", 2), ("_CloudHeapsB", 2), ("_CloudShadowB", 2)],
         "vertex": [("_CloudSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),             # what it draws takes the place of what was there (its own pictures)
@@ -172,14 +185,15 @@ SHADERS = {
                      ("_OceanWater", 4, False), ("_OceanFoam", 4, False), ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanLaceAt", 4, False), ("_OceanLaceAtB", 4, False), ("_OceanLaceCount", 4, False), ("_OceanLaceCountB", 4, False), ("_OceanLaceTurn", 4, False), ("_OceanLaceMix", 4, False),
                      ("_OceanMirrorX", 4, False), ("_OceanMirrorY", 4, False), ("_OceanMirrorW", 4, False), ("_OceanAtSpot", 4, False),
                      ("_OceanHighA", 4, False), ("_OceanHighB", 4, False), ("_UnderwaterFogColor", 4, False), ("_OceanStreak", 4, False), ("_OceanStreakAt", 4, False),
-                     ("_WeedUp", 4, False), ("_WeedFirst", 4, False), ("_WeedSecond", 4, False), ("_UnderLight", 4, False)],
+                     ("_WeedUp", 4, False), ("_WeedFirst", 4, False), ("_WeedSecond", 4, False), ("_UnderLight", 4, False), ("_OceanFarZ", 4, False),
+                     ("_WeatherVeilAir", 4, False), ("_WeatherVeilColour", 4, False), ("_WeatherVeilSun", 4, False), ("_WeatherVeilSunColour", 4, False), ("_OceanRain", 4, False), ("_OceanGust", 4, False), ("_OceanDentAt", 4, False), ("_OceanDentMid", 4, False), ("_OceanDentCurl", 4, False)],
         "vertex": [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True), ("_OceanMid", 4, False), ("_OceanAxisA", 4, False), ("_OceanAxisB", 4, False),
                    ("_OceanLay", 4, False), ("_OceanTwin", 4, False), ("_OceanShore", 4, False), ("_OceanMapAt", 4, False), ("_OceanWind", 4, False), ("_SeabedAtA", 4, False), ("_SeabedAtB", 4, False), ("_SeabedCell", 4, False),
                    ("_OceanHighA", 4, False), ("_OceanHighB", 4, False), ("_OceanSurfA", 4, False), ("_OceanSurfB", 4, False), ("_OceanAtSpot", 4, False),
-                   ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanBreaks", 4, False), ("_OceanBreakHow", 4, False)]
+                   ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanBreaks", 4, False), ("_OceanBreakHow", 4, False), ("_OceanDentAt", 4, False), ("_OceanDentMid", 4, False), ("_OceanDentCurl", 4, False)]
                   + [("_OceanAt%d" % n, 4, False) for n in range(8)],
         # (the waves: two stacks of eight textures each, 5 being a stack of flat textures)
-        "textures": [("_OceanMoved", 5), ("_OceanSlope", 5), ("_OceanFoamMap", 2), ("_OceanLace", 2), ("_OceanMirror", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanScene", 2), ("_CameraDepthTexture", 2)],
+        "textures": [("_OceanMoved", 5), ("_OceanSlope", 5), ("_OceanFoamMap", 2), ("_OceanLace", 2), ("_OceanMirror", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanFarDepth", 2), ("_OceanFarScene", 2), ("_OceanDent", 2), ("_OceanDentMove", 2), ("_OceanScene", 2), ("_CameraDepthTexture", 2)],
         "given": 2,                      # (the picture so far and how far off each pixel of it is: the game's own, handed over as they are)
         "blend": (1.0, 0.0), "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,
     },
@@ -191,8 +205,8 @@ SHADERS = {
                     + [("_Foam" + n, 4, False) for n in ("Texel", "CellA", "CellB", "MovedA", "MovedB", "SnapA", "SnapB", "AtA", "AtB", "Breaks", "Time", "Count", "Mode", "Ragged", "Coarse", "Front", "Pass", "Rows", "RowsAt")]
                     + [("_SeabedAtA", 4, False), ("_SeabedAtB", 4, False), ("_SeabedCell", 4, False), ("_OceanHighA", 4, False), ("_OceanHighB", 4, False),
                        ("_OceanSurfA", 4, False), ("_OceanSurfB", 4, False), ("_OceanAtSpot", 4, False)]
-                    + [("_FoamHull%d" % n, 4, False) for n in range(12)],
-        "textures": [("_OceanSlope", 5), ("_FoamPrev", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanLace", 2), ("_FoamFronts", 2)],
+                    + [("_FoamHull%d" % n, 4, False) for n in range(12)] + [("_OceanDentAt", 4, False)],
+        "textures": [("_OceanSlope", 5), ("_FoamPrev", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanLace", 2), ("_OceanDentMove", 2), ("_FoamFronts", 2)],
         "vertex": [],
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),
@@ -222,11 +236,35 @@ SHADERS = {
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),
     },
+    # Natural Weather's rain on the camera's glass and on the ground: a pass over the finished picture (Wet.cs).
+    # Natural Weather's drops on the camera's glass, each drawn into a picture of how high the water stands (Drops.cs).
+    "drops": {
+        "name": "NaturalWeather/Drops", "path": "assets/naturalweather/drops.shader", "id": 7307199000000000105, "program": 1987650105,
+        "bundle": "weatherdrops", "file": "CAB-7765617468657264726f707300000000", "code": "drops.glsl",
+        "fragment": [],
+        "textures": [],
+        "given": 0,
+        "vertex": [("_ProjectionParams", 4, False)],
+        "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,  # (the highest water kept where two drops overlap: the height written as the depth)
+        "blend": (1.0, 0.0),
+    },
+    "wet": {
+        "name": "NaturalWeather/Wet", "path": "assets/naturalweather/wet.shader", "id": 7307199000000000104, "program": 1987650104,
+        "bundle": "weatherwet", "file": "CAB-77656174686572776574000000000000", "code": "wet.glsl",
+        "fragment": [("_ZBufferParams", 4, False), ("_WetRight", 4, False), ("_WetUp", 4, False), ("_WetAhead", 4, False), ("_WetCam", 4, False), ("_WetHere", 4, False),
+                     ("_WetAcross", 4, False), ("_WetAlong", 4, False), ("_WetGround", 4, False), ("_WetSky", 4, False), ("_WetSun", 4, False), ("_WetGlass", 4, False),
+                     ("_WetDropsSize", 4, False)],
+        "textures": [("_WetDrops", 2), ("_WetScene", 2), ("_CameraDepthTexture", 2)],
+        "given": 2,                      # (the picture so far and how far off each pixel is: the game's own, handed over as they are)
+        "vertex": [],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),
+    },
     "cloudshade": {
         "name": "NaturalWeather/CloudShade", "path": "assets/naturalweather/cloudshade.shader", "id": 7307199000000000103, "program": 1987650103,
         "bundle": "weathercloudshade", "file": "CAB-77656174686572636c6f756473686164", "code": "cloudshade.glsl",
         "fragment": [("_ZBufferParams", 4, False), ("_CloudRight", 4, False), ("_CloudUp", 4, False), ("_CloudAhead", 4, False), ("_CloudCam", 4, False), ("_CloudSun", 4, False),
-                     ("_CloudShadeAt", 4, False), ("_CloudShadeX", 4, False), ("_CloudShadeY", 4, False), ("_CloudShade", 4, False), ("_CloudShadeSun", 4, False)],
+                     ("_CloudShadeAt", 4, False), ("_CloudShadeX", 4, False), ("_CloudShadeY", 4, False), ("_CloudShade", 4, False), ("_CloudShadeSun", 4, False), ("_CloudWet", 4, False)],
         "textures": [("_CloudShadowMap", 2), ("_CameraDepthTexture", 2)],
         "vertex": [("_CloudSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,
@@ -324,7 +362,7 @@ def build(ksp, out_path, which):
     form["m_Name"] = NAME
     texture_prop = copy.deepcopy(form["m_PropInfo"]["m_Props"][0])
     props = []
-    for name, dims in TEXTURES[:-spec.get("given", 1)]:
+    for name, dims in TEXTURES[:len(TEXTURES) - spec.get("given", 1)]:
         prop = copy.deepcopy(texture_prop)
         prop["m_Name"], prop["m_Description"] = name, name[1:]
         prop["m_DefTexture"] = {"m_DefaultName": "", "m_TexDim": dims}

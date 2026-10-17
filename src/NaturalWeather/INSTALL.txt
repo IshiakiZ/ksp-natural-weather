@@ -6,7 +6,7 @@ storms with lightning and thunder, fog and dust, a launch go / no go with a fore
 real city's weather if you like.
 
 INSTALL
-  This mod needs Keystone, the base it stands on, which is a separate download:
+  This mod needs Keystone 0.8 or later, the base it stands on, a separate download:
     https://spacedock.info/mod/4665/Keystone
   Copy Keystone's folder (Keystone) into your KSP's GameData folder, and the NaturalWeather
   folder from this download beside it, and start the game. Without Keystone the game does
@@ -39,7 +39,10 @@ KNOWN FAULTS
   rain, snow, fog, lightning, the launch weather) is as described.
 
 WHERE IT WORKS
-  Made and tried on a Mac, and tried on Windows 11: the clouds (shaders of its own, packed for
-  the game's OpenGL and built for Direct3D), rain, fog and snow. Nobody has run it on Linux yet.
+  Made and tried on a Mac. 0.3 was tried on Windows 11: the clouds (shaders of its own, packed
+  for the game's OpenGL and built for Direct3D), rain, fog and snow. What 0.4.0 added (the
+  clouds remade, drops on the camera, wet ground, hail, freezing rain, fog by kind, storms of
+  every kind, haloes, icing) has been tried on the Mac only: its shaders are built for
+  Direct3D, but nobody has looked at them there yet. Nobody has run it on Linux yet.
 
 Everything else: https://github.com/IshiakiZ/ksp-natural-weather

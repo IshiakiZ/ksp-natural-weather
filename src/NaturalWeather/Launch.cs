@@ -124,8 +124,11 @@ namespace NaturalWeather
             }
             Add(v, "Lightning", flashed ? "within " + (Math.Max(0.0, nearest) / 1000.0).ToString("F0") + " km in the last 30 minutes" : "none near", "none within 18.5 km (10 nautical miles) for 30 minutes", !flashed);
             Add(v, "Storm anvils", anvil ? "within 18.5 km" : "none near", "none within 18.5 km", !anvil);
+            // (and what no launch rule needs a number for)
+            bool twister = Violent.Nearest(w, col.Twisters, lat, lon, out Twister tw, out double twFar) && twFar < 20000.0;
+            Add(v, "Tornadoes", twister ? (tw.Water ? "a waterspout " : "a tornado ") + (twFar / 1000.0).ToString("F0") + " km off" : "none near", "none within 20 km", !twister);
             // 5. what falls
-            Add(v, "Precipitation", here.Rain > 0.03f ? (here.Snow > 0.5f ? "snow" : "rain") + " at the pad" : "none", "none", here.Rain <= 0.03f);
+            Add(v, "Precipitation", here.Hail > 0.05f ? "hail at the pad" : here.Rain > 0.03f ? Panel.Falling(here) + " at the pad" : "none", "none", here.Rain <= 0.03f && here.Hail <= 0.05f);
             // 6. a thick layer of cloud that reaches freezing, and 7. heaped cloud with its top above freezing
             float freeze = col.B.Freeze;
             bool thick = false, heaped = false;

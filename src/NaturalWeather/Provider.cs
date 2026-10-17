@@ -57,6 +57,9 @@ namespace NaturalWeather
         {
             Column col = Model.ColumnAt(w, lat, lon, ut);
             Vector3 v = Model.Mean(col, alt, aboveGround);
+            // (what is far smaller than the half kilometre the wind above is kept by: a storm's rising and sinking air, a
+            // downburst, a tornado, worked out for this very place)
+            v += Violent.Small(w, col, lat, lon, alt, aboveGround);
             if (gusts) v += Gusts.At(col, lat, lon, alt, aboveGround, ut);
             return v;
         }

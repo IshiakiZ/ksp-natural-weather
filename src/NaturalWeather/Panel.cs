@@ -24,7 +24,10 @@ namespace NaturalWeather
                 GUILayout.Label("<b>" + (flight ? "Where the craft is" : "At the space centre") + "</b>: " + Words(here) + ".", Host.Rich);
                 GUILayout.Label("Wind at 10 m " + Wind(at10) + ", gusts of " + here.Gusts.ToString("F1") + " m/s" + (flight && agl > 30f ? "; at the craft's height (" + (agl / 1000f).ToString(agl > 1000f ? "F1" : "F2") + " km above the ground) " + Wind(there) : "") + ".", Host.Small);
                 GUILayout.Label(Clouds(here) + "  " + (here.Temperature - 273.15f).ToString("F0") + " °C at the ground; can see " + Far(here.Seeing) + ".", Host.Small);
-                if (flight && Weather.Push) { Vector3 on = Aero.OnCraft(FlightGlobals.ActiveVessel); GUILayout.Label("The wind on the craft now, gusts and all: " + on.magnitude.ToString("F1") + " m/s.", Host.Small); }
+                if (flight && Weather.Push) { Vector3 on = Aero.OnCraft(FlightGlobals.ActiveVessel); GUILayout.Label("The wind on the craft now, gusts and all: " + on.magnitude.ToString("F1") + " m/s" + (Mathf.Abs(Vector3.Dot(on, (Vector3)FlightGlobals.ActiveVessel.upAxis)) > 1.5f ? " (" + Vector3.Dot(on, (Vector3)FlightGlobals.ActiveVessel.upAxis).ToString("+0.0;-0.0") + " m/s of it up)" : "") + ".", Host.Small); }
+                string violent = Violent.Says(w, lat, lon, ut);
+                if (violent.Length > 0) GUILayout.Label("<color=#ff8a7a>" + violent + "</color>", Host.Rich);
+                if (flight && Icing.Report.Length > 0) GUILayout.Label("<color=#a8d8ff>" + Icing.Report + "</color>", Host.Rich);
             }
             else GUILayout.Label(Weather.Status, Host.Small);
             if (Aero.Report.Length > 0) GUILayout.Label(Aero.Report, Host.Small);
@@ -88,7 +91,8 @@ namespace NaturalWeather
         {
             string sky;
             float cover = h.Cover;
-            if (h.Fog > 0.4f) sky = "fog";
+            if (h.Fog > 0.4f) sky = (h.FogFreezes ? "freezing " : "") + (h.FogOf == FogKind.Radiation ? "ground fog" : h.FogOf == FogKind.Advection ? "sea fog" : h.FogOf == FogKind.Upslope ? "hill fog" : h.FogOf == FogKind.Steam ? "steam fog on the water" : h.FogOf == FogKind.Frontal ? "rain and fog" : "fog");
+            else if (h.Fog > 0.12f && h.FogOf == FogKind.Radiation) sky = "mist in the low ground";
             else if (h.Dust > 0.4f) sky = h.Dust > 0.75f ? "a dust storm" : "dust in the air";
             else if (h.Low.Kind == CloudKind.Cumulonimbus) sky = "thunderstorms";
             else if (cover < 0.08f) sky = "clear";
@@ -98,12 +102,20 @@ namespace NaturalWeather
             else sky = "overcast";
             if (h.Rain > 0.03f)
             {
-                string what = h.Snow > 0.6f ? "snow" : h.Snow > 0.25f ? "sleet" : h.Rain < 0.1f ? "drizzle" : "rain";
-                string much = h.Rain > 0.6f ? "heavy " : h.Rain < 0.15f && what != "drizzle" ? "light " : "";
-                sky += ", " + much + what;
+                sky += ", " + Falling(h);
             }
+            if (h.Hail > 0.05f) sky += ", hail" + (h.HailSize >= 15f ? " (stones of " + Mathf.RoundToInt(h.HailSize) + " mm)" : "");
             if (h.Storm > 0.2f && h.Low.Kind != CloudKind.Cumulonimbus) sky += ", storms nearby";
             return char.ToUpperInvariant(sky[0]) + sky.Substring(1);
+        }
+
+        /// <summary>What falls, in a word or two: "light rain", "freezing rain", "heavy snow".</summary>
+        public static string Falling(WeatherHere h)
+        {
+            // (sleet as in North America: ice pellets; a fall that is part rain and part snow is called that)
+            string what = h.Freezing > 0.5f ? "freezing rain" : h.Pellets > 0.5f ? "sleet (ice pellets)" : h.Snow > 0.6f ? "snow" : h.Snow > 0.25f ? "rain and snow" : h.Rain < 0.1f ? (h.Freezing > 0.25f ? "freezing drizzle" : "drizzle") : "rain";
+            string much = h.Rain > 0.6f ? "heavy " : h.Rain < 0.15f && !what.EndsWith("drizzle") ? "light " : "";
+            return much + what;
         }
 
         static string Wind(Vector3 v)

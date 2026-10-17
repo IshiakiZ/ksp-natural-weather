@@ -34,14 +34,25 @@ if [ -f src/NaturalWeather/needs.txt ]; then
   done < src/NaturalWeather/needs.txt
 fi
 
+# A companion library for the Harmony mod, where this mod has one (src/NaturalWeatherHarmony): built against this mod and against
+# Harmony, only where Harmony is installed in the game, and loaded by the game only where it is.
+HARMONY="$KSP_DIR/GameData/000_Harmony/0Harmony.dll"
+companion() {  # companion <folder the mod's own library is in>
+  [ -d src/NaturalWeatherHarmony ] || return 0
+  if [ -f "$HARMONY" ]; then WITH="$KEYSTONE:$1/NaturalWeather.dll:$HARMONY" compile "$1/NaturalWeatherHarmony.dll" "" src/NaturalWeatherHarmony
+  else rm -f "$1/NaturalWeatherHarmony.dll"; echo "left out: NaturalWeatherHarmony (Harmony is not installed here to build it against)"; fi
+}
+
 case "$MODE" in
   check)
     WITH="$KEYSTONE" compile "$TMP/NaturalWeather.dll" "" src/NaturalWeather
+    companion "$TMP"
     echo "ok: compiles"
     ;;
   dist|install)
     mkdir -p "$OUT"
     WITH="$KEYSTONE" compile "$OUT/NaturalWeather.dll" "" src/NaturalWeather
+    companion "$OUT"
     # (the mod's own shaders, if it has any: made by tools/shaderpack/make_bundle.py and kept ready made in src/NaturalWeather/Shaders)
     if ls src/NaturalWeather/Shaders/*.bundle >/dev/null 2>&1; then mkdir -p "$OUT/PluginData"; cp src/NaturalWeather/Shaders/*.bundle "$OUT/PluginData/"; fi
     # (and anything else it keeps in src/NaturalWeather/PluginData: a craft file, say)
@@ -49,6 +60,8 @@ case "$MODE" in
     if [ "$MODE" = dist ]; then echo "ok: built into $OUT"; exit 0; fi
     mkdir -p "$KSP_DIR/GameData/NaturalWeather"
     cp "$OUT/NaturalWeather.dll" "$KSP_DIR/GameData/NaturalWeather/"
+    rm -f "$KSP_DIR/GameData/NaturalWeather/NaturalWeatherHarmony.dll"
+    [ -f "$OUT/NaturalWeatherHarmony.dll" ] && cp "$OUT/NaturalWeatherHarmony.dll" "$KSP_DIR/GameData/NaturalWeather/"
     if [ -d "$OUT/PluginData" ]; then mkdir -p "$KSP_DIR/GameData/NaturalWeather/PluginData"; cp -R "$OUT/PluginData/." "$KSP_DIR/GameData/NaturalWeather/PluginData/"; fi
     echo "ok: Natural Weather installed to $KSP_DIR/GameData/NaturalWeather (restart KSP to load it; it needs Keystone there too)"
     ;;

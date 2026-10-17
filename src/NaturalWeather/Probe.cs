@@ -13,6 +13,168 @@ namespace NaturalWeather
         /// <summary>A weather held for tests (the number of one of Model.Choices), without touching the player's settings; -1 lets go.</summary>
         public static int Hold = -1;
 
+        /// <summary>
+        /// What falls, set by hand everywhere for a test or a picture (what the weather itself gives is rare and passes in
+        /// minutes): "hail 0.8 30" (how thickly, the stones' size in mm), "pellets 0.7", "freezing 0.6", "snow 0.7", "rain 0.5";
+        /// several at once, in one line; "off" lets go.
+        /// </summary>
+        public static string Falls(string arg)
+        {
+            forced = false; fRain = fSnow = fPellets = fFreezing = fHail = -1f; fSize = 25f;
+            string[] words = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < words.Length; i++)
+            {
+                float Next(float otherwise) { return i + 1 < words.Length && float.TryParse(words[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : otherwise; }
+                switch (words[i])
+                {
+                    case "hail": fHail = Next(0.7f); if (i + 2 < words.Length && float.TryParse(words[i + 2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float mm)) fSize = mm; forced = true; break;
+                    case "pellets": fPellets = Next(0.7f); forced = true; break;
+                    case "freezing": fFreezing = Next(0.7f); forced = true; break;
+                    case "snow": fSnow = Next(0.7f); forced = true; break;
+                    case "rain": fRain = Next(0.5f); forced = true; break;
+                }
+            }
+            Model.Forget(); Launch.Again();
+            return forced ? "what falls is set by hand: " + arg : "what falls is the weather's own";
+        }
+        static volatile bool forced;
+        static float fRain = -1f, fSnow = -1f, fPellets = -1f, fFreezing = -1f, fHail = -1f, fSize = 25f;
+
+        /// <summary>(Called for every place the weather is worked out for: what Falls set.)</summary>
+        public static void Shape(ref WeatherHere here)
+        {
+            if (!forced) return;
+            if (fRain >= 0f) here.Rain = fRain;
+            if (fSnow >= 0f) { here.Snow = fSnow; here.Rain = Math.Max(here.Rain, 0.5f); here.Freezing = here.Pellets = 0f; }
+            if (fPellets >= 0f) { here.Pellets = 1f; here.Snow = here.Freezing = 0f; here.Rain = Math.Max(here.Rain, fPellets); }
+            if (fFreezing >= 0f) { here.Freezing = 1f; here.Snow = here.Pellets = 0f; here.Rain = Math.Max(here.Rain, fFreezing); }
+            if (fHail >= 0f) { here.Hail = fHail; here.HailSize = fSize; }
+        }
+
+        /// <summary>
+        /// A fog of one kind held everywhere, for a picture: "radiation 0.9 100" (the kind: radiation, advection, upslope,
+        /// steam, frontal; how thick, 0 to 1; how deep, metres); "off" lets go.
+        /// </summary>
+        public static string FogOf(string arg)
+        {
+            string[] t = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            if (t.Length == 0 || t[0] == "off") { FogHeld = false; Model.Forget(); Launch.Again(); return "fog as the weather has it"; }
+            if (!Enum.TryParse(t[0], true, out FogKindHeld)) return "no such kind: " + t[0];
+            FogAmount = t.Length > 1 ? float.Parse(t[1], System.Globalization.CultureInfo.InvariantCulture) : 0.9f;
+            FogDeepHeld = t.Length > 2 ? float.Parse(t[2], System.Globalization.CultureInfo.InvariantCulture) : FogKindHeld == FogKind.Radiation ? 90f : FogKindHeld == FogKind.Steam ? 12f : 350f;
+            FogHeld = true;
+            Model.Forget(); Launch.Again();
+            return "held: " + FogKindHeld + " fog, " + FogAmount.ToString("F2") + ", " + FogDeepHeld.ToString("F0") + " m deep";
+        }
+        public static volatile bool FogHeld;
+        public static FogKind FogKindHeld;
+        public static float FogAmount, FogDeepHeld;
+
+        /// <summary>What each kind of fog comes to at a place, and what it is worked out from: "lat lon".</summary>
+        public static string FogAt(string arg)
+        {
+            string[] t = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            double lat = t.Length > 0 ? double.Parse(t[0], System.Globalization.CultureInfo.InvariantCulture) : 0.0, lon = t.Length > 1 ? double.Parse(t[1], System.Globalization.CultureInfo.InvariantCulture) : 0.0;
+            Base b = Model.Sample(World.Of(FlightGlobals.currentMainBody), lat, lon, Planetarium.GetUniversalTime());
+            return Model.FogParts + " | fog " + b.Fog.ToString("F2") + " " + b.FogOf + " " + b.FogDeep.ToString("F0") + " m deep";
+        }
+
+        /// <summary>
+        /// How much of each kind of fog there is over the world, by the hour: for each of eight hours of the sun's round, the
+        /// share of 2,592 places (every five degrees) that have each kind thicker than 0.3, over land and over sea.
+        /// </summary>
+        public static string Fogs()
+        {
+            CelestialBody body = FlightGlobals.currentMainBody;
+            if (body == null) return "no world";
+            World w = World.Of(body);
+            double ut = Planetarium.GetUniversalTime();
+            var said = new StringBuilder();
+            string[] names = { "none", "ground", "sea", "hill", "steam", "rain" };
+            int[] atHour = new int[8 * 6]; int[] places = new int[8];
+            int[] onLand = new int[6], atSea = new int[6]; int land = 0, sea = 0;
+            for (int i = 0; i < 72; i++)
+                for (int j = 0; j < 36; j++)
+                {
+                    double lat = -87.5 + 5.0 * j, lon = -177.5 + 5.0 * i;
+                    Base b = Model.Sample(w, lat, lon, ut);
+                    int kind = b.Fog > 0.3f ? (int)b.FogOf : 0;
+                    int hour = (int)Math.Floor(((b.Hour + 180.0) % 360.0) / 45.0) % 8;
+                    atHour[hour * 6 + kind]++; places[hour]++;
+                    if (b.Land > 0.5f) { land++; onLand[kind]++; } else { sea++; atSea[kind]++; }
+                }
+            for (int h = 0; h < 8; h++)
+            {
+                said.Append("\n").Append(new[] { "midnight", "3 h", "sunrise", "9 h", "noon", "15 h", "sunset", "21 h" }[h]).Append(": ");
+                for (int k = 1; k < 6; k++) said.Append(names[k]).Append(' ').Append((100.0 * atHour[h * 6 + k] / Math.Max(1, places[h])).ToString("F1")).Append("%  ");
+            }
+            said.Append("\nover land: ");
+            for (int k = 1; k < 6; k++) said.Append(names[k]).Append(' ').Append((100.0 * onLand[k] / Math.Max(1, land)).ToString("F1")).Append("%  ");
+            said.Append("\nover sea: ");
+            for (int k = 1; k < 6; k++) said.Append(names[k]).Append(' ').Append((100.0 * atSea[k] / Math.Max(1, sea)).ToString("F1")).Append("%  ");
+            return said.ToString();
+        }
+
+        /// <summary>
+        /// Where the held hurricane's middle stands, for a picture: "east north" in metres from the space centre, and
+        /// optionally how strong (0 to 1); "off" lets it go to and fro again. (Hold it with Choose 17 first.)
+        /// </summary>
+        public static string Eye(string arg)
+        {
+            string[] t = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            double V(int i, double otherwise) => i < t.Length && double.TryParse(t[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : otherwise;
+            if (t.Length == 0 || t[0] == "off") { EyeHeld = false; Model.Forget(); return "the held hurricane goes to and fro"; }
+            EyeEast = V(0, 0.0); EyeNorth = V(1, 0.0); EyeNow = (float)V(2, 0.85); EyeHeld = true;
+            Model.Forget(); Launch.Again();
+            return "the held hurricane's middle stands " + EyeEast.ToString("F0") + " m east and " + EyeNorth.ToString("F0") + " m north of the space centre, strength " + EyeNow.ToString("F2");
+        }
+        public static volatile bool EyeHeld;
+        public static double EyeEast, EyeNorth;
+        public static float EyeNow = 0.85f;
+
+        /// <summary>
+        /// Where the held squall line's row of storms stands, for a picture: metres east of the space centre (it comes
+        /// from the east, moving west), and optionally how strong; "off" lets it come on again. (Hold it with Choose 18 first.)
+        /// </summary>
+        public static string Row(string arg)
+        {
+            string[] t = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            double V(int i, double otherwise) => i < t.Length && double.TryParse(t[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : otherwise;
+            if (t.Length == 0 || t[0] == "off") { RowHeld = false; Model.Forget(); return "the held squall line comes on"; }
+            RowEast = V(0, 9000.0); RowNow = (float)V(1, 1.0); RowHeld = true;
+            Model.Forget(); Launch.Again();
+            return "the held squall line's row stands " + RowEast.ToString("F0") + " m east of the space centre, strength " + RowNow.ToString("F2");
+        }
+        public static volatile bool RowHeld;
+        public static double RowEast;
+        public static float RowNow = 1f;
+
+        /// <summary>
+        /// The wind along a line over the space centre, without gusts: "e0 n0 e1 n1 steps height" (metres east and north of
+        /// the pad for its two ends, how many places, how high above the ground). For each place: east, north and up, m/s.
+        /// </summary>
+        public static string Line(string arg)
+        {
+            string[] t = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            if (t.Length < 6) return "e0 n0 e1 n1 steps height";
+            float F(int i) => float.Parse(t[i], System.Globalization.CultureInfo.InvariantCulture);
+            CelestialBody body = FlightGlobals.GetHomeBody();
+            World w = World.Of(body);
+            double ut = Planetarium.GetUniversalTime();
+            int steps = Math.Max(2, (int)F(4));
+            var said = new StringBuilder();
+            for (int i = 0; i < steps; i++)
+            {
+                float f = i / (float)(steps - 1);
+                double e = F(0) + (F(2) - F(0)) * f, n = F(1) + (F(3) - F(1)) * f;
+                double lat = -0.0972 + n / body.Radius * 180.0 / Math.PI, lon = -74.5577 + e / (body.Radius * Math.Cos(-0.0972 * Math.PI / 180.0)) * 180.0 / Math.PI;
+                double ground = Math.Max(0.0, body.TerrainAltitude(lat, lon, true));
+                Vector3 v = Provider.Local(w, lat, lon, ground + F(5), F(5), ut, false);
+                said.Append(e.ToString("F0")).Append(",").Append(n.ToString("F0")).Append(": ").Append(v.x.ToString("F1")).Append(" ").Append(v.y.ToString("F1")).Append(" ").Append(v.z.ToString("F1")).Append(" | ");
+            }
+            return said.ToString() + Violent.Says(w, -0.0972, -74.5577, ut);
+        }
+
         /// <summary>For a test with the wind not moving craft, without touching the player's settings.</summary>
         public static bool NoPush;
         public static string Push(string arg) { NoPush = arg != null && arg.Trim() == "off"; return NoPush ? "wind does not move craft (test)" : "wind moves craft as set"; }

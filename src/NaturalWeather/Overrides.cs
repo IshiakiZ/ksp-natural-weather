@@ -98,14 +98,24 @@ namespace NaturalWeather
                 {
                     case 1: Toward(ref b.M, 0.15f, wc); b.Inst *= 1f - 0.85f * wc; b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                         // clear
                     case 2: Toward(ref b.M, 0.42f, wc); b.Inst = Math.Max(b.Inst, 0.55f * wc * Noise.Smooth(-0.05f, 0.2f, b.SunUp)); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break; // fair
-                    case 3: Toward(ref b.M, 0.63f, wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                                                   // cloudy
-                    case 4: Toward(ref b.M, 0.77f, wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                                                   // overcast
-                    case 5: Toward(ref b.M, 0.93f, wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                                                   // rain
-                    case 6: Toward(ref b.M, 0.68f, wc); Toward(ref b.Inst, 1f, wc); b.StormBias += 0.6f * wc; b.Fog *= 1f - wc; b.Dust *= 1f - wc; break; // storm
-                    case 7: Toward(ref b.M, 0.62f, wc); Toward(ref b.Fog, 0.95f, wc); b.Calm *= 1f - 0.8f * wc; b.Dust *= 1f - wc; break;              // fog
-                    case 8: Toward(ref b.M, 0.9f, wc); Toward(ref b.T0, 268f, wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                       // snow
+                    case 3: Toward(ref b.M, 0.63f, wc); b.HeldBreeze = Math.Max(b.HeldBreeze, 4f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                                                   // cloudy
+                    case 4: Toward(ref b.M, 0.77f, wc); b.HeldBreeze = Math.Max(b.HeldBreeze, 5.5f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                                                   // overcast
+                    case 5: Toward(ref b.M, 0.93f, wc); b.HeldBreeze = Math.Max(b.HeldBreeze, 8f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                                                   // rain
+                    case 6: Toward(ref b.M, 0.68f, wc); Toward(ref b.Inst, 1f, wc); b.StormBias += 0.6f * wc; b.HeldBreeze = Math.Max(b.HeldBreeze, 9f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break; // storm
+                    case 7: Toward(ref b.M, 0.62f, wc); Toward(ref b.Fog, 0.95f, wc); b.Calm *= 1f - 0.8f * wc; b.Dust *= 1f - wc; if (wc > 0.5f && (b.FogOf == FogKind.None || b.FogOf == FogKind.Steam)) { b.FogOf = b.Land > 0.5f ? FogKind.Radiation : FogKind.Advection; b.FogDeep = b.Land > 0.5f ? 110f : 350f; } break;              // fog
+                    case 8: Toward(ref b.M, 0.9f, wc); Toward(ref b.T0, 268f, wc); b.HeldBreeze = Math.Max(b.HeldBreeze, 6f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;                       // snow
                     case 9: b.WindScale *= 1f + 1.6f * wc; b.Windy = Math.Max(b.Windy, wc); break;                                                                                     // windy
                     case 10: Toward(ref b.M, 0.2f, wc); Toward(ref b.Dust, 0.9f, wc); b.Fog *= 1f - wc; break;                                        // dust storm
+                    // (freezing rain: a wet system's rain, the ground two degrees under freezing, warm air aloft; ice pellets: the same over ground eight under)
+                    case 11: Toward(ref b.M, 0.93f, wc); Toward(ref b.T0, 271.2f, wc); Toward(ref b.Nose, 1f, wc); b.HeldBreeze = Math.Max(b.HeldBreeze, 6f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;
+                    case 12: Toward(ref b.M, 0.93f, wc); Toward(ref b.T0, 265f, wc); Toward(ref b.Nose, 1f, wc); b.HeldBreeze = Math.Max(b.HeldBreeze, 7f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;
+                    // (a hailstorm: storms as for a held storm, and every strong one of them with hail)
+                    case 13: Toward(ref b.M, 0.68f, wc); Toward(ref b.Inst, 1f, wc); b.StormBias += 0.6f * wc; b.HailBias += wc; b.HeldBreeze = Math.Max(b.HeldBreeze, 9f * wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;
+                    // (a downburst, a tornado: a stormy sky for them to come out of; a waterspout: towering heaps over the sea; a
+                    // hurricane and a squall line bring their own weather, into a sky with some cloud in it)
+                    case Model.HeldBurst: case Model.HeldTornado: Toward(ref b.M, 0.68f, wc); Toward(ref b.Inst, 0.9f, wc); b.StormBias += 0.4f * wc; b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;
+                    case Model.HeldSpout: Toward(ref b.M, 0.6f, wc); Toward(ref b.Inst, 0.85f, wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;
+                    case Model.HeldCyclone: case Model.HeldSquall: Toward(ref b.M, 0.5f, wc); b.Fog *= 1f - wc; b.Dust *= 1f - wc; break;
                 }
             }
             float wcity = CityWeight(w, lat, lon);

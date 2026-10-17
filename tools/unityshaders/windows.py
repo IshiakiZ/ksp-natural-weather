@@ -10,10 +10,10 @@ On Windows only. Every shader of tools/shaderpack is turned into HLSL (port.py),
 (d3dcompiler_47.dll, which is part of Windows: nothing is installed), created once by Direct3D 11 itself as a check, and
 packed into the bundles the mods look for when the game runs on Direct3D:
 
-    src/VolumetricExplosions/Shaders/shaders-windows.bundle   the explosions' six: Volume, Enlarge, Layers, Mark, Shock, Shadow
+    src/VolumetricExplosions/Shaders/shaders-windows.bundle   the explosions' seven: Volume, Enlarge, Layers, Mark, Shock, Shadow, Motion
     src/Keystone/Shaders/lens-windows.bundle                   Keystone's lens
     src/NaturalLight/Shaders/light-windows.bundle             Natural Light's three: Shafts, Clean, Veil
-    src/NaturalWeather/Shaders/clouds-windows.bundle          Natural Weather's clouds: Clouds, CloudsOver, CloudShade
+    src/NaturalWeather/Shaders/clouds-windows.bundle          Natural Weather's: Clouds, CloudsOver, CloudShade, Wet, Drops
     src/NaturalOcean/Shaders/ocean-windows.bundle (and oceanfoam-, oceanweed-, oceanunder-)   Natural Ocean's four, one each
 
 Run it again after any change to a GLSL file (so after each `git pull origin main`): it makes every bundle afresh from the
@@ -49,10 +49,11 @@ from unityfile import Asset, Bundle, Writer, lz4_store  # noqa: E402
 # The bundles, each with the shaders in it, as the mods look for them (Addon.BuiltShader, Lens.OwnLens, OwnShader.Load,
 # Clouds.Load).
 BUNDLES = [
-    ("src/VolumetricExplosions/Shaders/shaders-windows.bundle", ["volume", "enlarge", "layers", "mark", "shock", "shadow"]),
+    ("src/VolumetricExplosions/Shaders/shaders-windows.bundle", ["volume", "enlarge", "layers", "mark", "shock", "shadow", "motion"]),
     ("src/Keystone/Shaders/lens-windows.bundle", ["lens"]),
     ("src/NaturalLight/Shaders/light-windows.bundle", ["shafts", "clean", "veil"]),
-    ("src/NaturalWeather/Shaders/clouds-windows.bundle", ["clouds", "cloudsover", "cloudshade"]),
+    # (and the rain's on the glass and the ground, and the drops' own picture of the water on the glass: Wet.LoadShader, 2026-10-13)
+    ("src/NaturalWeather/Shaders/clouds-windows.bundle", ["clouds", "cloudsover", "cloudshade", "wet", "drops"]),
     # (Natural Ocean looks for one bundle a shader, Sea.Load: listed 2026-10-11, compiled and seen in the game that evening.
     # What Direct3D wanted of them that no rule could see is in port.py's SPECIAL and OWN.)
     ("src/NaturalOcean/Shaders/ocean-windows.bundle", ["ocean"]),
@@ -71,6 +72,25 @@ UNITY = {
 }
 
 D3DCOMPILE_OPTIMIZATION_LEVEL3 = 1 << 15
+D3DCOMPILE_OPTIMIZATION_LEVEL1 = 0
+D3DCOMPILE_SKIP_OPTIMIZATION = 1 << 2
+D3DCOMPILE_PREFER_FLOW_CONTROL = 1 << 10
+# (The clouds' pixel program, from 3,096 lines of GLSL on 2026-10-15, had not compiled after two hours at the highest level,
+# nor after half an hour at a lower one: every function is put inline, and every `if` the compiler chooses to flatten has both
+# its sides worked out, so what it optimises grows past all measure. For such a program, in turn, each in a process of its
+# own and given up after so many minutes: shader model 5 at once (4 was tried first, and a 4 that never ends never gives way
+# to 5), branches kept as branches, then less optimising, then none. What came of each is written in its log.)
+HEAVY = {("clouds", "ps"): [("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_PREFER_FLOW_CONTROL, 25),
+                            ("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL1 | D3DCOMPILE_PREFER_FLOW_CONTROL, 25),
+                            ("5_0", D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_PREFER_FLOW_CONTROL, 40)]}
+FLAG_NAMES = {D3DCOMPILE_SKIP_OPTIMIZATION: "no optimising", D3DCOMPILE_PREFER_FLOW_CONTROL: "branches kept",
+              D3DCOMPILE_OPTIMIZATION_LEVEL3: "optimising level 3"}
+
+
+def flags_said(flags):
+    words = [w for f, w in FLAG_NAMES.items() if flags & f]
+    if not flags & (D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_SKIP_OPTIMIZATION): words.insert(0, "optimising level 1")
+    return ", ".join(words)
 # Unity's numbers for a Direct3D 11 program, by stage and shader model.
 PROGRAM_TYPE = {("vs", "4_0"): 15, ("vs", "5_0"): 16, ("ps", "4_0"): 17, ("ps", "5_0"): 18}
 # Direct3D's kinds of binding (D3D_SHADER_INPUT_TYPE) and texture shapes (D3D_SRV_DIMENSION, as Unity's TextureDimension).
@@ -125,10 +145,10 @@ class Compiler:
         self.disassemble.restype = ctypes.c_long
         self.disassemble.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint, ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
 
-    def __call__(self, source, name, entry, profile):
+    def __call__(self, source, name, entry, profile, flags=D3DCOMPILE_OPTIMIZATION_LEVEL3):
         """(bytecode or None, the compiler's messages)."""
         code, said = ctypes.c_void_p(), ctypes.c_void_p()
-        failed = self.compile(source, len(source), name.encode(), None, None, entry.encode(), profile.encode(), D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+        failed = self.compile(source, len(source), name.encode(), None, None, entry.encode(), profile.encode(), flags, 0,
                               ctypes.byref(code), ctypes.byref(said))
         messages = blob(said.value).decode("utf-8", "replace").rstrip("\0")
         return (None if failed else blob(code.value)), messages
@@ -259,6 +279,30 @@ def uses(which, stage, dxbc):
 
 # ---------------------------------------------------------------- one shader, compiled
 
+def _compile_child(source, name, entry, profile, flags, out_path):
+    """(In a process of its own: one program compiled, and what came of it left in files, as a queue's pipe would hold a
+    large program back until it was read and the process could not end.)"""
+    dxbc, said = Compiler()(source, name, entry, profile, flags)
+    open(out_path + ".said", "w", encoding="utf-8").write(said)
+    if dxbc: open(out_path, "wb").write(dxbc)
+
+
+def compile_in_time(source, name, entry, profile, flags, minutes):
+    """(bytecode or None, what was said): one program compiled in a process of its own, given up after so many minutes."""
+    import multiprocessing
+    import tempfile
+    out_path = os.path.join(tempfile.mkdtemp(prefix="d3d_"), "program.dxbc")
+    child = multiprocessing.Process(target=_compile_child, args=(source, name, entry, profile, flags, out_path))
+    child.start()
+    child.join(minutes * 60)
+    if child.is_alive():
+        child.terminate()
+        child.join()
+        return None, "(given up after %d minutes)" % minutes
+    said = open(out_path + ".said", encoding="utf-8").read() if os.path.exists(out_path + ".said") else "(the compiling process gave no answer)"
+    return (open(out_path, "rb").read() if os.path.exists(out_path) else None), said
+
+
 def compiled(which, compiler, device):
     """{stage: (dxbc, profile)} for one shader, its HLSL and what was said written into build/windows-shaders."""
     source = port.hlsl(which)
@@ -266,14 +310,22 @@ def compiled(which, compiler, device):
     open(os.path.join(OUT, name + ".hlsl"), "w", newline="\n").write(source)
     out, log = {}, []
     for stage, entry in (("vs", "vert"), ("ps", "frag")):
-        for model in ("4_0", "5_0"):
+        heavy = HEAVY.get((which, stage))
+        for model, flags, minutes in heavy or (("4_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0), ("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0)):
             # (the same HLSL from the same compiler gives the same program: what was made before is taken again)
-            key = hashlib.sha256("\0".join((compiler.version, entry, stage + "_" + model, source)).encode()).hexdigest()
+            # (the flags in the key only where they are not the usual ones: what was kept before stays good)
+            parts = (compiler.version, entry, stage + "_" + model, source) if not heavy else (compiler.version, entry, stage + "_" + model, str(flags), source)
+            key = hashlib.sha256("\0".join(parts).encode()).hexdigest()
             kept = os.path.join(OUT, "kept", key + ".dxbc")
             if os.path.exists(kept):
                 dxbc, said = open(kept, "rb").read(), "(as compiled before: the same HLSL, the same compiler)"
             else:
-                dxbc, said = compiler(source.encode(), name + ".hlsl", entry, stage + "_" + model)
+                if heavy:
+                    print("  %-8s %s program, shader model %s, %s: up to %d minutes" % (which, "pixel" if stage == "ps" else "vertex", model.replace("_", "."), flags_said(flags), minutes), flush=True)
+                    dxbc, said = compile_in_time(source.encode(), name + ".hlsl", entry, stage + "_" + model, flags, minutes)
+                    said = "(%s) %s" % (flags_said(flags), said)
+                else:
+                    dxbc, said = compiler(source.encode(), name + ".hlsl", entry, stage + "_" + model)
                 if dxbc:
                     os.makedirs(os.path.dirname(kept), exist_ok=True)
                     open(kept, "wb").write(dxbc)

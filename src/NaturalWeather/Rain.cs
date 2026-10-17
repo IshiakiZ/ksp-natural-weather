@@ -27,6 +27,8 @@ namespace NaturalWeather
         Material dropMat, flakeMat, moteMat;
         Texture2D streak, dot;
         public static string Report = "";
+        /// <summary>A snowflake's colour in the light there is, as last worked out (for whatever else falls white: hail, ice pellets).</summary>
+        public static Color SnowLit = Color.white;
 
         // ---- rain in the light of lamps: the strongest thing about rain at night (each lamp near the camera gets its own few drops, lit by it)
         sealed class Lit { public Light Lamp; public ParticleSystem Drops; public Material Mat; }
@@ -39,7 +41,7 @@ namespace NaturalWeather
         Vector3 gustNow;
 
         const float Box = 24f;           // how far round the camera drops are drawn (beyond a few tens of metres a drop is too thin to see)
-        const float Shutter = 1f / 20f;  // the exposure a streak is smeared over (a film camera's half-turn shutter at 24, near enough)
+        const float Shutter = 1f / 48f;  // the exposure a streak is smeared over: a film camera's half-turn shutter at 24 frames (it was 1/20: streaks twice as long as a camera makes them)
 
         void Start()
         {
@@ -47,10 +49,11 @@ namespace NaturalWeather
             if (shader == null) shader = Shader.Find("Particles/Alpha Blended");
             if (shader == null) { Report = "Rain cannot be drawn: the game's particle shader was not found."; Weather.Log(Report); enabled = false; return; }
             streak = MakeStreak(); dot = MakeDot();
-            // (drops are added to the picture, never laid over it: see Shade)
-            Shader adds = Shader.Find("Legacy Shaders/Particles/Additive") ?? shader;
+            // (Drops are laid over the picture in the light they gather from all round, not added to it: see Shade. Added, as
+            // they first were, a streak could only ever be lighter than what was behind it, and showed as a white line against
+            // a grey sky, where a real one all but vanishes.)
             // (named, so that Natural Light's smoke, which tints every puff drawn over what is behind it, leaves these alone)
-            dropMat = new Material(adds) { mainTexture = streak, renderQueue = 3100, name = "NaturalWeather drops" };
+            dropMat = new Material(shader) { mainTexture = streak, renderQueue = 3100, name = "NaturalWeather drops" };
 #if DEV
             oldDropMat = new Material(shader) { mainTexture = streak, renderQueue = 3100, name = "NaturalWeather drops (0.1.0)" };
 #endif
@@ -74,8 +77,9 @@ namespace NaturalWeather
             ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
             var main = ps.main;
             main.loop = true; main.playOnAwake = false; main.simulationSpace = ParticleSystemSimulationSpace.Local;
-            main.startSpeed = 0f; main.maxParticles = streaks ? 12000 : 9000;
-            main.startSize = streaks ? new ParticleSystem.MinMaxCurve(0.03f, 0.05f) : new ParticleSystem.MinMaxCurve(0.035f, 0.07f);
+            main.startSpeed = 0f; main.maxParticles = streaks ? 16000 : 9000;
+            // (drops of every size rain comes in: a streak's width is the drop's, drawn no thinner than a pixel can carry)
+            main.startSize = streaks ? new ParticleSystem.MinMaxCurve(0.018f, 0.06f) : new ParticleSystem.MinMaxCurve(0.035f, 0.07f);
             main.startLifetime = 3f; main.gravityModifier = 0f; main.scalingMode = ParticleSystemScalingMode.Hierarchy;
             main.startRotation = new ParticleSystem.MinMaxCurve(0f, streaks ? 0f : 6.283f);
             var shape = ps.shape;
@@ -183,7 +187,7 @@ namespace NaturalWeather
             Camera cam = FlightCamera.fetch != null ? FlightCamera.fetch.mainCamera : null;
             CelestialBody body = FlightGlobals.currentMainBody;
             bool wanted = cam != null && body != null && body.atmosphere && Weather.On && Weather.Rain && Model.Allowed(body) && !MapView.MapIsEnabled;
-            float rain = 0f, snow = 0f, dust = 0f;
+            float rain = 0f, snow = 0f, dust = 0f, pellets = 0f, glaze = 0f;
             Vector3 wind = Vector3.zero, down = Vector3.down;
             Vector3 camPos = cam != null ? cam.transform.position : Vector3.zero;
             // (how fast the camera goes: as the craft it rides with goes; a speed read from where the camera was last frame would
@@ -199,7 +203,7 @@ namespace NaturalWeather
                 WeatherHere here = Model.Here(w, lat, lon, ut);
                 // (rain falls from the cloud's base: above it there is none to see, and none at all above the cloud)
                 float under = here.Low.Cover > 0.05f ? Noise.Smooth(here.Low.Top, here.Low.Base, (float)alt) : 1f;
-                rain = here.Rain * under; snow = here.Snow;
+                rain = here.Rain * under; snow = here.Snow; pellets = here.Pellets; glaze = here.Freezing;
                 // (dust blows along the ground: thickest low down, none above the storm's top)
                 if (Weather.Dust) dust = here.Dust * Noise.Smooth(here.Low.Kind == CloudKind.Dust ? here.Low.Top : (float)Math.Max(0.0, alt) + 1f, Math.Max(0f, here.Low.Base), (float)alt);
                 Provider.Axes(body, camPos, out Vector3d e, out Vector3d n, out Vector3d u);
@@ -209,15 +213,17 @@ namespace NaturalWeather
                 double ground = body.TerrainAltitude(lat, lon, true);
                 if (body.ocean && ground < 0.0) ground = 0.0;
                 float agl = (float)Math.Max(1.0, alt - ground);
-                Vector3 m = Model.Mean(col, alt, agl);
-                wind = (Vector3)(e * m.x + n * m.y);
+                // (all of the wind but the gusts: a storm's rising and sinking air, a downburst's, a tornado's among it)
+                Vector3 m = Provider.Local(w, lat, lon, alt, agl, ut, false);
+                wind = (Vector3)(e * m.x + n * m.y + u * m.z);
                 Vector3 g = Gusts.At(col, lat, lon, alt, agl, ut);
                 gustNow = new Vector3(m.x + g.x, m.y + g.y, agl);
             }
             // (rain is moved with the camera: the drops go by as the air carries them past it)
             follower.transform.position = camPos;
             follower.transform.rotation = Quaternion.identity;
-            Feed(drops, rain * (1f - snow), Mathf.Lerp(4.5f, 8.5f, Mathf.Clamp01(rain * 1.4f)), wind, down, camVel, true);
+            // (ice pellets are drawn by Hail; freezing rain is rain until it lands)
+            Feed(drops, rain * Mathf.Clamp01(1f - snow - pellets), Mathf.Lerp(4.5f, 8.5f, Mathf.Clamp01(rain * 1.4f)), wind, down, camVel, true);
             if (splashes != null)
             {
                 // (down is where the world's own pull is: the splashes fall back that way)
@@ -245,9 +251,9 @@ namespace NaturalWeather
             }
 #endif
             Lamps(cam, rain, snow, wind, down);
-            Sound(rain * (1f - snow * 0.7f));
+            Sound(rain * Mathf.Clamp01(1f - snow * 0.7f - pellets));
             Roar(wanted ? gustNow : Vector3.zero);
-            Report = rain > 0.01f ? (snow > 0.5f ? "Snowing" : "Raining") + " here" + (lit.Count > 0 ? ", in the light of " + lit.Count + (lit.Count == 1 ? " lamp" : " lamps") : "") + "." : dust > 0.05f ? "Dust blowing here." : "";
+            Report = rain > 0.01f ? (glaze > 0.5f ? "Freezing rain" : pellets > 0.5f ? "Ice pellets falling" : snow > 0.5f ? "Snowing" : "Raining") + " here" + (lit.Count > 0 ? ", in the light of " + lit.Count + (lit.Count == 1 ? " lamp" : " lamps") : "") + "." : dust > 0.05f ? "Dust blowing here." : "";
         }
 
         void Feed(ParticleSystem ps, float amount, float fall, Vector3 wind, Vector3 down, Vector3 camVel, bool streaks)
@@ -268,7 +274,7 @@ namespace NaturalWeather
             shape.rotation = Vector3.zero;
             shape.scale = new Vector3(Box, Box * 0.6f, Box);
             // how many: a downpour is a few thousand streaks in view at once, drizzle a few hundred
-            float inView = (streaks ? 6000f : 5000f) * Mathf.Pow(Mathf.Clamp01(amount), 0.7f);
+            float inView = (streaks ? 9000f : 5000f) * Mathf.Pow(Mathf.Clamp01(amount), 0.7f);
             emission.rateOverTime = inView / life;
         }
 
@@ -480,11 +486,16 @@ namespace NaturalWeather
                 towards = Mathf.Exp(-angle * angle / (2f * 0.5f * 0.5f));
                 facing = 0.5f - 0.5f * c;           // 1 with the sun behind the camera: the lit side of every flake towards it
             }
-            // ---- drops: added, as bright as the light in front of the camera, a fifth of it at a streak's middle, and glinting towards the sun
-            float wet = 0.14f + 0.08f * Mathf.Clamp01(rain);
-            Color drop = Shown(infront) * wet + sunShown * (0.3f * towards);
-            // (the additive shader doubles its tint twice over: its colour, and its strength, both taken twice)
-            dropMat.SetColor("_TintColor", new Color(Mathf.Min(drop.r, 1f) * 0.5f, Mathf.Min(drop.g, 1f) * 0.5f, Mathf.Min(drop.b, 1f) * 0.5f, 0.5f));
+            // ---- drops: laid over the picture, each as bright as the light it bends towards the eye from all round it (the sky
+            // above it, the ground under it), and brighter towards the sun where the sun is ahead. So a streak against a bright
+            // sky is all but gone, and against the dark sea, the ground or a craft it shows lighter, as real rain does; it is
+            // as opaque at its middle as a drop is wide against the length it is smeared over, made up to what the eye sees
+            // of the many drops that make one streak's worth of the picture.
+            // (most of what a drop bends towards the eye is the sky above and behind it: brighter than the light all round)
+            Color drop = Shown(around * 0.5f + above * 0.7f) + sunShown * (0.25f * towards);
+            float opaque = 0.34f + 0.26f * Mathf.Clamp01(rain);
+            // (the shader doubles its tint: a half is as it is)
+            dropMat.SetColor("_TintColor", new Color(Mathf.Min(drop.r, 1f) * 0.5f, Mathf.Min(drop.g, 1f) * 0.5f, Mathf.Min(drop.b, 1f) * 0.5f, opaque * 0.5f));
             // ---- flakes: white, as bright as snow on the ground (lit from above, and from where the camera is), the sun's side brighter;
             // and never darker than the veil the snowfall makes in the distance (Natural Light's, lit from all round), which is the same
             // flakes, further off: a little brighter, since one near the camera is lit from the open sky above it and seen from its lit side
@@ -495,6 +506,7 @@ namespace NaturalWeather
             Color veilLike = Shown(around * 2f) * 1.2f;
             snowLit = new Color(Mathf.Max(snowLit.r, veilLike.r), Mathf.Max(snowLit.g, veilLike.g), Mathf.Max(snowLit.b, veilLike.b));
             SetLaid(flakeMat, snowLit, 0.8f);
+            { float most = Mathf.Max(1f, Mathf.Max(snowLit.r, Mathf.Max(snowLit.g, snowLit.b))); SnowLit = snowLit / most; }
             // ---- dust: as bright as the murk it makes (Natural Light's veil of it is lit from all round the same way: in a dust storm the
             // light all round is the dust's colour already), a little lighter, since a grain near the camera is lit from every side
             Color dustLit = Shown(around * 1.4f) + sunShown * (0.2f + 0.25f * facing);
