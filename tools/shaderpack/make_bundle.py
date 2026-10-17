@@ -43,7 +43,7 @@ SHADERS = {
                      ("_VolSceneA", 4, False), ("_VolSceneB", 4, False), ("_VolSceneC", 4, False), ("_VolSceneD", 4, False),
                      ("_VolSceneTintA", 4, False), ("_VolSceneTintB", 4, False), ("_VolSceneTintC", 4, False), ("_VolSceneTintD", 4, False),
                      ("_VolSceneDirA", 4, False), ("_VolSceneDirB", 4, False), ("_VolSceneDirC", 4, False), ("_VolSceneDirD", 4, False),
-                     ("_VolJet", 4, False), ("_VolJetFrom", 4, False), ("_VolJetLook", 4, False), ("_VolJetBody", 4, False), ("_VolJetFlow", 4, False), ("_VolJetEnd", 4, False), ("_VolJetGlow", 4, False)] + [("_VolJetAt%d" % n, 4, False) for n in range(8)] + [("_VolFire", 4, False),
+                     ("_VolJet", 4, False), ("_VolJetFrom", 4, False), ("_VolJetLook", 4, False), ("_VolJetBody", 4, False), ("_VolJetFlow", 4, False), ("_VolJetEnd", 4, False), ("_VolJetGlow", 4, False)] + [("_VolJetAt%d" % n, 4, False) for n in range(8)] + [("_VolFire", 4, False), ("_VolFireGone", 4, False),
                      ("_VolTint", 4, False), ("_VolHot1", 4, False), ("_VolHot2", 4, False), ("_VolHot3", 4, False), ("_VolHot4", 4, False),
                      ("_VolCutA", 4, False), ("_VolCutB", 4, False), ("_VolCutC", 4, False), ("_VolCutD", 4, False), ("_VolCutE", 4, False), ("_VolCutF", 4, False), ("_VolSlot", 4, False),
                      ("_VolWakes", 4, False), ("_VolWakeLo", 4, False), ("_VolWakeHi", 4, False)]

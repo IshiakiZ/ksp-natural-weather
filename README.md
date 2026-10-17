@@ -5,6 +5,8 @@ thunder, fog and dust storms, hurricanes.
 
 ![Heaps over the pad, clouds from 11 km and from orbit, a hurricane, lightning, rain, snow, fog](src/NaturalWeather/img/natural-weather-tour.jpg)
 
+![Lightning strikes beside the launch pad at night](src/NaturalWeather/img/natural-weather-lightning.gif)
+
 For Kerbal Space Program 1.12.x. **Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.8 or later**, a separate download
 ([on SpaceDock](https://spacedock.info/mod/4665/Keystone)): this mod does not load without it.
 
