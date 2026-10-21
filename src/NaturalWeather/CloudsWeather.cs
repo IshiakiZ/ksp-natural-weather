@@ -69,8 +69,10 @@ namespace NaturalWeather
         /// A kind of cloud as the shader takes it: 0 a flat sheet, 0.25 a lumpy layer, 0.5 heaps, 0.75 towering heaps, 1 storm
         /// towers. (Storm towers themselves are drawn from the storm cells, where lightning comes from: a layer called
         /// cumulonimbus is drawn as heaps building upward round them, kept well short of towers, so that the storms' own
-        /// towers stand out of the layer as they do out of a real sky; a whole layer of towers was a wall.) -1: nothing to
-        /// draw as cloud.
+        /// towers stand out of the layer as they do out of a real sky; a whole layer of towers was a wall.) Fog 0.01, a flat
+        /// sheet on the ground that the shader draws only from well above its top (in it and near it, Natural Light's veil
+        /// draws it; from more than two kilometres over it, until 2026-10-17, nothing did, and banks of sea fog were not
+        /// there from the air). -1: nothing to draw as cloud.
         /// </summary>
         public static float Kind(CloudLayer layer)
         {
@@ -81,9 +83,12 @@ namespace NaturalWeather
                 case CloudKind.Stratocumulus: return 0.27f;
                 case CloudKind.Stratus: return 0.08f;
                 case CloudKind.Nimbostratus: return 0.04f;
+                // (pads. Tried on 2026-10-18 as half a sheet, 0.18: ragged dappled patches from below at under half cover, but where the
+                // sky is mostly dappled the walk smeared it along the lines of sight into hanging streaks, and from above into pillars)
                 case CloudKind.Altocumulus: return 0.3f;
                 case CloudKind.Altostratus: return 0.1f;
-                default: return -1f;            // none, fog and dust (drawn by the weather itself), cirrus (drawn as the high sheet)
+                case CloudKind.Fog: return 0.01f;
+                default: return -1f;            // none, dust (drawn by the weather itself), cirrus (drawn as the high sheet)
             }
         }
     }

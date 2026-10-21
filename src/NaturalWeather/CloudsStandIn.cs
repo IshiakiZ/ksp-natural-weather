@@ -43,6 +43,14 @@ namespace NaturalWeather
             if (held != null && held != "own")
             {
                 float b = 1000f + 150f * local2;
+#if DEV
+                // (development build: "cu=0.4", heaps at exactly that cover everywhere and nothing else, for counting what is drawn against it)
+                if (held.StartsWith("cu=", StringComparison.Ordinal) && float.TryParse(held.Substring(3), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float even))
+                {
+                    w.Low = Layer(CloudKind.Cumulus, even, 1000f, 1900f);
+                    return w;
+                }
+#endif
                 switch (held)
                 {
                     case "clear": return w;
@@ -54,6 +62,7 @@ namespace NaturalWeather
                     case "layer": w.Low = Layer(CloudKind.Stratocumulus, 0.85f * vary, 1100f, 2000f); return w;
                     case "middle": w.Low = Layer(CloudKind.Cumulus, 0.2f * vary, b, b + 1200f); w.Middle = Layer(CloudKind.Altocumulus, 0.65f * vary, 3600f, 4300f); return w;
                     case "overcast": w.Low = Layer(CloudKind.Stratus, 0.97f, 600f, 1700f, 0.4f); w.Middle = Layer(CloudKind.Altostratus, 0.7f, 3000f, 4200f, 0.3f); w.Rain = 0.2f; return w;
+                    case "fog": w.Low = Layer(CloudKind.Fog, Mathf.Clamp01(0.45f + 0.8f * local), 0f, 300f); return w;
                 }
             }
 

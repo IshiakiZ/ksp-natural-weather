@@ -267,13 +267,13 @@ Shader "NaturalWeather/Wet"
                     // (out of focus, being on the lens: each point of the picture is seen through a patch of the water as wide as the
                     // lens's opening, half a millimetre here: five lines of sight, each bent by the water where it goes through; the
                     // middle one's red bent a little less and its blue a little more, as water bends them)
-                    float2 patch = float2(0.45 / (60.0 * max(_WetGlass.y, 0.5)), 0.45 / 60.0);
+                    float2 spread = float2(0.45 / (60.0 * max(_WetGlass.y, 0.5)), 0.45 / 60.0);    // (not "patch": a word GLSL keeps, which NVIDIA's compiler refuses)
                     float3 bent = ((float3)(0.0));
                     float lines = 0.0, dark = 0.0;
                     float2 slope0 = ((float2)(0.0));
                     { [loop] for (int k = 0; k < 5; k++)
                     {
-                        float2 off = k == 0 ? ((float2)(0.0)) : patch * float2(k == 1 ? 1.0 : k == 2 ? -1.0 : 0.0, k == 3 ? 1.0 : k == 4 ? -1.0 : 0.0);
+                        float2 off = k == 0 ? ((float2)(0.0)) : spread * float2(k == 1 ? 1.0 : k == 2 ? -1.0 : 0.0, k == 3 ? 1.0 : k == 4 ? -1.0 : 0.0);
                         float2 slope = slopeAt(uv + off);
                         if (k == 0) slope0 = slope;
                         float2 turn = bendsBy(slope);

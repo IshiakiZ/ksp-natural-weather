@@ -4,6 +4,7 @@ Shader "NaturalWeather/CloudShade"
     Properties
     {
         _CloudShadowMap ("CloudShadowMap", 2D) = "" {}
+        _CloudHistD ("CloudHistD", 2D) = "" {}
     }
     SubShader
     {
@@ -68,10 +69,12 @@ Shader "NaturalWeather/CloudShade"
             float4 _CloudShadeX;     // xyz: the square's two sides, in the scene's axes; w (X): the height of the ground it lies on (m above the radius)
             float4 _CloudShadeY;
             float4 _CloudShade;     // x: how much brighter the sun makes what faces it straight on than the sky alone (about 1.7 by day); y: how far off the pattern has faded to half (m); z: the least the camera draws (m); w: the most
-            float4 _CloudShadeSun;     // x: what the sun was dimmed by for the whole scene (the cloud above the craft), 0 to 1; y: 1 if the world has a sea
+            float4 _CloudShadeSun;     // x: what the sun was dimmed by for the whole scene (the cloud above the craft), 0 to 1; y: 1 if the world has a sea; z: how far the camera is above all the clouds (0 to 1: from there the walk shades the ground itself, and this pass by one less as much)
             float4 _CloudWet;     // x: how wet the ground is round the camera (0 to 1: rain has fallen there); y: how far off that still holds (m)
+            float4 _CloudShadeTint;     // rgb: the sun's light over the sky's in each colour, against green's (the sky's light is bluer than the sun's); w: 1 if given
             Texture2D _CloudShadowMap; SamplerState sampler_CloudShadowMap;     // r: how much cloud lies towards the sun; g, b: the lowest and highest of it (km above the radius)
             Texture2D _CameraDepthTexture; SamplerState sampler_CameraDepthTexture;
+            Texture2D _CloudHistD; SamplerState sampler_CloudHistD;     // the clouds' distance picture as taken together this frame: g, how much the walk's own shadow from above the clouds takes from the land's light there (clouds.glsl)
 
             struct v2f
             {
@@ -101,6 +104,21 @@ Shader "NaturalWeather/CloudShade"
             // the sun's share of the light on that face (none for a face turned from the sun). Further off, the pattern fades into the
             // craft's own light, under the air's.
 
+            // The walk's shadow from above the clouds, put right colour by colour. The walk darkens the land itself, by the alpha of what it
+            // lays over the picture: one number for the three colours, the sun's share of the light in the game's numbers (k / (k + 1), k the
+            // sun's light over the sky's on level ground) times how much of the sun the clouds take. So the shade from above was the sunlit
+            // land's own colour darkened, an olive hole in the grass, as the square's shadow below was until 2026-10-19. Here what is there
+            // is multiplied by what each colour's own share leaves over what the grey one will (the same tint as below): the blue darkened
+            // less, the red more. 1 where the walk darkens nothing.
+            float3 aboveTint(float dark, float sunUp)
+            {
+                if (dark < 0.0005 || _CloudShadeTint.w < 0.5 || sunUp <= 0.0) return ((float3)(1.0));
+                float k = 1.25 * clamp(sunUp * 2.5 + 0.15, 0.0, 1.0) * sunUp;
+                float3 kc = pow((pow(k + 1.0, 2.2) - 1.0) * _CloudShadeTint.rgb + 1.0, ((float3)(1.0 / 2.2))) - 1.0;
+                float3 ratio = (kc / (kc + 1.0)) / max(k / (k + 1.0), 1e-4);
+                return max(1.0 - dark * ratio, 0.0) / max(1.0 - dark, 0.02);
+            }
+
             float4 frag(v2f IN) : SV_Target
             {
                 float4 result = float4(0.0, 0.0, 0.0, 0.0);
@@ -111,7 +129,22 @@ Shader "NaturalWeather/CloudShade"
                 // to 400 m, and the last millionth of its depth is the ground from 399.2 m to 400 m, which got no shadow from this
                 // camera's pass and none from the far camera's, whose ground it covers: a pale line across shaded ground.)
                 bool nothing = _CloudAhead.w > 0.5 ? z <= 0.0 : z >= 1.0;
-                if (nothing) discard;
+                // (from above the clouds: how much the walk's own shadow takes from the land here)
+                float dark = _CloudShadeSun.z > 0.0 ? SampleLod(_CloudHistD, uv, 0.0).g : 0.0;
+                if (nothing)
+                {
+                    // (Where this camera drew nothing, high up, the world is drawn small by the game, and the walk shades it as the ball of
+                    // the planet's radius: tinted there as well, by the far camera's pass alone, and nothing else done.)
+                    if (dark < 0.0005 || _CloudShade.w < 1e8) discard;
+                    float3 sight = normalize(_CloudAhead.xyz + _CloudRight.xyz * (uv.x * 2.0 - 1.0) + _CloudUp.xyz * (uv.y * 2.0 - 1.0));
+                    float b = dot(_CloudCam.xyz, sight), c = dot(_CloudCam.xyz, _CloudCam.xyz) - _CloudCam.w * _CloudCam.w;
+                    if (c <= 0.0 || b * b - c <= 0.0) discard;
+                    float3 ball = _CloudCam.xyz + sight * (-b - sqrt(b * b - c));
+                    float3 tinted = aboveTint(dark, dot(normalize(ball), _CloudSun.xyz));
+                    if (!(max(max(abs(tinted.r - 1.0), abs(tinted.g - 1.0)), abs(tinted.b - 1.0)) > 0.004)) discard;
+                    result = float4(tinted * 0.5, 1.0);
+                    return result;
+                }
                 float3 dir = normalize(_CloudAhead.xyz + _CloudRight.xyz * (uv.x * 2.0 - 1.0) + _CloudUp.xyz * (uv.y * 2.0 - 1.0));
                 // (how far off what is drawn here is, along the camera's axis, which is how a camera's sight is measured; and along the line of sight)
                 float drawn = 1.0 / (_ZBufferParams.z * z + _ZBufferParams.w);
@@ -154,7 +187,7 @@ Shader "NaturalWeather/CloudShade"
                 if (_CloudWet.x > 0.01 && !sea)
                     wet = 1.0 - 0.3 * _CloudWet.x * smoothstep(0.15, 0.7, dot(facing, up)) * (1.0 - smoothstep(0.5, 1.0, t / max(_CloudWet.y, 1.0)));
                 // ---- the clouds' shadow
-                float factor = 1.0;
+                float3 factor = ((float3)(1.0));
                 { [loop] for (int lit_ = sunUp >= -0.03 ? 0 : 1; lit_ < 1; lit_++)
                 {
                     float ndl = dot(facing, sun);
@@ -171,18 +204,31 @@ Shader "NaturalWeather/CloudShade"
                     float above = m.r * clamp((highest - h) / max(highest - lowest, 60.0), 0.0, 1.0);
                     // (the edge of the square fades, and so does a far shadow, into the light the craft is in)
                     float2 edge = min(st, 1.0 - st);
-                    float fade = clamp(min(edge.x, edge.y) * 12.0, 0.0, 1.0) * _CloudShade.y / (_CloudShade.y + t);
+                    float fade = clamp(min(edge.x, edge.y) * 12.0, 0.0, 1.0) * _CloudShade.y / (_CloudShade.y + t) * (1.0 - _CloudShadeSun.z);
                     float through = lerp(_CloudShadeSun.x, exp(-above), fade);
                     // The sun's share of the light on this face, as it would be undimmed; the light as drawn, and as it should be.
+                    // (Each colour by its own. What a shadow leaves is the sky's light, and the sky's light is bluer than the sun's: in shade
+                    // the blue keeps more of itself than the red, and shade is a cool grey-blue, not the sunlit colour darkened. The share
+                    // is the game's, in its numbers, as before, for green; for red and blue the sun's light over the sky's is as much more
+                    // or less as the sky's colour against the sun's has it (Clouds.cs), taken as light and turned back into numbers. Grey,
+                    // as until 2026-10-19, the shadows of heaps read as dark olive holes in the land from a few kilometres up.)
                     float k = _CloudShade.x * ndl;
-                    float share = k / (k + 1.0);
-                    float should = 1.0 - share + share * through, drawn = 1.0 - share + share * _CloudShadeSun.x;
+                    float3 tint = _CloudShadeTint.w > 0.5 ? _CloudShadeTint.rgb : ((float3)(1.0));
+                    float3 kc = pow((pow(k + 1.0, 2.2) - 1.0) * tint + 1.0, ((float3)(1.0 / 2.2))) - 1.0;
+                    float3 share = kc / (kc + 1.0);
+                    // (What the game drew is undone by the grey share: its own dimming of the sun under the cloud above the craft is the same in
+                    // every colour. Undone by each colour's own, a sunlit place seen while the craft stood in shade was given back more red
+                    // than blue, and the grass round it turned mustard yellow.)
+                    float shareGrey = k / (k + 1.0);
+                    float3 should = 1.0 - share + share * through;
+                    float drawn = 1.0 - shareGrey + shareGrey * _CloudShadeSun.x;
                     factor = clamp(should / max(drawn, 0.05), 0.0, 2.0);
                 } }
                 factor *= wet;
-                if (!(abs(factor - 1.0) > 0.004)) discard;
+                factor *= aboveTint(dark, sunUp);
+                if (!(max(max(abs(factor.r - 1.0), abs(factor.g - 1.0)), abs(factor.b - 1.0)) > 0.004)) discard;
                 // (drawn doubled: what is there is multiplied by twice this, so it can be lightened as well as darkened)
-                result = float4(((float3)(factor * 0.5)), 1.0);
+                result = float4(factor * 0.5, 1.0);
                 return result;
             }
             ENDCG

@@ -16,18 +16,21 @@ import tempfile
 OUT = tempfile.mkdtemp(prefix="glcheck")
 exe = os.path.join(OUT, "glcheck")
 subprocess.run(["swiftc", "-O", "-o", exe, os.path.join(PACK, "glcheck.swift")], check=True, stderr=subprocess.DEVNULL)
-BUNDLES = {"volume": "src/VolumetricExplosions/Shaders/volume.bundle", "layers": "src/VolumetricExplosions/Shaders/layers.bundle", "enlarge": "src/VolumetricExplosions/Shaders/enlarge.bundle",
-           "shadow": "src/VolumetricExplosions/Shaders/shadow.bundle", "mark": "src/VolumetricExplosions/Shaders/mark.bundle", "shock": "src/VolumetricExplosions/Shaders/shock.bundle",
-           "lens": "src/Keystone/Shaders/lens.bundle", "shafts": "src/NaturalLight/Shaders/shafts.bundle", "clean": "src/NaturalLight/Shaders/clean.bundle", "veil": "src/NaturalLight/Shaders/veil.bundle",
-           "clouds": "src/NaturalWeather/Shaders/clouds.bundle", "cloudsover": "src/NaturalWeather/Shaders/cloudsover.bundle", "cloudshade": "src/NaturalWeather/Shaders/cloudshade.bundle",
+BUNDLES = {"volume": "src/VolumetricExplosions/Shaders/volume.bundle", "volumerelease": "src/VolumetricExplosions/Shaders/volumerelease.bundle", "layers": "src/VolumetricExplosions/Shaders/layers.bundle", "enlarge": "src/VolumetricExplosions/Shaders/enlarge.bundle",
+           "shadow": "src/VolumetricExplosions/Shaders/shadow.bundle", "mark": "src/VolumetricExplosions/Shaders/mark.bundle", "shock": "src/VolumetricExplosions/Shaders/shock.bundle", "sundepth": "src/VolumetricExplosions/Shaders/sundepth.bundle",
+           "lens": "src/Keystone/Shaders/lens.bundle", "dnfill": "src/Keystone/Shaders/dnfill.bundle", "farmotion": "src/Keystone/Shaders/farmotion.bundle", "shafts": "src/NaturalLight/Shaders/shafts.bundle", "clean": "src/NaturalLight/Shaders/clean.bundle", "veil": "src/NaturalLight/Shaders/veil.bundle",
+           "clouds": "src/NaturalWeather/Shaders/clouds.bundle", "cloudsstorm": "src/NaturalWeather/Shaders/cloudsstorm.bundle", "cloudscalm": "src/NaturalWeather/Shaders/cloudscalm.bundle", "cloudsover": "src/NaturalWeather/Shaders/cloudsover.bundle", "cloudshade": "src/NaturalWeather/Shaders/cloudshade.bundle",
            "ocean": "src/NaturalOcean/Shaders/ocean.bundle", "oceanfoam": "src/NaturalOcean/Shaders/oceanfoam.bundle", "oceanweed": "src/NaturalOcean/Shaders/oceanweed.bundle",
-           "oceanunder": "src/NaturalOcean/Shaders/oceanunder.bundle", "wet": "src/NaturalWeather/Shaders/wet.bundle", "motion": "src/VolumetricExplosions/Shaders/motion.bundle",
-           "drops": "src/NaturalWeather/Shaders/drops.bundle"}
+           "oceanunder": "src/NaturalOcean/Shaders/oceanunder.bundle", "wet": "src/NaturalWeather/Shaders/wet.bundle", "motion": "src/VolumetricExplosions/Shaders/motion.bundle", "carry": "src/VolumetricExplosions/Shaders/carry.bundle",
+           "drops": "src/NaturalWeather/Shaders/drops.bundle", "snow": "src/NaturalWeather/Shaders/snow.bundle",
+           "grade": "src/CineCamera/Shaders/grade.bundle",
+           "fargroundpoints": "src/FarGround/Shaders/fargroundpoints.bundle", "fargrounddraw": "src/FarGround/Shaders/fargrounddraw.bundle", "fargrounddepth": "src/FarGround/Shaders/fargrounddepth.bundle",
+           "fargroundlights": "src/FarGround/Shaders/fargroundlights.bundle"}
 bad = 0
 for which, spec in make_bundle.SHADERS.items():
     if not os.path.exists(os.path.join(PACK, spec["code"])):
         continue                   # (one mod's own repository holds its own shaders alone)
-    code = open(os.path.join(PACK, spec["code"]), "rb").read()
+    code = make_bundle.source_of(spec)
     packed = make_bundle.fixed_locations(code, [t[0] for t in spec["textures"]])
     path = os.path.join(OUT, which + ".packed.glsl")
     open(path, "wb").write(packed)

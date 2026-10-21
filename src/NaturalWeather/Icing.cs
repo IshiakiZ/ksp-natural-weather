@@ -41,7 +41,6 @@ namespace NaturalWeather
         }
 
         readonly Dictionary<Guid, Iced> craft = new Dictionary<Guid, Iced>();
-        readonly List<WeatherCell> cells = new List<WeatherCell>();
         readonly List<Guid> gone = new List<Guid>();
         static bool far;
         /// <summary>The craft being flown: how thick its ice is (mm), whether it is building, and a line for the weather's window.</summary>
@@ -118,8 +117,10 @@ namespace NaturalWeather
             layer = CloudWater(h.Middle, alt);
             if (layer > water) { water = layer; kind = "middle cloud"; }
             // (the towers of storms and showers)
-            cells.Clear();
-            Model.Cells(w, v.latitude, v.longitude, 30000.0, ut, cells);
+            // (Since 0.5.0 the region's cells as the model keeps them, made ahead (see Model.RegionCells): worked out afresh for the
+            // craft every half second, 30 km round, they were 10 ms a time, a hitch twice a second where ice could form (2026-10-20).
+            // Only those the craft is inside count, and the region's reach holds every one of them.)
+            List<WeatherCell> cells = Model.RegionCells(w, v.latitude, v.longitude, ut);
             for (int k = 0; k < cells.Count; k++)
             {
                 WeatherCell c = cells[k];

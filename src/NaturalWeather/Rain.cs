@@ -37,7 +37,10 @@ namespace NaturalWeather
 
         // ---- and its sound: a hiss, made by the mod (no sound files); and the wind's, a low roar that swells with the gusts
         AudioSource hiss, roar;
-        AudioClip hissClip, roarClip;
+        AudioClip hissClip, roarClip, rushClip;
+        // (since 0.5.0: the air rushing past the craft, by how hard it presses on it; and the cockpit's walls between the ear and the rain)
+        AudioSource rush;
+        AudioLowPassFilter rushMuffle, hissMuffle;
         Vector3 gustNow;
 
         const float Box = 24f;           // how far round the camera drops are drawn (beyond a few tens of metres a drop is too thin to see)
@@ -155,7 +158,7 @@ namespace NaturalWeather
         /// </summary>
         void Drawing(Camera cam)
         {
-            if (!shading || cam == null || cam.name != "Camera 00" || cam.targetTexture != null || follower == null) return;
+            if (!shading || cam == null || !Keystone.Names.Is(cam, "Camera 00") || cam.targetTexture != null || follower == null) return;
 #if DEV
             if (old) return;
 #endif
@@ -170,6 +173,8 @@ namespace NaturalWeather
             if (hissClip != null) Destroy(hissClip);
             if (roar != null) Destroy(roar.gameObject);
             if (roarClip != null) Destroy(roarClip);
+            if (rush != null) Destroy(rush.gameObject);
+            if (rushClip != null) Destroy(rushClip);
             if (follower != null) Destroy(follower);
             if (dropMat != null) Destroy(dropMat);
 #if DEV
@@ -251,8 +256,9 @@ namespace NaturalWeather
             }
 #endif
             Lamps(cam, rain, snow, wind, down);
-            Sound(rain * Mathf.Clamp01(1f - snow * 0.7f - pellets));
+            Sound(rain * Mathf.Clamp01(1f - snow * 0.7f - pellets), camVel.magnitude);
             Roar(wanted ? gustNow : Vector3.zero);
+            Airflow(ship, cam);
             Report = rain > 0.01f ? (glaze > 0.5f ? "Freezing rain" : pellets > 0.5f ? "Ice pellets falling" : snow > 0.5f ? "Snowing" : "Raining") + " here" + (lit.Count > 0 ? ", in the light of " + lit.Count + (lit.Count == 1 ? " lamp" : " lamps") : "") + "." : dust > 0.05f ? "Dust blowing here." : "";
         }
 
@@ -344,10 +350,19 @@ namespace NaturalWeather
             }
         }
 
-        /// <summary>The hiss of rain: noise made once (a few seconds that loop), its loudness by how hard it rains.</summary>
-        void Sound(float rain)
+        /// <summary>Whether the camera is in the cockpit, looking out through its walls.</summary>
+        static bool Inside => CameraManager.Instance != null && CameraManager.Instance.currentCameraMode == CameraManager.CameraMode.IVA;
+
+        /// <summary>
+        /// The hiss of rain: noise made once (a few seconds that loop), its loudness by how hard it rains. (Since 0.5.0: louder the
+        /// faster the craft goes through it, as more drops meet it; and from the cockpit the drumming of the drops on its shell,
+        /// the walls taking off the hiss above some 1.8 kHz and the shell ringing louder than the rain outside does.)
+        /// </summary>
+        void Sound(float rain, float going)
         {
-            float want = Weather.Patter * GameSettings.AMBIENCE_VOLUME * Mathf.Pow(Mathf.Clamp01(rain), 0.6f) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
+            bool inside = Inside;
+            float meets = 1f + Mathf.Clamp01(going / 150f);
+            float want = Weather.Patter * GameSettings.AMBIENCE_VOLUME * Mathf.Pow(Mathf.Clamp01(rain * meets), 0.6f) * (inside ? 1.35f : 1f) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
             if (want < 0.005f) { if (hiss != null && hiss.isPlaying) { hiss.volume = Mathf.MoveTowards(hiss.volume, 0f, Time.unscaledDeltaTime * 0.5f); if (hiss.volume <= 0f) hiss.Stop(); } return; }
             if (hiss == null)
             {
@@ -356,7 +371,9 @@ namespace NaturalWeather
                 hiss.spatialBlend = 0f; hiss.loop = true; hiss.playOnAwake = false; hiss.volume = 0f;
                 hissClip = MakeHiss();
                 hiss.clip = hissClip;
+                hissMuffle = go.AddComponent<AudioLowPassFilter>();
             }
+            if (hissMuffle != null) { hissMuffle.cutoffFrequency = inside ? 1800f : 22000f; hissMuffle.lowpassResonanceQ = inside ? 2f : 1f; }
             if (!hiss.isPlaying) hiss.Play();
             hiss.volume = Mathf.MoveTowards(hiss.volume, want, Time.unscaledDeltaTime * 0.3f);
         }
@@ -378,6 +395,64 @@ namespace NaturalWeather
             if (!roar.isPlaying) roar.Play();
             roar.volume = Mathf.MoveTowards(roar.volume, want, Time.unscaledDeltaTime * 0.8f);
             roar.pitch = 0.85f + 0.3f * Noise.Smooth(4f, 25f, speed);
+        }
+
+        /// <summary>
+        /// (Since 0.5.0.) The air rushing past the craft in flight: a rushing noise as loud as the air presses on it (from half a
+        /// kilopascal of dynamic pressure, a light aeroplane's, to some thirty, a rocket's near its hardest), higher the faster it
+        /// goes, heard while the camera goes along with the craft; from the cockpit, muffled by its walls. None in a vacuum, nor
+        /// under fast time warp.
+        /// </summary>
+        void Airflow(Vessel ship, Camera cam)
+        {
+            float want = 0f, speed = 0f;
+            if (ship != null && cam != null && ship.mainBody != null && ship.mainBody.atmosphere && !ship.LandedOrSplashed && Weather.On && !MapView.MapIsEnabled
+                && (ship.CoMD - (Vector3d)cam.transform.position).sqrMagnitude < 300.0 * 300.0)
+            {
+                float q = (float)ship.dynamicPressurekPa;
+                speed = (float)ship.srfSpeed;
+                want = Weather.Whoosh * GameSettings.AMBIENCE_VOLUME * Mathf.Pow(Noise.Smooth(0.5f, 30f, q), 0.8f) * (Inside ? 0.8f : 1f) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
+            }
+            if (want < 0.004f) { if (rush != null && rush.isPlaying) { rush.volume = Mathf.MoveTowards(rush.volume, 0f, Time.unscaledDeltaTime * 0.8f); if (rush.volume <= 0f) rush.Stop(); } return; }
+            if (rush == null)
+            {
+                var go = new GameObject("NaturalWeather airflow sound");
+                rush = go.AddComponent<AudioSource>();
+                rush.spatialBlend = 0f; rush.loop = true; rush.playOnAwake = false; rush.volume = 0f;
+                rushClip = MakeRush();
+                rush.clip = rushClip;
+                rushMuffle = go.AddComponent<AudioLowPassFilter>();
+            }
+            if (rushMuffle != null) rushMuffle.cutoffFrequency = Inside ? 700f : 22000f;
+            if (!rush.isPlaying) rush.Play();
+            rush.volume = Mathf.MoveTowards(rush.volume, want, Time.unscaledDeltaTime * 1.2f);
+            rush.pitch = 0.75f + 0.5f * Mathf.Clamp01(speed / 600f);
+        }
+
+        /// <summary>(Since 0.5.0.) Air rushing past a hull: the wind's low rush with more of the hiss of air torn at edges and seams.</summary>
+        static AudioClip MakeRush()
+        {
+            const int rate = 22050, seconds = 5;
+            int n = rate * seconds;
+            var buf = new float[n];
+            var rng = new System.Random(9071);
+            float a = 0f, b = 0f, c = 0f;
+            for (int k = 0; k < n; k++)
+            {
+                float white = (float)(rng.NextDouble() * 2.0 - 1.0);
+                a = 0.95f * a + 0.05f * white; b = 0.85f * b + 0.15f * a; c = 0.45f * c + 0.55f * white;
+                float swell = 0.8f + 0.2f * Mathf.Sin(k * 2f * Mathf.PI / (rate * 1.7f)) * Mathf.Sin(k * 2f * Mathf.PI / (rate * 0.6f) + 0.4f);
+                buf[k] = (b * 4f + c * 0.3f) * swell;
+            }
+            int fade = rate / 2;
+            for (int k = 0; k < fade; k++) { float t = (float)k / fade; buf[k] = buf[k] * t + buf[n - fade + k] * (1f - t); }
+            float peak = 1e-6f;
+            for (int k = 0; k < n - fade; k++) peak = Mathf.Max(peak, Mathf.Abs(buf[k]));
+            var clip = AudioClip.Create("airflow", n - fade, 1, rate, false);
+            var data = new float[n - fade];
+            for (int k = 0; k < data.Length; k++) data[k] = buf[k] / peak * 0.7f;
+            clip.SetData(data, 0);
+            return clip;
         }
 
         static AudioClip MakeRoar()

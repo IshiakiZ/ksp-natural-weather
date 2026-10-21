@@ -12,9 +12,13 @@ packed into the bundles the mods look for when the game runs on Direct3D:
 
     src/VolumetricExplosions/Shaders/shaders-windows.bundle   the explosions' seven: Volume, Enlarge, Layers, Mark, Shock, Shadow, Motion
     src/Keystone/Shaders/lens-windows.bundle                   Keystone's lens
+    src/Keystone/Shaders/farmotion-windows.bundle              Keystone's motion beyond the near camera
     src/NaturalLight/Shaders/light-windows.bundle             Natural Light's three: Shafts, Clean, Veil
-    src/NaturalWeather/Shaders/clouds-windows.bundle          Natural Weather's: Clouds, CloudsOver, CloudShade, Wet, Drops
+    src/NaturalWeather/Shaders/clouds-windows.bundle          Natural Weather's: Clouds, CloudsOver, CloudShade, Wet, Drops, Snow
     src/NaturalOcean/Shaders/ocean-windows.bundle (and oceanfoam-, oceanweed-, oceanunder-)   Natural Ocean's four, one each
+    src/SmoothRunning/Shaders/blend-windows.bundle            Smooth Running's frame blending
+    src/CineCamera/Shaders/grade-windows.bundle               Cinema Camera's look (log curve, LUT, white balance, the cameras' tools)
+    src/FarGround/Shaders/farground-windows.bundle            Far Ground's four: Points, Draw, Depth, Lights
 
 Run it again after any change to a GLSL file (so after each `git pull origin main`): it makes every bundle afresh from the
 GLSL as it is. The game folder is only read, for a pattern, as tools/shaderpack/make_bundle.py does for OpenGL: the game's own
@@ -49,17 +53,26 @@ from unityfile import Asset, Bundle, Writer, lz4_store  # noqa: E402
 # The bundles, each with the shaders in it, as the mods look for them (Addon.BuiltShader, Lens.OwnLens, OwnShader.Load,
 # Clouds.Load).
 BUNDLES = [
-    ("src/VolumetricExplosions/Shaders/shaders-windows.bundle", ["volume", "enlarge", "layers", "mark", "shock", "shadow", "motion"]),
+    # (and what stands between the smoke and the sun, Addon.LoadSunDepth: added on the PC 2026-10-18, the shader having come from
+    # the Mac on 2026-10-17. Keystone's dnfill is not here: it is for OpenGL alone, TufxFilm's GroundFacing.)
+    ("src/VolumetricExplosions/Shaders/shaders-windows.bundle", ["volume", "volumerelease", "enlarge", "layers", "mark", "shock", "shadow", "motion", "carry", "sundepth"]),
     ("src/Keystone/Shaders/lens-windows.bundle", ["lens"]),
+    ("src/Keystone/Shaders/farmotion-windows.bundle", ["farmotion"]),
     ("src/NaturalLight/Shaders/light-windows.bundle", ["shafts", "clean", "veil"]),
-    # (and the rain's on the glass and the ground, and the drops' own picture of the water on the glass: Wet.LoadShader, 2026-10-13)
-    ("src/NaturalWeather/Shaders/clouds-windows.bundle", ["clouds", "cloudsover", "cloudshade", "wet", "drops"]),
+    # (and the rain's on the glass and the ground, and the drops' own picture of the water on the glass: Wet.LoadShader, 2026-10-13;
+    # and the lying snow, which Snow.cs looks for in this bundle by the name NaturalWeather/Snow off OpenGL: 2026-10-19)
+    ("src/NaturalWeather/Shaders/clouds-windows.bundle", ["clouds", "cloudsstorm", "cloudscalm", "cloudsover", "cloudshade", "wet", "drops", "snow"]),
     # (Natural Ocean looks for one bundle a shader, Sea.Load: listed 2026-10-11, compiled and seen in the game that evening.
     # What Direct3D wanted of them that no rule could see is in port.py's SPECIAL and OWN.)
     ("src/NaturalOcean/Shaders/ocean-windows.bundle", ["ocean"]),
     ("src/NaturalOcean/Shaders/oceanfoam-windows.bundle", ["oceanfoam"]),
     ("src/NaturalOcean/Shaders/oceanweed-windows.bundle", ["oceanweed"]),
     ("src/NaturalOcean/Shaders/oceanunder-windows.bundle", ["oceanunder"]),
+    ("src/SmoothRunning/Shaders/blend-windows.bundle", ["blend"]),
+    # (Cinema Camera's look, which Luts.cs looks for by this name off OpenGL: listed 2026-10-19, never compiled before)
+    ("src/CineCamera/Shaders/grade-windows.bundle", ["grade"]),
+    # (Far Ground's four, which Ground.LoadShaders looks for in this one bundle off OpenGL: listed 2026-10-20, never compiled yet)
+    ("src/FarGround/Shaders/farground-windows.bundle", ["fargroundpoints", "fargrounddraw", "fargrounddepth", "fargroundlights"]),
 ]
 OUT = os.path.join(ROOT, "build", "windows-shaders")
 
@@ -80,9 +93,20 @@ D3DCOMPILE_PREFER_FLOW_CONTROL = 1 << 10
 # its sides worked out, so what it optimises grows past all measure. For such a program, in turn, each in a process of its
 # own and given up after so many minutes: shader model 5 at once (4 was tried first, and a 4 that never ends never gives way
 # to 5), branches kept as branches, then less optimising, then none. What came of each is written in its log.)
-HEAVY = {("clouds", "ps"): [("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_PREFER_FLOW_CONTROL, 25),
-                            ("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL1 | D3DCOMPILE_PREFER_FLOW_CONTROL, 25),
-                            ("5_0", D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_PREFER_FLOW_CONTROL, 40)]}
+# (2026-10-18, the PC: unoptimised first. The clouds of 2026-10-17 gave up at both optimising tries and compiled unoptimised
+# (1.09 MB of program, in some minutes); optimising level 1 given 150 minutes made one in 36 (0.64 MB). In the game, the same
+# cloudy sky from the pad, 1280 x 720, middle detail, an RTX 4080 SUPER, two rounds each, a restart for each: the clouds cost
+# 9.0 ms a frame unoptimised and 13.6 ms optimised (OpenGL, the driver's own compile of the same clouds: 12 ms). The card's
+# driver optimises the program itself; what the compiler does first here only makes it slower. Measured on that one card.)
+HEAVY = {("clouds", "ps"): [("5_0", D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_PREFER_FLOW_CONTROL, 40),
+                            ("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL1 | D3DCOMPILE_PREFER_FLOW_CONTROL, 40)]}
+# (the clouds' copies without the rarer features: compiled the same way, and smaller)
+HEAVY[("cloudsstorm", "ps")] = HEAVY[("clouds", "ps")]
+HEAVY[("cloudscalm", "ps")] = HEAVY[("clouds", "ps")]
+# (minutes=N after the shaders' names: each try of a heavy program given that long instead, from its first try or from=K. For a
+# run of its own in the background when the usual limits give up before the optimising is done: what it makes is kept, and taken
+# from then on, as compiled() says. "windows.py C:/KSP-test clouds minutes=150 from=2": the second try, optimising level 1.)
+MINUTES, FROM = 0, 1
 FLAG_NAMES = {D3DCOMPILE_SKIP_OPTIMIZATION: "no optimising", D3DCOMPILE_PREFER_FLOW_CONTROL: "branches kept",
               D3DCOMPILE_OPTIMIZATION_LEVEL3: "optimising level 3"}
 
@@ -311,12 +335,24 @@ def compiled(which, compiler, device):
     out, log = {}, []
     for stage, entry in (("vs", "vert"), ("ps", "frag")):
         heavy = HEAVY.get((which, stage))
-        for model, flags, minutes in heavy or (("4_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0), ("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0)):
+        tries = heavy or (("4_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0), ("5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0))
+
+        def kept_for(model, flags):
             # (the same HLSL from the same compiler gives the same program: what was made before is taken again)
             # (the flags in the key only where they are not the usual ones: what was kept before stays good)
             parts = (compiler.version, entry, stage + "_" + model, source) if not heavy else (compiler.version, entry, stage + "_" + model, str(flags), source)
-            key = hashlib.sha256("\0".join(parts).encode()).hexdigest()
-            kept = os.path.join(OUT, "kept", key + ".dxbc")
+            return os.path.join(OUT, "kept", hashlib.sha256("\0".join(parts).encode()).hexdigest() + ".dxbc")
+        if heavy and not MINUTES:
+            # (A heavy program kept from any of its tries is taken, the first kept in the order of the tries, before any is tried
+            # again: one kept from a run of its own (minutes=, with HEAVY) is then used, and tries that were given up are not
+            # waited through a second time. 2026-10-18, the PC.)
+            done = [(m, f, n) for m, f, n in tries if os.path.exists(kept_for(m, f))]
+            if done: tries = done[:1]
+        elif heavy:
+            tries = tries[max(FROM - 1, 0):]
+        for model, flags, minutes in tries:
+            if heavy and MINUTES: minutes = MINUTES
+            kept = kept_for(model, flags)
             if os.path.exists(kept):
                 dxbc, said = open(kept, "rb").read(), "(as compiled before: the same HLSL, the same compiler)"
             else:
@@ -494,4 +530,7 @@ def main(ksp, only=()):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2: raise SystemExit(__doc__)
-    main(sys.argv[1], sys.argv[2:])
+    for word in sys.argv[2:]:
+        if word.startswith("minutes="): MINUTES = int(word.split("=", 1)[1])
+        if word.startswith("from="): FROM = int(word.split("=", 1)[1])
+    main(sys.argv[1], [w for w in sys.argv[2:] if "=" not in w])

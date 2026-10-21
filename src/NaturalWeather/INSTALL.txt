@@ -1,12 +1,13 @@
 Natural Weather @VERSION@
 for Kerbal Space Program 1.12.x
 
-Weather that is seen and felt: wind and gusts on craft and smoke, cloud light, rain and snow,
-storms with lightning and thunder, fog and dust, a launch go / no go with a forecast, and a
-real city's weather if you like.
+Weather that is seen and felt: wind and gusts on craft and smoke, clouds of its own where
+real ones form, cloud light, rain, snow that lies and drifts, hail, storms with lightning and
+thunder, hurricanes, fog and dust, a launch go / no go with a forecast, and a real city's
+weather if you like.
 
 INSTALL
-  This mod needs Keystone 0.8 or later, the base it stands on, a separate download:
+  This mod needs Keystone 0.9 or later, the base it stands on, a separate download:
     https://spacedock.info/mod/4665/Keystone
   Copy Keystone's folder (Keystone) into your KSP's GameData folder, and the NaturalWeather
   folder from this download beside it, and start the game. Without Keystone the game does
@@ -28,21 +29,22 @@ ONLINE
 
 BESIDE OTHER MODS
   Wind moves craft only where the Harmony mod (HarmonyKSP) is installed. Cloud light needs
-  the Natural Light mod; smoke in the wind needs Volumetric Explosions. Where another mod
-  already puts wind into the game's aerodynamics (the Kerbal Weather Project, Advanced
-  Atmosphere Tools), that one wins. EVE's clouds are left as they are unless the page is told
-  to hide them over Kerbin.
+  the Natural Light mod; smoke in the wind needs Volumetric Explosions, and dust devils its
+  0.8.0 or later. Where another mod already puts wind into the game's aerodynamics (the Kerbal
+  Weather Project, Advanced Atmosphere Tools), that one wins. Where this mod's clouds are
+  drawn, EVE's clouds are hidden (its city lights stay; a setting), and Scatterer's sun flare
+  goes behind them.
 
 KNOWN FAULTS
-  Its clouds are in the middle of being remade: a fair day's heaps are too alike, and from
-  space, from very far off or while flying towards them they show faults. The rest (wind,
-  rain, snow, fog, lightning, the launch weather) is as described.
+  The newest kinds are first versions: a tornado's funnel is smooth, a storm's tower can look
+  like a ball from afar, fog has no banks with edges. Lying snow is not seen from orbit. The
+  clouds cost frames: "Cloud detail" at "lower" draws them more coarsely.
 
 WHERE IT WORKS
-  Made and tried on a Mac. 0.3 was tried on Windows 11: the clouds (shaders of its own, packed
-  for the game's OpenGL and built for Direct3D), rain, fog and snow. What 0.4.0 added (the
-  clouds remade, drops on the camera, wet ground, hail, freezing rain, fog by kind, storms of
-  every kind, haloes, icing) has been tried on the Mac only: its shaders are built for
-  Direct3D, but nobody has looked at them there yet. Nobody has run it on Linux yet.
+  Made and tried on a Mac. Its clouds are shaders of its own, packed for the game's OpenGL
+  and built for Direct3D. This version was tried on Windows 11 (Direct3D 11 and OpenGL, with
+  Scatterer and EVE): fair, cloudy and stormy skies over the pad, the clouds' shadows, lying
+  snow, the drops on the glass, towering heaps, a thin layer seen from inside it, alike on
+  both. Nobody has run it on Linux yet.
 
 Everything else: https://github.com/IshiakiZ/ksp-natural-weather

@@ -27,9 +27,10 @@ sys.path.insert(0, PACK)
 import make_bundle  # noqa: E402  (for each shader's name, textures and how it is blended)
 
 # Where each goes in the Unity project.
-FOLDER = {"volume": "VolumetricExplosions", "enlarge": "VolumetricExplosions", "layers": "VolumetricExplosions", "motion": "VolumetricExplosions", "mark": "VolumetricExplosions", "shock": "VolumetricExplosions", "shadow": "VolumetricExplosions", "lens": "Keystone",
-          "shafts": "NaturalLight", "clean": "NaturalLight", "veil": "NaturalLight", "clouds": "NaturalWeather", "cloudsover": "NaturalWeather", "cloudshade": "NaturalWeather", "wet": "NaturalWeather", "drops": "NaturalWeather",
-          "ocean": "NaturalOcean", "oceanfoam": "NaturalOcean", "oceanweed": "NaturalOcean", "oceanunder": "NaturalOcean"}
+FOLDER = {"volume": "VolumetricExplosions", "enlarge": "VolumetricExplosions", "layers": "VolumetricExplosions", "motion": "VolumetricExplosions", "carry": "VolumetricExplosions", "mark": "VolumetricExplosions", "shock": "VolumetricExplosions", "shadow": "VolumetricExplosions", "sundepth": "VolumetricExplosions", "lens": "Keystone", "farmotion": "Keystone",
+          "shafts": "NaturalLight", "clean": "NaturalLight", "veil": "NaturalLight", "clouds": "NaturalWeather", "cloudsover": "NaturalWeather", "cloudshade": "NaturalWeather", "wet": "NaturalWeather", "snow": "NaturalWeather", "drops": "NaturalWeather",
+          "ocean": "NaturalOcean", "oceanfoam": "NaturalOcean", "oceanweed": "NaturalOcean", "oceanunder": "NaturalOcean", "blend": "SmoothRunning", "grade": "CineCamera",
+          "fargroundpoints": "FarGround", "fargrounddraw": "FarGround", "fargrounddepth": "FarGround", "fargroundlights": "FarGround"}
 
 # What Unity's own headers already declare.
 GIVEN = {"_WorldSpaceCameraPos", "_ProjectionParams", "_ZBufferParams", "_ScreenParams", "_Time"}
@@ -85,14 +86,22 @@ SPECIAL = [
     way = -1.0;
 #endif
     vs_TEXCOORD0 = vec2(in_POSITION0.x * 0.5 + 0.5, in_POSITION0.y * way * 0.5 + 0.5);"""),
-    (("cloudsover", "cloudshade", "veil", "oceanunder", "wet"), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
+    (("cloudsover", "cloudshade", "veil", "oceanunder", "wet", "snow", "blend", "farmotion", "grade"), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
      """    // (drawn into whatever the camera is drawing into, which may lie either way: as for the lens's second go, above; Natural
-    // Light's veil and the sea's lens in the water the same)
+    // Light's veil and the sea's lens in the water the same; and Cinema Camera's look, whose picture came out upside down on
+    // Direct3D without it, the camera drawing into a picture of its own there (the PC, 2026-10-20))
     float way = 1.0;
 #if UNITY_UV_STARTS_AT_TOP
     way = _ProjectionParams.x;
 #endif
     vs_TEXCOORD0 = vec2(in_POSITION0.x * 0.5 + 0.5, in_POSITION0.y * way * 0.5 + 0.5);"""),
+    # (Keystone's motion beyond the near camera: Direct3D's picture of motion runs down the picture, its first row being its top,
+    # as Unity's own (Internal-MotionVectors turns y over where UNITY_UV_STARTS_AT_TOP); the pass works it out as OpenGL has it)
+    (("farmotion",), "fragment", "    SV_Target0 = vec4(moved, 0.0, 1.0);",
+     """#if UNITY_UV_STARTS_AT_TOP
+    moved.y = -moved.y;
+#endif
+    SV_Target0 = vec4(moved, 0.0, 1.0);"""),
     (("enlarge",), "fragment", "    if (s00 == vec4(0.0) && s10 == vec4(0.0) && s01 == vec4(0.0) && s11 == vec4(0.0)) discard;",
      "    if (AllZero(s00) && AllZero(s10) && AllZero(s01) && AllZero(s11)) discard;"),
     (("layers",), "fragment", "        if (s00 == vec4(0.0) && s10 == vec4(0.0) && s01 == vec4(0.0) && s11 == vec4(0.0)) continue;",
@@ -128,11 +137,12 @@ SPECIAL = [
 ]
 
 # The shaders that only ever draw into pictures of their own, by a sheet whose corners are put by hand: the weather's clouds (their
-# walk, the noise's slices, the putting together) and the sea's white water. There a pixel's place (gl_FragCoord) is the place of
+# walk, the noise's slices, the putting together), the sea's white water and Far Ground's points (a pixel a point, read back by
+# the rings' draw by the same place). There a pixel's place (gl_FragCoord) is the place of
 # its point in the picture, the same on Direct3D as on OpenGL, and is handed on as it comes. (Neither is drawn by a camera's own
 # projection, so _ProjectionParams, which FragCoord goes by, says nothing of them: the white water is worked out before any
 # camera has drawn, with whatever the last one of the frame before left there.)
-OWN = ("clouds", "oceanfoam")
+OWN = ("clouds", "oceanfoam", "fargroundpoints")
 
 UNITYCG = """            #include "UnityCG.cginc"
 """
@@ -462,6 +472,9 @@ def stage_of(text):
             # (a stack of flat textures: Natural Ocean's waves. Added 2026-10-11 on the Mac; compiled and seen on Windows the same day.)
             found = re.match(r"uniform sampler2DArray (\w+);", bare)
             if found: textures.append((found.group(1), "2DArray", line.split("//", 1)[1].strip() if "//" in line else "")); continue
+            # (a cube of six faces, read by a direction: EVE's map of city lights, which Far Ground reads as EVE does. 2026-10-20.)
+            found = re.match(r"uniform samplerCube (\w+);", bare)
+            if found: textures.append((found.group(1), "Cube", line.split("//", 1)[1].strip() if "//" in line else "")); continue
             found = re.match(r"uniform (\w+) (\w+);", bare)
             if found: uniforms.append((found.group(2), found.group(1), line.split("//", 1)[1].strip() if "//" in line else "")); continue
             found = re.match(r"(in|out) (\w+) (\w+);", bare)
@@ -476,6 +489,11 @@ def stage_of(text):
             # be changed. 2026-10-15)
             found = re.match(r"((?:float|int|uint|bool)|(?:[iu]?vec[234])|(?:mat[234]))\s+\w+\s*(?:\[\d+\]\s*)?[=,;]", bare)
             if found: line = line.replace(found.group(1), "static " + found.group(1), 1)
+            # (a constant outside a function: grade.glsl's LN10 and LUMA, and the values make_bundle's `constants` make constants of
+            # nought for the clouds' storm and calm copies. HLSL takes a const outside a function for a uniform, read from the buffer
+            # Unity fills, unless it is static: the copies kept all the code those values switch on, and read values never set.
+            # 2026-10-20)
+            if re.match(r"const\s+(?:(?:float|int|uint|bool)|(?:[iu]?vec[234])|(?:mat[234]))\s+\w+", bare): line = line.replace("const", "static const", 1)
         depth += bare.count("{") - bare.count("}")
         body.append(line)
     body = "\n".join(body)
@@ -557,10 +575,16 @@ def program(which, header):
     given header first: Unity's own (UNITYCG) for the editor, or ours (OUTSIDE) for a compiler outside it. And the names that
     clashed with HLSL's, which were given an underscore."""
     spec = make_bundle.SHADERS[which]
-    glsl = open(os.path.join(PACK, spec["code"])).read()
+    glsl = make_bundle.source_of(spec).decode()
     texts = {"vertex": section(glsl, "vertex"), "fragment": section(glsl, "fragment")}
+    # (A copy built from another shader's text (make_bundle's `constants` and `replace`: the clouds' storm and calm copies, the
+    # smoke's release copy) takes that shader's rules here, and is drawn as it is (OWN). By their own names they took none: on
+    # Direct3D the copies' pictures were read the other way up, the clouds blocky and cheap, and the release smoke cut along the
+    # scene turned over; the PC, 2026-10-20.)
+    base = next(k for k, s in make_bundle.SHADERS.items() if s["code"] == spec["code"])
+    own = base in OWN
     for shaders, stage, was, now in SPECIAL:
-        if which not in shaders: continue
+        if base not in shaders: continue
         if texts[stage].count(was) != 1: raise SystemExit("%s.glsl (%s): expected exactly one line reading: %s" % (which, stage, was.strip()))
         texts[stage] = texts[stage].replace(was, now)
     vertex, fragment = stage_of(texts["vertex"]), stage_of(texts["fragment"])
@@ -584,9 +608,13 @@ def program(which, header):
     for stage in (vertex, fragment):
         for name, dims, note in stage["textures"]:
             if name in seen: continue
-            seen.add(name); textures.append("            Texture%s %s; SamplerState sampler%s;%s" % (dims if dims == "2DArray" else "%dD" % dims, name, name, "     // " + note if note else ""))
+            seen.add(name); textures.append("            Texture%s %s; SamplerState sampler%s;%s" % (dims if dims in ("2DArray", "Cube") else "%dD" % dims, name, name, "     // " + note if note else ""))
     statics = ["            static %s %s;" % (kind(t), n) for n, t in fragment["statics"] + vertex["statics"]]
-    passed = ["                float4 pos : SV_POSITION;"] + ["                %s %s : TEXCOORD%s;" % (kind(t), n, n[-1]) for n, t in vertex["outs"]]
+    # (a pixel's place asked for outside main, as grade.glsl's zebras do: the pixel program's input (IN) is frag's own, which a
+    # function outside it cannot see, so frag puts the place in a static first and those functions read that. 2026-10-20)
+    placed = bool(re.search(r"\bgl_FragCoord\b", uncommented(fragment["helpers"])))
+    if placed: statics.append("            static float4 fragPos;")
+    passed =["                float4 pos : SV_POSITION;"] + ["                %s %s : TEXCOORD%s;" % (kind(t), n, n[-1]) for n, t in vertex["outs"]]
 
     # (the vectors each stage's code can name without declaring them: for chosen)
     outside = {}
@@ -601,18 +629,21 @@ def program(which, header):
     out.append("\n".join(textures))
     if statics: out.append("\n".join(statics))
     out.append("\n            struct v2f\n            {\n%s\n            };\n" % "\n".join(passed))
-    if vertex["helpers"].strip(): out.append(indented(convert(vertex["helpers"], "vertex", outside, which in OWN), "            ") + "\n")
+    if vertex["helpers"].strip(): out.append(indented(convert(vertex["helpers"], "vertex", outside, own), "            ") + "\n")
     numbered = ", uint vertexId : SV_VertexID" if re.search(r"\bgl_VertexID\b", uncommented(vertex["main"] + vertex["helpers"])) else ""
     out.append("            v2f vert(float3 in_POSITION0 : POSITION%s)\n            {\n                v2f OUT = (v2f)0;" % numbered)
-    out.append(indented(re.sub(r"\breturn;", "return OUT;", convert(vertex["main"], "vertex", outside, which in OWN)), "            "))
+    out.append(indented(re.sub(r"\breturn;", "return OUT;", convert(vertex["main"], "vertex", outside, own)), "            "))
     out.append("                return OUT;\n            }\n")
-    if fragment["helpers"].strip(): out.append(indented(convert(fragment["helpers"], "fragment", outside, which in OWN), "            ") + "\n")
+    if fragment["helpers"].strip():
+        helpers = convert(re.sub(r"\bgl_FragCoord\b", "PIXEL_PLACE", fragment["helpers"]), "fragment", outside, own)
+        out.append(indented(helpers.replace("PIXEL_PLACE", "fragPos" if own else "FragCoord(fragPos)"), "            ") + "\n")
     if any(name == "SV_Target1" for name, _ in fragment["outs"]):
         # (a second picture drawn into at the same time: see volume.glsl's SV_Target1)
         out.append("            struct both\n            {\n                float4 result : SV_Target0;\n                float4 result1 : SV_Target1;\n            };\n")
         out.append("            both Both(float4 a, float4 b) { both o; o.result = a; o.result1 = b; return o; }\n")
         out.append("            both frag(v2f IN)\n            {\n                float4 result = float4(0.0, 0.0, 0.0, 0.0);\n                float4 result1 = float4(0.0, 0.0, 0.0, 0.0);")
-        out.append(indented(re.sub(r"\breturn;", "return Both(result, result1);", convert(fragment["main"], "fragment", outside, which in OWN)), "            "))
+        if placed: out.append("                fragPos = IN.pos;")
+        out.append(indented(re.sub(r"\breturn;", "return Both(result, result1);", convert(fragment["main"], "fragment", outside, own)), "            "))
         out.append("                return Both(result, result1);\n            }")
     else:
         facing = ", bool isFront : SV_IsFrontFace" if re.search(r"\bgl_FrontFacing\b", uncommented(fragment["main"] + fragment["helpers"])) else ""
@@ -620,7 +651,8 @@ def program(which, header):
         depth = ", out float fragDepth : SV_Depth" if re.search(r"\bgl_FragDepth\b", uncommented(fragment["main"])) else ""
         out.append("            float4 frag(v2f IN%s%s) : SV_Target\n            {\n                float4 result = float4(0.0, 0.0, 0.0, 0.0);" % (facing, depth))
         if depth: out.append("                fragDepth = 0.0;")
-        out.append(indented(re.sub(r"\bgl_FragDepth\b", "fragDepth", re.sub(r"\breturn;", "return result;", convert(fragment["main"], "fragment", outside, which in OWN))), "            "))
+        if placed: out.append("                fragPos = IN.pos;")
+        out.append(indented(re.sub(r"\bgl_FragDepth\b", "fragDepth", re.sub(r"\breturn;", "return result;", convert(fragment["main"], "fragment", outside, own))), "            "))
         out.append("                return result;\n            }")
     return out, clash
 
@@ -634,7 +666,7 @@ def hlsl(which):
 
 def port(which):
     spec = make_bundle.SHADERS[which]
-    properties = ["        %s (\"%s\", %s) = \"\" {}" % (name, name[1:], "3D" if dims == 3 else "2DArray" if dims == 5 else "2D") for name, dims in spec["textures"][:-spec.get("given", 1)]]
+    properties = ["        %s (\"%s\", %s) = \"\" {}" % (name, name[1:], "3D" if dims == 3 else "2DArray" if dims == 5 else "Cube" if dims == 4 else "2D") for name, dims in spec["textures"][:-spec.get("given", 1)]]
     source, dest = spec.get("blend", (1.0, 10.0))
     body, clash = program(which, UNITYCG)
 
@@ -655,8 +687,8 @@ def port(which):
 
 if __name__ == "__main__":
     asked = sys.argv[1:]
-    for name in asked or ["volume", "enlarge", "layers", "motion", "mark", "shock", "shadow", "lens", "shafts", "clean", "veil", "clouds", "cloudsover", "cloudshade", "wet",
-                          "ocean", "oceanfoam", "oceanweed", "oceanunder", "drops"]:
+    for name in asked or ["volume", "enlarge", "layers", "motion", "carry", "mark", "shock", "shadow", "sundepth", "lens", "shafts", "clean", "veil", "clouds", "cloudsover", "cloudshade", "wet", "snow",
+                          "ocean", "oceanfoam", "oceanweed", "oceanunder", "drops", "blend", "farmotion", "grade", "fargroundpoints", "fargrounddraw", "fargrounddepth", "fargroundlights"]:
         # (a repository of one mod has that mod's shaders and not the others': those are passed over)
         if not asked and not os.path.exists(os.path.join(PACK, make_bundle.SHADERS[name]["code"])):
             print("left out: %s (tools/shaderpack/%s is not here)" % (name, make_bundle.SHADERS[name]["code"]))

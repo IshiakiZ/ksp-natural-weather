@@ -34,7 +34,8 @@ namespace NaturalWeather
         }
         public static string Says() => Report;
         /// <summary>(development build) the drops on the glass: how many, how many running, how much of the glass is under water.</summary>
-        public static string DropsSays() => instance != null ? instance.drops.Says() + "; rain at the glass " + instance.stepRain.ToString("F2") + ", landing " + instance.arriving.ToString("F1") + " a second (" + Mathf.RoundToInt(100f * instance.facingSaid) + "% facing the rain)" : "no drops: not in flight";
+        public static string DropsSays() => instance != null ? instance.drops.Says() + "; rain at the glass " + instance.stepRain.ToString("F2") + ", landing " + instance.arriving.ToString("F1") + " a second (" + Mathf.RoundToInt(100f * instance.facingSaid) + "% facing the rain)"
+            + (instance.under ? "; the glass under water" : "; " + (float.IsInfinity(instance.lastAbove) ? "no sea" : instance.lastAbove.ToString("F1") + " m above the water")) + (instance.surfacedAt >= 0f ? "; last came out at " + instance.surfacedAt.ToString("F1") + " m/s" : "") : "no drops: not in flight";
         /// <summary>(development build) the glass wiped.</summary>
         public static string WipeGlass() { if (instance != null) instance.drops.Clear(); return "wiped"; }
 #endif
@@ -160,7 +161,13 @@ namespace NaturalWeather
             lat = camLat; lon = camLon; at = ut; rainNow = water;
 
             // ---- the glass: drops while the camera is out in the rain (under the cloud it falls from, and not inside a craft)
-            float under = here.Low.Cover > 0.05f ? Noise.Smooth(here.Low.Top, here.Low.Base, (float)alt) : 1f;
+            // (Where there is rain and the low cloud is all but gone, as in a cyclone's eye, where the low cloud is cut to a
+            // quarter while the bands' rain goes on near it: the middle cloud's heights, and with none of that either, rain
+            // from no higher than eight kilometres. Taken as falling there at every height, as until 2026-10-18, it left drops
+            // on the glass in orbit: from 200 km over a hurricane's eye, rings scattered over the picture.)
+            float under = here.Low.Cover > 0.05f ? Noise.Smooth(here.Low.Top, here.Low.Base, (float)alt)
+                : here.Middle.Cover > 0.05f && here.Middle.Top > here.Middle.Base ? Noise.Smooth(here.Middle.Top, here.Middle.Base, (float)alt)
+                : Noise.Smooth(8000f, 6000f, (float)alt);
             bool outside = CameraManager.Instance == null || CameraManager.Instance.currentCameraMode == CameraManager.CameraMode.Flight;
             float falling = outside ? water * under : 0f;
             // (the drops themselves are carried on just before the camera draws, where it really is then: StepDrops)
@@ -179,7 +186,7 @@ namespace NaturalWeather
             if (HeldPuddles >= 0f) { puddles = HeldPuddles; Puddles = HeldPuddles; }
 #endif
             Report = "ground " + Ground.ToString("F2") + ", standing water " + Puddles.ToString("F2") + ", drops on the glass " + drops.Count + " (" + drops.Running + " running, "
-                + Mathf.RoundToInt(100f * Glass) + "% of it under water), air past the glass " + airSaid.ToString("F1") + " m/s"
+                + Mathf.RoundToInt(100f * Glass) + "% of it under water), air past the glass " + airSaid.ToString("F1") + " m/s" + (leeSaid > 0.05f ? " (" + Mathf.RoundToInt(100f * leeSaid) + "% in the camera's lee)" : "")
                 + (shader == null && tried ? " (not drawn: " + why + ")" : "");
 
             // ---- the pass, while there is anything for it
@@ -203,8 +210,62 @@ namespace NaturalWeather
         static readonly int idDrops = Shader.PropertyToID("_WetDrops"), idDropsSize = Shader.PropertyToID("_WetDropsSize");
 
 
+        // (the glass and the sea: whether it was under water last frame, how far above the water it stood, and how fast it
+        // last came out)
+        bool under;
+        float lastAbove = float.PositiveInfinity, surfacedAt = -1f;
+        static Func<Vector3d, float> seaHeight;
+        static bool seaLooked;
+
+        /// <summary>
+        /// How far a place stands above the water there, m (below nought: under it). The water is Natural Ocean's, waves and
+        /// all, where that mod is installed (looked up by name: this mod does not need it); else the sea's own level. No sea:
+        /// infinitely far.
+        /// </summary>
+        static bool keystoneWater = true;
+        static bool KeystoneWater(Vector3d at, out float height)
+        {
+            bool there = Keystone.Water.Provider != null;
+            height = there ? Keystone.Water.HeightAt(at) : 0f;
+            return there;
+        }
+
+        static float AboveWater(CelestialBody b, Vector3d at)
+        {
+            if (b == null || !b.ocean) return float.PositiveInfinity;
+            double alt = b.GetAltitude(at);
+            if (alt > 60.0) return (float)alt;
+            // (Keystone's water, which a sea mod answers for, from Keystone 0.9.0; else the sea mod looked up by name, as before)
+            if (keystoneWater)
+            {
+                try { if (KeystoneWater(at, out float h)) return (float)alt - h; }
+                catch (Exception) { keystoneWater = false; }    // (a Keystone older than 0.9.0)
+            }
+            if (!seaLooked)
+            {
+                seaLooked = true;
+                try
+                {
+                    Type sea = typeof(Wet).Assembly.GetType("NaturalOcean.Sea");
+                    if (sea == null)
+                        foreach (AssemblyLoader.LoadedAssembly a in AssemblyLoader.loadedAssemblies)
+                            if (a?.assembly != null && (sea = a.assembly.GetType("NaturalOcean.Sea")) != null) break;
+                    System.Reflection.MethodInfo m = sea?.GetMethod("HeightAt", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, null, new[] { typeof(Vector3d) }, null);
+                    if (m != null && m.ReturnType == typeof(float)) seaHeight = (Func<Vector3d, float>)Delegate.CreateDelegate(typeof(Func<Vector3d, float>), m);
+                }
+                catch (Exception) { seaHeight = null; }
+            }
+            float water = 0f;
+            if (seaHeight != null)
+            {
+                try { water = seaHeight(at); }
+                catch (Exception) { seaHeight = null; }
+            }
+            return (float)alt - water;
+        }
+
         // (what the drops' step needs from the frame's work, and the camera as it was last drawn)
-        float stepRain, airSaid, arriving, facingSaid;
+        float stepRain, airSaid, arriving, facingSaid, leeSaid;
         bool stepKeep;
         Vector3 stepWind;
         int steppedFrame = -1;
@@ -222,6 +283,24 @@ namespace NaturalWeather
             Vector3 camPos = cam.transform.position;
             Vessel ship = FlightGlobals.ActiveVessel;
             float dtGame = Mathf.Min(Time.deltaTime, 0.05f);
+            // (Under water the glass is all water, and holds no drops. Coming up out of it, it is left a sheet of water that
+            // breaks into drops, more or fewer by how fast it came out: Drops.Surfaced. Where the water stands is Natural
+            // Ocean's, with its waves, where that mod is here; else the sea's own level.)
+            float above = AboveWater(FlightGlobals.currentMainBody, (Vector3d)camPos);
+            if (above < 0f)
+            {
+                drops.Clear();
+                if (!under) under = true;
+                lastAbove = above; Glass = 0f; arriving = 0f;
+                return;
+            }
+            if (under)
+            {
+                under = false;
+                surfacedAt = Mathf.Max((above - lastAbove) / Mathf.Max(dtGame, 1e-3f), 0f);
+                drops.Surfaced(surfacedAt, cam.aspect);
+            }
+            lastAbove = above;
             Transform t = cam.transform;
             // (the camera's own motion through the air: the craft's over the ground and the camera's round the craft. A jump of
             // more than ten metres in a frame is a cut, not a motion: the camera put somewhere else.)
@@ -259,10 +338,19 @@ namespace NaturalWeather
             float arrive = flux * area * (facing + 0.02f * past.magnitude / 6.5f);
             arriving = arrive; facingSaid = facing;
             float lambda = 4.1f * Mathf.Pow(Mathf.Max(rainRate, 0.5f), -0.21f);
-            drops.Step(dtGame, new Vector2(Vector3.Dot(g, t.right), Vector3.Dot(g, t.up)), new Vector2(Vector3.Dot(air, t.right), Vector3.Dot(air, t.up)),
+            // (The air along the glass: the wind past the camera, as much of it as lies along the glass. Coming at the glass
+            // across or face-on, it streams over it and the drops run its way, or spread from the middle; coming from behind
+            // the camera, the glass is in the lee of the camera's own body, where the air is slow and turns back on itself: a
+            // camera with the gale at its back keeps its drops where they are. Asked by the owner, 2026-10-17 18:40: "the wind
+            // should blow accordingly on the raindrops on the camera".)
+            float airSpeed = air.magnitude;
+            float fromBehind = airSpeed > 0.1f ? Vector3.Dot(air, t.forward) / airSpeed : 0f;
+            float lee = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((fromBehind - 0.1f) / 0.6f));
+            Vector2 along = new Vector2(Vector3.Dot(air, t.right), Vector3.Dot(air, t.up)) * (1f - 0.85f * lee);
+            drops.Step(dtGame, new Vector2(Vector3.Dot(g, t.right), Vector3.Dot(g, t.up)), along,
                             Mathf.Max(0f, -Vector3.Dot(air, t.forward)), new Vector2(Vector3.Dot(shaken, t.right), Vector3.Dot(shaken, t.up)), dense, arrive, lambda,
                             stepRain > 0.01f ? 0f : 1f, cam.aspect);
-            airSaid = new Vector2(Vector3.Dot(air, t.right), Vector3.Dot(air, t.up)).magnitude;
+            airSaid = along.magnitude; leeSaid = lee;
             Glass = drops.Covered;
         }
 

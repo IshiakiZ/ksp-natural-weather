@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Reflection;
 using UnityEngine;
 
 namespace NaturalWeather
@@ -28,8 +30,53 @@ namespace NaturalWeather
         public float Bands = 0f;               // Jool's bands of wind (m/s)
         public float Water = 1f;               // whether what falls is water (Eve's falls and dries before it lands: 0)
         public float Cumulus = 1f;             // how readily fair-weather cumulus forms by day
+        // (since 0.5.0, for worlds given a climate of their own, see Given: Real Worlds' Mars, whose water makes no low cloud and
+        // only thin ice cloud high up; Venus, nothing but its deck)
+        public float Low = 1f, Middle = 1f, High = 1f;          // how much of the low, middle and high cloud the air's moisture makes
+        public float UnderDeck = 0f;                             // a low sheet of cloud under the deck, how much of the sky at least (Eve's, Jool's)
+        public float UnderDeckBase = 1500f, UnderDeckTop = 3500f, UnderDeckWater = 0.4f;
 
+        /// <summary>
+        /// A world's climate: its own if it is a stock world, else worked out from its air and seas; and over either, whatever a
+        /// config names for it (NATURAL_WEATHER_CLIMATE, since 0.5.0: see Given).
+        /// </summary>
         public static Climate Of(CelestialBody body)
+        {
+            Climate c = Builtin(body);
+            if (body != null && given != null && given.TryGetValue(body.bodyName, out Dictionary<string, float> values))
+                foreach (KeyValuePair<string, float> v in values)
+                {
+                    FieldInfo f = typeof(Climate).GetField(v.Key, BindingFlags.Instance | BindingFlags.Public);
+                    if (f != null && f.FieldType == typeof(float)) f.SetValue(c, v.Value);
+                }
+            return c;
+        }
+
+        static Dictionary<string, Dictionary<string, float>> given;
+
+        /// <summary>
+        /// (Since 0.5.0.) Climates given in configs, read once on the game's thread after it has loaded them (any thread may make a
+        /// world): a node NATURAL_WEATHER_CLIMATE with the world's name as `body` and any of Climate's numbers by their names, each
+        /// over the world's own. For a planet pack's worlds, or Real Worlds', whose real worlds stand in the stock ones' places
+        /// under their names (its Venus is Eve, and must not have Eve's low cloud). Worlds already made take them at once.
+        /// </summary>
+        internal static void Given()
+        {
+            if (given != null || GameDatabase.Instance == null) return;
+            var found = new Dictionary<string, Dictionary<string, float>>();
+            foreach (ConfigNode n in GameDatabase.Instance.GetConfigNodes("NATURAL_WEATHER_CLIMATE"))
+            {
+                string body = n.GetValue("body");
+                if (string.IsNullOrEmpty(body)) continue;
+                if (!found.TryGetValue(body, out Dictionary<string, float> values)) found[body] = values = new Dictionary<string, float>();
+                foreach (ConfigNode.Value v in n.values)
+                    if (v.name != "body" && float.TryParse(v.value, NumberStyles.Float, CultureInfo.InvariantCulture, out float x)) values[v.name] = x;
+            }
+            given = found;
+            if (found.Count > 0) World.ClimatesAgain();
+        }
+
+        static Climate Builtin(CelestialBody body)
         {
             string name = body != null ? body.bodyName : "";
             switch (name)
@@ -37,8 +84,8 @@ namespace NaturalWeather
                 case "Kerbin": return new Climate();
                 case "Laythe": return new Climate { Wet = 1.15f, Trade = 6f, Wester = 8f, Jet = 25f, JetHeight = 8000f, Storms = 0.75f, Tops = 9000f, Fogs = 1.4f, Systems = 300000f };
                 case "Duna": return new Climate { Wet = 0.12f, Trade = 4f, Wester = 7f, Jet = 25f, JetHeight = 7000f, Storms = 0f, Lightning = 0f, Fogs = 0.2f, Dusty = 1f, Tops = 9000f, Systems = 450000f, Cumulus = 0.15f, Water = 0f };
-                case "Eve": return new Climate { Wet = 1.4f, Trade = 1.2f, Wester = 1.5f, Jet = 70f, JetHeight = 22000f, Storms = 0.35f, Lightning = 0.6f, Fogs = 0.5f, Deck = 1f, DeckBase = 4000f, DeckTop = 12000f, Tops = 26000f, Calm = 0.3f, Systems = 500000f, Water = 0f, Cumulus = 0.2f };
-                case "Jool": return new Climate { Wet = 1f, Trade = 30f, Wester = 40f, Jet = 140f, JetHeight = 60000f, Storms = 0.7f, Lightning = 1f, Fogs = 0f, Deck = 1f, DeckBase = 20000f, DeckTop = 90000f, Tops = 120000f, Bands = 120f, Rough = 2.5f, Systems = 2000000f, Water = 0f, Cumulus = 0f };
+                case "Eve": return new Climate { Wet = 1.4f, Trade = 1.2f, Wester = 1.5f, Jet = 70f, JetHeight = 22000f, Storms = 0.35f, Lightning = 0.6f, Fogs = 0.5f, Deck = 1f, DeckBase = 4000f, DeckTop = 12000f, Tops = 26000f, Calm = 0.3f, Systems = 500000f, Water = 0f, Cumulus = 0.2f, UnderDeck = 0.5f, UnderDeckBase = 1500f, UnderDeckTop = 3500f, UnderDeckWater = 0.4f };
+                case "Jool": return new Climate { Wet = 1f, Trade = 30f, Wester = 40f, Jet = 140f, JetHeight = 60000f, Storms = 0.7f, Lightning = 1f, Fogs = 0f, Deck = 1f, DeckBase = 20000f, DeckTop = 90000f, Tops = 120000f, Bands = 120f, Rough = 2.5f, Systems = 2000000f, Water = 0f, Cumulus = 0f, UnderDeck = 1f, UnderDeckBase = 0f, UnderDeckTop = 15000f, UnderDeckWater = 0.8f };
             }
             // A world from a planet pack: from its air and its seas.
             var c = new Climate();
@@ -90,6 +137,12 @@ namespace NaturalWeather
                 all[body] = w;
                 return w;
             }
+        }
+
+        /// <summary>(Since 0.5.0.) Every world made so far takes its climate again (when climates given in configs have been read).</summary>
+        internal static void ClimatesAgain()
+        {
+            lock (locker) foreach (World w in all.Values) w.Climate = Climate.Of(w.Body);
         }
 
         World(CelestialBody body)
@@ -160,6 +213,45 @@ namespace NaturalWeather
             int y0 = Math.Max(0, Math.Min(MapH - 1, iy)), y1 = Math.Max(0, Math.Min(MapH - 1, iy + 1));
             float a = h[y0 * MapW + x0], b = h[y0 * MapW + x1], c = h[y1 * MapW + x0], d = h[y1 * MapW + x1];
             return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy;
+        }
+
+        // (how far east of each dot of the map the nearest land lies, along its latitude, m: the decks of cloud over the cool sea off
+        // the west coasts (Model.Usual). Made once the map is whole.)
+        float[] eastLand;
+
+        /// <summary>How far east of the place the nearest land is, along its latitude, m (0 on land; very far where the map is not made).</summary>
+        public float EastLand(double lat, double lon)
+        {
+            float[] h = Heights;
+            if (h == null || !Mapped) return 1e8f;
+            float[] e = eastLand;
+            if (e == null)
+            {
+                e = new float[MapW * MapH];
+                for (int j = 0; j < MapH; j++)
+                {
+                    double rowLat = (j + 0.5) / MapH * 180.0 - 90.0;
+                    float step = (float)(2.0 * Math.PI / MapW * Radius * Math.Max(0.05, Math.Cos(rowLat * Math.PI / 180.0)));
+                    // (swept from east to west twice round the row, so that every dot has seen the land east of it)
+                    float since = 1e8f;
+                    for (int n = 2 * MapW - 1; n >= 0; n--)
+                    {
+                        int i = n % MapW;
+                        since = h[j * MapW + i] > 0f ? 0f : Math.Min(since + step, 1e8f);
+                        if (n < MapW) e[j * MapW + i] = since;
+                    }
+                }
+                eastLand = e;
+            }
+            // (between the map's dots, not by its nearest: by the nearest, a deck's edge followed the map's rows, 2.8 degrees each, and
+            // from afar the decks were white bars along the latitudes)
+            double fx = (lon + 180.0) / 360.0 * MapW - 0.5, fy = (lat + 90.0) / 180.0 * MapH - 0.5;
+            int ix = Noise.Floor(fx), iy = Noise.Floor(fy);
+            float tx = (float)(fx - ix), ty = (float)(fy - iy);
+            int x0 = ((ix % MapW) + MapW) % MapW, x1 = (x0 + 1) % MapW;
+            int y0 = Math.Max(0, Math.Min(MapH - 1, iy)), y1 = Math.Max(0, Math.Min(MapH - 1, iy + 1));
+            float a = Math.Min(e[y0 * MapW + x0], 4e6f), b = Math.Min(e[y0 * MapW + x1], 4e6f), c = Math.Min(e[y1 * MapW + x0], 4e6f), d = Math.Min(e[y1 * MapW + x1], 4e6f);
+            return (a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * ty;
         }
 
         /// <summary>How much of the place is land, 0 sea to 1 land (soft at the coast), from the coarse map.</summary>

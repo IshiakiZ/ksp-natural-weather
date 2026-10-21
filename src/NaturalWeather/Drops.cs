@@ -104,6 +104,45 @@ namespace NaturalWeather
 
         public void Clear() { count = 0; Array.Clear(wet, 0, wet.Length); }
 
+        /// <summary>
+        /// The glass has just come up out of the water. (`speed`: how fast it left the surface, m/s; `wide`: the picture's
+        /// width over its height.) Under water it was all water and held no drops. Coming out it carries a sheet of water up
+        /// with it, the thicker the faster it is drawn out (Landau and Levich: a plate drawn out of a liquid at a speed U
+        /// carries a film 0.94 times the capillary length times the capillary number to the two-thirds, the capillary number
+        /// being the liquid's viscosity times U over its surface tension: for water a tenth of a millimetre at half a metre
+        /// a second, a quarter at two, more than half at eight). Most of the sheet runs straight off; what is left breaks up
+        /// as it thins into drops a millimetre or two across, the whole glass wet between them. From then on they sit, run,
+        /// merge and dry as rain's do, and the air past the glass blows them off as it blows rain's: a camera that comes out
+        /// and goes on fast is clear in a moment, one that is left where a wave fell away from it is beaded.
+        /// (Asked for 2026-10-17: "if the camera has water droplets on it and then the camera goes underwater, the water
+        /// droplets should go away. Then, when the camera comes back out, depending on speed and a bunch of parameters,
+        /// there should be water droplets or no water droplets.")
+        /// </summary>
+        public void Surfaced(float speed, float wide)
+        {
+            count = 0;
+            for (int k = 0; k < wet.Length; k++) wet[k] = 1f;
+            float halfX = 0.5f * wide * Tall, halfY = 0.5f * Tall;
+            // (water: viscosity 1e-3 Pa s, surface tension 0.072 N/m, capillary length 2.7 mm)
+            float film = 0.94f * 2.7f * Mathf.Pow(1e-3f * Mathf.Clamp(speed, 0.05f, 20f) / 0.072f, 2f / 3f);    // mm
+            // (what stays on the glass once the sheet has run off it: about a seventh)
+            float left = 0.15f * film * (2f * halfX) * (2f * halfY);                                                // mm^3
+            while (left > 0f && count < Most)
+            {
+                // (the drops a thinning sheet breaks into: a millimetre or so across, a few of them large)
+                double u = random.NextDouble();
+                float across = Mathf.Clamp(0.5f + (float)(-Math.Log(1.0 - u * 0.98) * 0.7), 0.4f, 3.2f);
+                float volume = Mathf.PI * across * across * across / 6f;
+                drops[count] = new Drop
+                {
+                    X = (float)(random.NextDouble() * 2.0 - 1.0) * halfX, Y = (float)(random.NextDouble() * 2.0 - 1.0) * halfY,
+                    Volume = volume, Grip = 0.8f + 0.4f * (float)random.NextDouble(), Seed = random.Next(128),
+                };
+                count++;
+                left -= volume;
+            }
+        }
+
         /// <summary>The foot of a drop of so much water: its radius on the glass, mm (a cap standing at 45 degrees).</summary>
         public static float Foot(float volume) => Mathf.Pow(Mathf.Max(volume, 1e-6f) / 0.688f, 1f / 3f);
 

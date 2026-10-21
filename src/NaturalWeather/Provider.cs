@@ -10,7 +10,7 @@ namespace NaturalWeather
     sealed class Provider : IWeather
     {
         public static int MainThread = -1;
-        static bool OnMain => Thread.CurrentThread.ManagedThreadId == MainThread;
+        internal static bool OnMain => Thread.CurrentThread.ManagedThreadId == MainThread;
 
         public string Name => "Natural Weather";
 

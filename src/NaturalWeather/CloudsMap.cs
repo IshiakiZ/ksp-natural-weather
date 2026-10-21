@@ -21,16 +21,22 @@ namespace NaturalWeather
         public CelestialBody Body;
         public float HighestTop, LowestBase, HighCloud = 8000f;   // within sight of the place the map was made for
         public bool AnyCloud;                                     // any cloud at all within sight
+        public float FogTop, FogBase, FogTopLowest;               // fog within sight: its highest top, lowest base and lowest top (none: FogTop 0). Not in the three above: drawn only from over it (Clouds)
         public double MadeFor = double.NaN;                       // the moment it holds
         public int Made;
         public float Took;                                        // how long the last one took to make (s, on its own thread)
+        public int Stride = 1;                                    // how finely the last one was made: the weather asked at one dot in so many each way
 
         Color32[] nextA, nextB, nextC;
-        float nextTop, nextBase, nextHigh, nextTook;
+        float nextTop, nextBase, nextHigh, nextTook, nextFogTop, nextFogBase, nextFogTopLowest;
+        int nextStride = 1;
         bool nextAny, nextSettled, settled = true;     // (settled: made when the weather knew the world's land and seas: see CloudSource.Settled)
         double nextFor;
         Task working;
         float askedAt = -100f;
+
+        /// <summary>(Development: 1 or 2, every map made so finely; -1, by how long the last took, as until 2026-10-19; 0, as released.)</summary>
+        public static int HeldStride;
 
         /// <summary>Made again at the next chance (the weather was changed by hand).</summary>
         public void Forget() { MadeFor = double.NaN; askedAt = -100f; }
@@ -62,7 +68,8 @@ namespace NaturalWeather
                     A.SetPixels32(nextA); A.Apply(false, false);
                     B.SetPixels32(nextB); B.Apply(false, false);
                     C.SetPixels32(nextC); C.Apply(false, false);
-                    HighestTop = nextTop; LowestBase = nextBase; HighCloud = nextHigh; AnyCloud = nextAny; MadeFor = nextFor; Took = nextTook; settled = nextSettled; Made++;
+                    HighestTop = nextTop; LowestBase = nextBase; HighCloud = nextHigh; AnyCloud = nextAny; MadeFor = nextFor; Took = nextTook; settled = nextSettled; Stride = nextStride; Made++;
+                    FogTop = nextFogTop; FogBase = nextFogBase; FogTopLowest = nextFogTopLowest;
                 }
                 working = null;
             }
@@ -79,9 +86,13 @@ namespace NaturalWeather
                 askedAt = Time.realtimeSinceStartup;
                 CelestialBody b = body;
                 double t = ut, lat = latitude, lon = longitude, within = reach;
-                // (if the weather took more than a second to answer for the whole map, it is asked for every other dot each way
-                // next time, and the dots between take their neighbour's: a thread kept busy costs the game's own time on this Mac)
-                int stride = Took > 1f ? 2 : 1;
+                // (How finely: the weather asked at every dot; at every other dot each way, the dots between taking their neighbour's,
+                // only while time is warped more than ten times, when the map is made every two seconds and the sky races anyway.
+                // Until 2026-10-19 it was every other dot whenever the last map had taken more than a second, "a thread kept busy
+                // costs the game's own time on this Mac": here it took 0.9 s, more whenever the computer was busy, and then the
+                // next map was made coarse and the one after fine again, each time the clouds within sight shifting by half a dot,
+                // some 7 km, and back: see Clouds.Trace.)
+                int stride = HeldStride > 0 ? HeldStride : HeldStride < 0 ? (Took > 1f ? 2 : 1) : TimeWarp.CurrentRate > 10f ? 2 : 1;
                 working = Task.Run(() => Make(b, t, lat, lon, within, stride));
             }
             return A != null && Body == body;
@@ -94,7 +105,7 @@ namespace NaturalWeather
             var a = new Color32[Wide * High];
             var b = new Color32[Wide * High];
             var c = new Color32[Wide * High];
-            float top = 0f, lowest = 99999f, highSum = 0f, highWeight = 0f;
+            float top = 0f, lowest = 99999f, highSum = 0f, highWeight = 0f, fogTop = 0f, fogLowest = 99999f, fogTopLowest = 99999f;
             bool any = false;
             // (the weather asked for all the places at once: with Natural Weather's own, every storm on the world is found once
             // for the lot. A map of Kerbin took 3.4 s of this thread until 0.2.2, each place asked by itself; see CloudSource.Many)
@@ -123,16 +134,18 @@ namespace NaturalWeather
                     if (dLon > 180.0) dLon = 360.0 - dLon;
                     if (dLat < reach && dLon * Math.Cos(lat * Math.PI / 180.0) < reach)
                     {
-                        if (lowCover > 0.01f) { top = Math.Max(top, w.Low.Top); lowest = Math.Min(lowest, w.Low.Base); any = true; }
+                        if (lowCover > 0.01f && w.Low.Kind == CloudKind.Fog) { fogTop = Math.Max(fogTop, w.Low.Top); fogLowest = Math.Min(fogLowest, w.Low.Base); fogTopLowest = Math.Min(fogTopLowest, w.Low.Top); }
+                        else if (lowCover > 0.01f) { top = Math.Max(top, w.Low.Top); lowest = Math.Min(lowest, w.Low.Base); any = true; }
                         if (midCover > 0.01f) { top = Math.Max(top, w.Middle.Top); lowest = Math.Min(lowest, w.Middle.Base); any = true; }
                         if (highCover > 0.01f) { highSum += 0.5f * (w.High.Base + w.High.Top) * highCover; highWeight += highCover; any = true; }
                     }
                 }
             }
             nextA = a; nextB = b; nextC = c; nextTop = top; nextBase = lowest > 99000f ? 1000f : lowest; nextAny = any;
+            nextFogTop = fogTop; nextFogBase = fogLowest > 99000f ? 0f : fogLowest; nextFogTopLowest = fogTopLowest;
             nextHigh = highWeight > 0.01f ? highSum / highWeight : 8000f;
             nextSettled = known;
-            nextFor = ut; nextTook = (float)clock.Elapsed.TotalSeconds;
+            nextFor = ut; nextTook = (float)clock.Elapsed.TotalSeconds; nextStride = stride;
         }
 
         static byte Byte(float x) => (byte)Mathf.Clamp(Mathf.RoundToInt(x * 255f), 0, 255);

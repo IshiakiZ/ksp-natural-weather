@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 #if DEV
 using System;
 using System.Diagnostics;
@@ -192,6 +193,126 @@ namespace NaturalWeather
             return "t " + v.missionTime.ToString("F1") + " s: " + de.ToString("F1") + " m east, " + dn.ToString("F1") + " m north, " + v.altitude.ToString("F0") + " m up; going " + Vector3d.Dot(s, e).ToString("F2") + " east, " + Vector3d.Dot(s, n).ToString("F2") + " north, " + Vector3d.Dot(s, u).ToString("F1") + " up; wind on it " + Vector3d.Dot(wind, e).ToString("F1") + " east, " + Vector3d.Dot(wind, n).ToString("F1") + " north" + (NoPush ? " (not pushing: test)" : "");
         }
 
+        /// <summary>(For the rendering research: how far the world's terrain is drawn from here, as the game decides it. Each
+        /// field named is read from the world's terrain sphere, private or not; and the far body's fade.)</summary>
+        public static string Horizon()
+        {
+            CelestialBody b = FlightGlobals.currentMainBody;
+            if (b == null || b.pqsController == null) return "no terrain here";
+            PQS q = b.pqsController;
+            var sb = new StringBuilder(b.bodyName + " terrain:");
+            foreach (string name in new[] { "visRadSeaLevelValue", "visRadAltitudeValue", "visRadAltitudeMax", "visibleRadius", "horizonDistance", "horizonAngle", "visRad",
+                                            "radiusMin", "radiusMax", "halfChord", "minDetailDistance", "maxDetailDistance", "minLevel", "maxLevel", "detailAltitudeMax",
+                                            "detailAltitudeQuads", "maxQuadLenghtsPerFrame", "visibleAltitude", "targetHeight", "targetSpeed", "radius" })
+            {
+                var f = typeof(PQS).GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                var pr = f == null ? typeof(PQS).GetProperty(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic) : null;
+                object v = f != null ? f.GetValue(q) : pr != null ? pr.GetValue(q, null) : "(none)";
+                if (v is Array arr) { var parts = new List<string>(); foreach (object o in arr) parts.Add(o.ToString()); v = "[" + string.Join(", ", parts.ToArray()) + "]"; }
+                sb.Append(' ').Append(name).Append('=').Append(v);
+            }
+            var thresholds = typeof(PQS).GetField("subdivisionThresholds", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (thresholds != null && thresholds.GetValue(q) is Array th) { var parts = new List<string>(); foreach (object o in th) parts.Add(Convert.ToDouble(o).ToString("0")); sb.Append(" subdivisionThresholds=[").Append(string.Join(", ", parts.ToArray())).Append(']'); }
+            ScaledSpaceFader fader = b.scaledBody != null ? b.scaledBody.GetComponentInChildren<ScaledSpaceFader>() : null;
+            if (fader != null) sb.Append("; far body fadeStart=").Append(fader.fadeStart).Append(" fadeEnd=").Append(fader.fadeEnd);
+            Vessel v2 = FlightGlobals.ActiveVessel;
+            if (v2 != null) sb.Append("; the craft ").Append(v2.altitude.ToString("F0")).Append(" m up");
+            return sb.ToString();
+        }
+
+        /// <summary>(How deep the world's weather can reach: the game's own temperature by height, at the equator, 30 and 60
+        /// degrees, the day's average as World reads it, and the first height where it stops falling by 2 K a kilometre over
+        /// the next two (the tropopause as the meteorologists take it). "Kerbin" or nothing for the world below.)</summary>
+        public static string Air(string arg)
+        {
+            CelestialBody b = FlightGlobals.currentMainBody;
+            if (!string.IsNullOrEmpty(arg)) foreach (CelestialBody c in FlightGlobals.Bodies) if (c.bodyName == arg.Trim()) b = c;
+            if (b == null || !b.atmosphere) return "no air here";
+            var sb = new StringBuilder(b.bodyName + ", air " + (b.atmosphereDepth / 1000.0).ToString("F0") + " km deep; K by km up:");
+            foreach (double lat in new[] { 0.0, 30.0, 60.0 })
+            {
+                Func<double, double> at = alt => b.GetTemperature(alt) + b.atmosphereTemperatureSunMultCurve.Evaluate((float)alt) * (b.latitudeTemperatureBiasCurve.Evaluate((float)lat) + b.latitudeTemperatureSunMultCurve.Evaluate((float)lat) * 0.5);
+                sb.Append("\n  ").Append(lat.ToString("F0")).Append(" deg:");
+                for (int km = 0; km <= 30; km += 2) sb.Append(' ').Append(at(km * 1000.0).ToString("F0"));
+                double pause = -1;
+                for (double h = 1000; h < Math.Min(b.atmosphereDepth, 40000); h += 250)
+                    if ((at(h) - at(h + 2000)) / 2.0 < 2.0) { pause = h; break; }
+                sb.Append("; tropopause ").Append(pause < 0 ? "none under 40 km" : (pause / 1000.0).ToString("F2") + " km");
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>(The weather's cloud over the whole world, to set against Earth's (the satellites' climatology: some two
+        /// thirds of the world under cloud; low cloud most of it, stratocumulus the most common kind): for the world below,
+        /// over a grid of places weighted by the area each stands for, at the hours given ("0,6,12,18" by default, hours on
+        /// from now), the share of the world under cloud, under each kind of low cloud, under middle and high cloud and
+        /// overcast, and how deep the low cloud is.)</summary>
+        public static string Climate(string arg)
+        {
+            CelestialBody body = FlightGlobals.currentMainBody;
+            if (body == null || !body.atmosphere) return "no air here";
+            World w = World.Of(body);
+            double now = Planetarium.GetUniversalTime();
+            var hours = new List<double>();
+            foreach (string s in (string.IsNullOrEmpty(arg) ? "0,6,12,18" : arg).Split(',')) hours.Add(double.Parse(s.Trim()));
+            int kinds = Enum.GetValues(typeof(CloudKind)).Length;
+            // [0] the sea, [1] the land: area; under any cloud; clear (under less than a twentieth); overcast; each kind's
+            // amount (cover times area), low kinds by the low layer, Ac and As by the middle, Ci by the high; the low kinds'
+            // bases (cover-weighted sums)
+            var area = new double[2]; var any = new double[2]; var clear = new double[2]; var overcast = new double[2];
+            var amount = new double[2, 16]; var baseSum = new double[2, 16];
+            var depths = new List<KeyValuePair<float, double>>();
+            var t = Stopwatch.StartNew();
+            foreach (double h in hours)
+                for (double la = -88; la < 90; la += 4)
+                    for (double lo = -178; lo < 180; lo += 4)
+                    {
+                        double a = Math.Cos(la * Math.PI / 180.0);
+                        int land = w.Land(la, lo) > 0.5f ? 1 : 0;
+                        WeatherHere x = Model.Layers(w, la, lo, now + h * 3600.0);
+                        float l = x.Low.Kind == CloudKind.None ? 0f : x.Low.Cover, m = x.Middle.Kind == CloudKind.None ? 0f : x.Middle.Cover, g = x.High.Kind == CloudKind.None ? 0f : x.High.Cover;
+                        double total = 1.0 - (1.0 - l) * (1.0 - m) * (1.0 - g);
+                        area[land] += a; any[land] += a * total;
+                        if (total < 0.05) clear[land] += a;
+                        if (Math.Max(l, Math.Max(m, g)) > 0.7f) overcast[land] += a;
+                        amount[land, (int)x.Low.Kind] += a * l; baseSum[land, (int)x.Low.Kind] += a * l * (x.Low.Base - Math.Max(0f, w.Ground(la, lo)));
+                        amount[land, (int)x.Middle.Kind] += a * m;
+                        amount[land, (int)x.High.Kind] += a * g;
+                        if (l > 0.05f && x.Low.Kind != CloudKind.Fog) depths.Add(new KeyValuePair<float, double>(x.Low.Top - x.Low.Base, a * l));
+                    }
+            var sb = new StringBuilder(body.bodyName + ", " + hours.Count + " hours, " + t.ElapsedMilliseconds + " ms; the land " + (area[1] / (area[0] + area[1])).ToString("P0") + " of the world");
+            for (int land = 0; land < 2; land++)
+            {
+                double A = Math.Max(area[land], 1e-9);
+                sb.Append("\n  ").Append(land == 0 ? "sea: " : "land: ").Append("under cloud ").Append((any[land] / A).ToString("P0")).Append(", clear ").Append((clear[land] / A).ToString("P0"))
+                  .Append(", overcast ").Append((overcast[land] / A).ToString("P0")).Append(";");
+                for (int k = 1; k < kinds; k++)
+                {
+                    if (amount[land, k] <= 0) continue;
+                    sb.Append(' ').Append(((CloudKind)k).ToString()).Append(' ').Append((amount[land, k] / A).ToString("P1"));
+                    if (baseSum[land, k] > 0) sb.Append(" (base ").Append((baseSum[land, k] / amount[land, k]).ToString("F0")).Append(" m)");
+                }
+            }
+            depths.Sort((p, q) => p.Key.CompareTo(q.Key));
+            double all = 0; foreach (var p in depths) all += p.Value;
+            sb.Append("\n  low cloud's depth (by cover, fog left out):");
+            foreach (double share in new[] { 0.1, 0.25, 0.5, 0.75, 0.9, 0.98 })
+            {
+                double run = 0; float at = 0f;
+                foreach (var p in depths) { run += p.Value; at = p.Key; if (run >= share * all) break; }
+                sb.Append(' ').Append((share * 100).ToString("F0")).Append("% ").Append(at.ToString("F0")).Append(" m");
+            }
+            sb.Append("\n  (Earth, by observers (Warren, Eastman and Hahn 2014): sea 69 % under cloud, clear 3 %: fog 1, St 13, Sc 22, Cu 13, Cb 6, Ns 5, As 6, Ac 18, high 12;"
+                    + " land 54 %, clear 22 %: fog 1, St 5, Sc 12, Cu 5, Cb 4, Ns 5, As 4, Ac 17, high 22; bases over the sea St 400, Sc 600, Cu 600, Cb 500 m, over land 500, 1000, 1100, 1000 m)");
+            return sb.ToString();
+        }
+
+        /// <summary>(For setting one against the other: "old" makes the cover as until 2026-10-19, without the storms of the middle latitudes, the equator's clusters and the decks off west coasts; "new" as now.)</summary>
+        public static string Cover(string arg) { Model.OldCover = arg != null && arg.Trim() == "old"; Model.Forget(); return Model.OldCover ? "the cover as until 2026-10-19" : "the cover with the storms, the clusters and the decks"; }
+
+        /// <summary>(For setting one against the other: "old" leaves out the usual sky's own cloud, as until 2026-10-18; "new" puts it back.)</summary>
+        public static string Usual(string arg) { Model.TestUsual = arg != null && arg.Trim() == "old" ? 1f : 0f; Model.Forget(); return Model.TestUsual == 1f ? "the usual sky left out (as until 2026-10-18)" : "the usual sky in"; }
+
         public static string Choose(string arg)
         {
             int n = int.Parse(arg.Trim());
@@ -233,6 +354,37 @@ namespace NaturalWeather
         }
 
         /// <summary>A map of the clouds about the place: 64 by 24 characters, `arg` km each way (60 by default), at the low cloud's middle.</summary>
+        /// <summary>
+        /// (Development build) What makes the low cloud down a line of longitude on the home world: "lon lat0 lat1 steps". For each
+        /// place: the lowest air's stability and moisture, land, the usual sky's deck and its makings (how subtropical, how far land
+        /// lies to the east against how far a deck reaches, how freely heaps grow), and the low and middle cloud as drawn.
+        /// </summary>
+        public static string Meridian(string arg)
+        {
+            string[] t = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            if (t.Length < 4) return "lon lat0 lat1 steps";
+            double D(int i) => double.Parse(t[i], System.Globalization.CultureInfo.InvariantCulture);
+            CelestialBody body = FlightGlobals.GetHomeBody();
+            World w = World.Of(body);
+            double ut = Planetarium.GetUniversalTime(), lon = D(0);
+            int steps = Math.Max(2, (int)D(3));
+            var said = new StringBuilder("lat: stab moist land | deck offWest subtropic east/reach km lifted | low kind cover base-top | middle cover\n");
+            for (int i = 0; i < steps; i++)
+            {
+                double lat = D(1) + (D(2) - D(1)) * i / (steps - 1);
+                Base b = Model.Sample(w, lat, lon, ut);
+                Model.Probing = true;
+                WeatherHere h = Model.Layers(w, lat, lon, ut);
+                Model.Probing = false;
+                said.Append(lat.ToString("F1")).Append(": ").Append(b.Stab.ToString("F2")).Append(' ').Append(b.M.ToString("F2")).Append(' ').Append(b.Land.ToString("F1"))
+                    .Append(" | ").Append(Model.PDeck.ToString("F2")).Append(' ').Append(Model.POffWest.ToString("F2")).Append(' ').Append(Model.PSubtropic.ToString("F2")).Append(' ')
+                    .Append((Model.PEast / 1000f).ToString("F0")).Append('/').Append((Model.PReach / 1000f).ToString("F0")).Append(' ').Append(Model.PLifted.ToString("F2"))
+                    .Append(" | ").Append(h.Low.Kind).Append(' ').Append(h.Low.Cover.ToString("F2")).Append(' ').Append(h.Low.Base.ToString("F0")).Append('-').Append(h.Low.Top.ToString("F0"))
+                    .Append(" | ").Append(h.Middle.Cover.ToString("F2")).Append('\n');
+            }
+            return said.ToString();
+        }
+
         public static string Map(string arg)
         {
             if (!WeatherDriver.Place(out CelestialBody body, out double lat, out double lon, out _, out _)) return "nowhere";

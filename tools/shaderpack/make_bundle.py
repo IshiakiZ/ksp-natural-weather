@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Pack one of this project's shaders into a Unity asset bundle, without the Unity editor.
 
-    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|motion|enlarge|shadow|mark|shock|lens|shafts|clean|veil|clouds|cloudsover|cloudshade|wet]
+    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|motion|enlarge|shadow|mark|shock|sundepth|lens|dnfill|farmotion|shafts|clean|veil|clouds|cloudsover|cloudshade|wet|snow|blend|fargroundpoints|fargrounddraw|fargrounddepth|fargroundlights]
 
 Volumetric Explosions': "volume" (the default) is the smoke, "layers" what puts every patch's smoke on the screen in depth order
 (since 0.5.0; "enlarge" did it a patch at a time before, and is kept for older copies of the mod), "shadow" the shadow it throws
 on what is under it, "mark" the burn mark thrown onto the ground, "shock" the shock front
-that bends the picture behind it. Keystone's: "lens", what a lens, a shutter and a film do to a picture.
+that bends the picture behind it. Keystone's: "lens", what a lens, a shutter and a film do to a picture; "dnfill", the way the ground faces put into the
+picture Unity's darkening of creases reads (the game's ground leaves it out).
 Natural Light's: "shafts", shafts of sunlight; "clean", which blacks out the pixels that are not numbers; "veil", the weather
 (rain, snow, fog, dust) in the air between the camera and the distance.
 
@@ -33,6 +34,8 @@ OPENGL_CORE = 15
 # The last texture of each is the game's own depth picture, which is not a property of the material
 # ("given": how many of the last are the game's own, where it is more than that one).
 VERTEX = [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True)]
+# (Far Ground's rings round the camera: the point under it, north and east there, and how the rings are laid; all three of its shaders read them)
+FG_RINGS = [("_FGUp", 4, False), ("_FGNorth", 4, False), ("_FGEast", 4, False), ("_FGRound", 4, False)]
 SHADERS = {
     "volume": {
         "name": "VolumetricExplosions/Volume", "path": "assets/volumetricexplosions/volume.shader", "id": 7307199000000000001, "program": 1987650001,
@@ -45,11 +48,12 @@ SHADERS = {
                      ("_VolSceneDirA", 4, False), ("_VolSceneDirB", 4, False), ("_VolSceneDirC", 4, False), ("_VolSceneDirD", 4, False),
                      ("_VolJet", 4, False), ("_VolJetFrom", 4, False), ("_VolJetLook", 4, False), ("_VolJetBody", 4, False), ("_VolJetFlow", 4, False), ("_VolJetEnd", 4, False), ("_VolJetGlow", 4, False)] + [("_VolJetAt%d" % n, 4, False) for n in range(8)] + [("_VolFire", 4, False), ("_VolFireGone", 4, False),
                      ("_VolTint", 4, False), ("_VolHot1", 4, False), ("_VolHot2", 4, False), ("_VolHot3", 4, False), ("_VolHot4", 4, False),
-                     ("_VolCutA", 4, False), ("_VolCutB", 4, False), ("_VolCutC", 4, False), ("_VolCutD", 4, False), ("_VolCutE", 4, False), ("_VolCutF", 4, False), ("_VolSlot", 4, False),
+                     ("_VolCutA", 4, False), ("_VolCutB", 4, False), ("_VolCutC", 4, False), ("_VolCutD", 4, False), ("_VolCutE", 4, False), ("_VolCutF", 4, False), ("_VolSlot", 4, False), ("_VolSunMapFrom", 4, False), ("_VolSunMapRight", 4, False), ("_VolSunMapUp", 4, False), ("_VolSunMapAlong", 4, False),
                      ("_VolWakes", 4, False), ("_VolWakeLo", 4, False), ("_VolWakeHi", 4, False)]
                     + [("_VolWake%s%d" % (part, n), 4, False) for n in range(8) for part in "ABC"]
-                    + [("unity_WorldToObject", 4, True), ("unity_MatrixV", 4, True)],
-        "textures": [("_Volume", 3), ("_Amount", 3), ("_Detail", 3), ("_Around", 3), ("_Flow", 3), ("_RestA", 3), ("_RestB", 3), ("_RestC", 3), ("_RestD", 3), ("_RestE", 3), ("_Turns", 3), ("_Clear", 3), ("_CameraDepthTexture", 2)],
+                    + [("unity_WorldToObject", 4, True), ("unity_MatrixV", 4, True), ("_VolQuarter", 4, False)],
+        "textures": [("_Volume", 3), ("_Amount", 3), ("_Detail", 3), ("_Around", 3), ("_Flow", 3), ("_RestA", 3), ("_RestB", 3), ("_RestC", 3), ("_RestD", 3), ("_RestE", 3), ("_Turns", 3), ("_Clear", 3), ("_VolSunMap", 2), ("_CameraDepthTexture", 2)],
+        "vertex": VERTEX + [("_VolShift", 4, False)],
     },
     "mark": {
         "name": "VolumetricExplosions/Mark", "path": "assets/volumetricexplosions/mark.shader", "id": 7307199000000000002, "program": 1987650002,
@@ -57,6 +61,17 @@ SHADERS = {
         "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ProjectionParams", 4, False), ("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_MarkTint", 4, False), ("_MarkGlow", 4, False),
                      ("_MarkSize", 4, False), ("unity_WorldToObject", 4, True), ("unity_MatrixV", 4, True)],
         "textures": [("_MarkTex", 2), ("_MarkEmbers", 2), ("_CameraDepthTexture", 2)],
+    },
+    # What stands between the smoke and the sun, drawn from the sun's side as how far along its light each thing is (SunShadow.cs).
+    "sundepth": {
+        "name": "VolumetricExplosions/SunDepth", "path": "assets/volumetricexplosions/sundepth.shader", "id": 7307199000000000013, "program": 1987650013,
+        "bundle": "volumetricexplosionssundepth", "file": "CAB-766573756e6465707468000000000000", "code": "sundepth.glsl",
+        "fragment": [],
+        "textures": [],
+        "given": 0,
+        "vertex": VERTEX + [("_SunMapFrom", 4, False), ("_SunMapAlong", 4, False)],
+        "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,  # (both faces of everything, the nearest kept)
+        "blend": (1.0, 0.0),
     },
     "enlarge": {
         "name": "VolumetricExplosions/Enlarge", "path": "assets/volumetricexplosions/enlarge.shader", "id": 7307199000000000004, "program": 1987650004,
@@ -76,6 +91,19 @@ SHADERS = {
         "given": 0,
         "blend": (1.0, 0.0),             # what it draws takes the place of what was there
     },
+    # A patch walked a quarter of its pixels a frame, the other three carried over from the frame before: into its slot of the atlas
+    # and into its own picture of what it was (see Layers.cs, Carry).
+    "carry": {
+        "name": "VolumetricExplosions/Carry", "path": "assets/volumetricexplosions/carry.shader", "id": 7307199000000000016, "program": 1987650016,
+        "bundle": "volumetricexplosionscarry", "file": "CAB-766f6c756d6574726963636172727900", "code": "carry.glsl",
+        "fragment": [("_CarryAt", 4, False), ("_CarryQ", 4, False), ("_CarryCam", 4, False), ("_CarryRayX", 4, False), ("_CarryRayY", 4, False), ("_CarryRayZ", 4, False),
+                     ("_CarryWasX", 4, False), ("_CarryWasY", 4, False), ("_CarryWasW", 4, False), ("_CarryBoxX", 4, False), ("_CarryBoxY", 4, False), ("_CarryBoxZ", 4, False)],
+        "textures": [("_CarryQuarter", 2), ("_CarryQuarterDepth", 2), ("_CarryWas", 2), ("_CarryWasDepth", 2)],
+        "vertex": [],
+        "cull": 0.0,
+        "given": 0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there
+    },
     "layers": {
         "name": "VolumetricExplosions/Layers", "path": "assets/volumetricexplosions/layers.shader", "id": 7307199000000000010, "program": 1987650010,
         "bundle": "volumetricexplosionslayers", "file": "CAB-766f6c756d65747269636c6179657273", "code": "layers.glsl",
@@ -90,7 +118,8 @@ SHADERS = {
         "fragment": [("_ShockEye", 4, False), ("_ShockRight", 4, False), ("_ShockUp", 4, False), ("_ShockAhead", 4, False), ("_ShockDepth", 4, False),
                      ("_ShockC0", 4, False), ("_ShockC1", 4, False), ("_ShockC2", 4, False), ("_ShockC3", 4, False),
                      ("_ShockP0", 4, False), ("_ShockP1", 4, False), ("_ShockP2", 4, False), ("_ShockP3", 4, False),
-                     ("_ShockG0", 4, False), ("_ShockG1", 4, False), ("_ShockG2", 4, False), ("_ShockG3", 4, False), ("_ShockPulse", 4, False)],
+                     ("_ShockG0", 4, False), ("_ShockG1", 4, False), ("_ShockG2", 4, False), ("_ShockG3", 4, False), ("_ShockPulse", 4, False),
+                     ("_ShockW0", 4, False), ("_ShockW1", 4, False), ("_ShockW2", 4, False), ("_ShockW3", 4, False), ("_ShockSun", 4, False), ("_ShockSunLight", 4, False), ("_ShockSky", 4, False), ("_ShockFire", 4, False)],
         "textures": [("_VolScene", 2), ("_CameraDepthTexture", 2)],
         "vertex": [("_ShockSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,       # a sheet over the whole screen; the shader works out for itself what stands in front of a front
@@ -113,6 +142,28 @@ SHADERS = {
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),             # what it draws takes the place of what was there
         "given": 2,                      # its last two textures are the game's own (how far each pixel has moved, and how far off it is)
+    },
+    "dnfill": {
+        "name": "Keystone/DepthNormalsFill", "path": "assets/keystone/dnfill.shader", "id": 7307199000000000014, "program": 1987650014,
+        "bundle": "keystonednfill", "file": "CAB-6b657973746f6e65646e66696c6c0000", "code": "dnfill.glsl",
+        "fragment": [("_ZBufferParams", 4, False), ("_ProjectionParams", 4, False), ("_DnProj", 4, False), ("_DnTexel", 4, False)],
+        "textures": [("_DnCopy", 2), ("_CameraDepthTexture", 2)],
+        "vertex": [("_DnSheet", 4, False)],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there (it copies what it does not mend)
+        "given": 2,                      # both textures are handed to it by the command that draws it, not kept by the material
+    },
+    "farmotion": {
+        "name": "Keystone/FarMotion", "path": "assets/keystone/farmotion.shader", "id": 7307199000000000015, "program": 1987650015,
+        "bundle": "keystonefarmotion", "file": "CAB-6b657973746f6e656661726d6f74696f", "code": "farmotion.glsl",
+        "fragment": [("_FmLook", 4, False), ("_FmRight", 4, False), ("_FmUp", 4, False), ("_FmAhead", 4, False), ("_FmNearZ", 4, False), ("_FmFarZ", 4, False),
+                     ("_FmNowX", 4, False), ("_FmNowY", 4, False), ("_FmNowW", 4, False), ("_FmWasX", 4, False), ("_FmWasY", 4, False), ("_FmWasW", 4, False),
+                     ("_FmGoesX", 4, False), ("_FmGoesY", 4, False), ("_FmGoesZ", 4, False), ("_FmSea", 4, False), ("_FmSeaAt", 4, False), ("_FmClouds", 4, False)],
+        "textures": [("_FmFar", 2), ("_FmCloudsPic", 2), ("_FmCloudsDist", 2), ("_CameraDepthTexture", 2)],
+        "vertex": [("_FmSheet", 4, False)],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there (where it draws: elsewhere it leaves the game's motion)
+        "given": 1,                      # its last texture is the game's own (how far off each pixel is)
     },
     "shafts": {
         "name": "NaturalLight/Shafts", "path": "assets/naturallight/shafts.shader", "id": 7307199000000000006, "program": 1987650006,
@@ -150,8 +201,8 @@ SHADERS = {
         "bundle": "weatherclouds", "file": "CAB-77656174686572636c6f756473000000", "code": "clouds.glsl",
         "fragment": [("_ZBufferParams", 4, False), ("_CloudStage", 4, False), ("_CloudCam", 4, False), ("_CloudHigh", 4, False), ("_CloudRight", 4, False), ("_CloudUp", 4, False),
                      ("_CloudAhead", 4, False), ("_CloudFixedX", 4, False), ("_CloudFixedY", 4, False), ("_CloudFixedZ", 4, False), ("_CloudNoise", 4, False), ("_CloudDrift", 4, False),
-                     ("_CloudShell", 4, False), ("_CloudLook", 4, False), ("_CloudSun", 4, False), ("_CloudSunTint", 4, False), ("_CloudSky", 4, False), ("_CloudGround", 4, False),
-                     ("_CloudAir", 4, False), ("_CloudHaze", 4, False), ("_CloudFlashA", 4, False), ("_CloudFlashB", 4, False), ("_CloudFlashTint", 4, False),
+                     ("_CloudShell", 4, False), ("_CloudShellEased", 4, False), ("_CloudLightF", 4, False), ("_CloudLightG", 4, False), ("_CloudLightA", 4, False), ("_CloudLightE", 4, False), ("_CloudLightN", 4, False), ("_CloudLook", 4, False), ("_CloudSun", 4, False), ("_CloudSunTint", 4, False), ("_CloudMoon", 4, False), ("_CloudSky", 4, False), ("_CloudGround", 4, False),
+                     ("_CloudAir", 4, False), ("_CloudAirHigh", 4, False), ("_CloudHaze", 4, False), ("_CloudFlashA", 4, False), ("_CloudFlashB", 4, False), ("_CloudFlashTint", 4, False),
                      ("_CloudHoleA", 4, False), ("_CloudHoleB", 4, False), ("_CloudHoleC", 4, False),
                      ("_CloudFieldA", 4, False), ("_CloudFieldB", 4, False), ("_CloudFieldLevA", 4, False), ("_CloudFieldLevB", 4, False), ("_CloudFieldLevC", 4, False), ("_CloudFieldLevD", 4, False),
                      ("_CloudPrevAt", 4, False), ("_CloudPrevRight", 4, False), ("_CloudPrevUp", 4, False), ("_CloudPrevAhead", 4, False),
@@ -160,7 +211,7 @@ SHADERS = {
                      ("_CloudWakeLook", 4, False), ("_CloudWakeMid", 4, False), ("_CloudHeapsAt", 4, False), ("_CloudJitter", 4, False), ("_CloudTwistA", 4, False), ("_CloudTwistB", 4, False), ("_CloudEyeA", 4, False), ("_CloudEyeB", 4, False), ("_CloudEyeC", 4, False), ("_CloudEyeD", 4, False), ("_CloudShelfA", 4, False), ("_CloudShelfB", 4, False), ("_CloudShelfC", 4, False)] + [("_CloudWake%d" % n, 4, False) for n in range(8)]
                     + [("_CloudCellA%d" % n, 4, False) for n in range(6)] + [("_CloudCellB%d" % n, 4, False) for n in range(6)],
         "textures": [("_CloudField", 3), ("_CloudShape", 3), ("_CloudDetail", 3), ("_CloudMap", 2), ("_CloudMapB", 2), ("_CloudMapC", 2), ("_CloudAirLut", 2), ("_CloudNow", 2), ("_CloudNowD", 2),
-                     ("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2), ("_CloudCells", 2), ("_CloudHeaps", 2), ("_CloudHeapsB", 2), ("_CloudShadowB", 2)],
+                     ("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2), ("_CloudCells", 2), ("_CloudHeaps", 2), ("_CloudHeapsB", 2), ("_CloudLight", 2)],
         "vertex": [("_CloudSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),             # what it draws takes the place of what was there (its own pictures)
@@ -181,19 +232,19 @@ SHADERS = {
         "name": "NaturalOcean/Sea", "path": "assets/naturalocean/sea.shader", "id": 7307199000000000201, "program": 1987650201,
         "bundle": "naturalocean", "file": "CAB-6e61747572616c6f6365616e00000000", "code": "ocean.glsl",
         "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ZBufferParams", 4, False), ("_ScreenParams", 4, False), ("_ProjectionParams", 4, False),
-                     ("_OceanRoughA", 4, False), ("_OceanRoughB", 4, False), ("_OceanSun", 4, False), ("_OceanSunTint", 4, False), ("_OceanSkyTop", 4, False), ("_OceanSkyLow", 4, False),
+                     ("_OceanRoughA", 4, False), ("_OceanRoughB", 4, False), ("_OceanSun", 4, False), ("_WeatherShadowAt", 4, False), ("_WeatherShadowX", 4, False), ("_WeatherShadowY", 4, False), ("_WeatherShadowCentre", 4, False), ("_WeatherShadowFade", 4, False), ("_WeatherShadowSun", 4, False), ("_OceanSunTint", 4, False), ("_OceanSkyTop", 4, False), ("_OceanSkyLow", 4, False),
                      ("_OceanWater", 4, False), ("_OceanFoam", 4, False), ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanLaceAt", 4, False), ("_OceanLaceAtB", 4, False), ("_OceanLaceCount", 4, False), ("_OceanLaceCountB", 4, False), ("_OceanLaceTurn", 4, False), ("_OceanLaceMix", 4, False),
                      ("_OceanMirrorX", 4, False), ("_OceanMirrorY", 4, False), ("_OceanMirrorW", 4, False), ("_OceanAtSpot", 4, False),
                      ("_OceanHighA", 4, False), ("_OceanHighB", 4, False), ("_UnderwaterFogColor", 4, False), ("_OceanStreak", 4, False), ("_OceanStreakAt", 4, False),
                      ("_WeedUp", 4, False), ("_WeedFirst", 4, False), ("_WeedSecond", 4, False), ("_UnderLight", 4, False), ("_OceanFarZ", 4, False),
-                     ("_WeatherVeilAir", 4, False), ("_WeatherVeilColour", 4, False), ("_WeatherVeilSun", 4, False), ("_WeatherVeilSunColour", 4, False), ("_OceanRain", 4, False), ("_OceanGust", 4, False), ("_OceanDentAt", 4, False), ("_OceanDentMid", 4, False), ("_OceanDentCurl", 4, False)],
+                     ("_WeatherVeilAir", 4, False), ("_WeatherVeilColour", 4, False), ("_WeatherVeilSun", 4, False), ("_WeatherVeilSunColour", 4, False), ("_OceanRain", 4, False), ("_OceanGust", 4, False), ("_OceanDentAt", 4, False), ("_OceanDentMid", 4, False), ("_OceanDentCurl", 4, False), ("_OceanWakeAt", 4, False)],
         "vertex": [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True), ("_OceanMid", 4, False), ("_OceanAxisA", 4, False), ("_OceanAxisB", 4, False),
                    ("_OceanLay", 4, False), ("_OceanTwin", 4, False), ("_OceanShore", 4, False), ("_OceanMapAt", 4, False), ("_OceanWind", 4, False), ("_SeabedAtA", 4, False), ("_SeabedAtB", 4, False), ("_SeabedCell", 4, False),
                    ("_OceanHighA", 4, False), ("_OceanHighB", 4, False), ("_OceanSurfA", 4, False), ("_OceanSurfB", 4, False), ("_OceanAtSpot", 4, False),
-                   ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanBreaks", 4, False), ("_OceanBreakHow", 4, False), ("_OceanDentAt", 4, False), ("_OceanDentMid", 4, False), ("_OceanDentCurl", 4, False)]
+                   ("_FoamAtA", 4, False), ("_FoamAtB", 4, False), ("_FoamTexel", 4, False), ("_FoamReach", 4, False), ("_OceanBreaks", 4, False), ("_OceanBreakHow", 4, False), ("_OceanPlunge", 4, False), ("_OceanDentAt", 4, False), ("_OceanDentMid", 4, False), ("_OceanDentCurl", 4, False), ("_OceanWakeAt", 4, False)]
                   + [("_OceanAt%d" % n, 4, False) for n in range(8)],
         # (the waves: two stacks of eight textures each, 5 being a stack of flat textures)
-        "textures": [("_OceanMoved", 5), ("_OceanSlope", 5), ("_OceanFoamMap", 2), ("_OceanLace", 2), ("_OceanMirror", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanFarDepth", 2), ("_OceanFarScene", 2), ("_OceanDent", 2), ("_OceanDentMove", 2), ("_OceanScene", 2), ("_CameraDepthTexture", 2)],
+        "textures": [("_OceanMoved", 5), ("_OceanSlope", 5), ("_OceanFoamMap", 2), ("_OceanLace", 2), ("_OceanMirror", 2), ("_OceanSeabed", 2), ("_OceanSurfTime", 2), ("_OceanSurfDeep", 2), ("_OceanFarDepth", 2), ("_OceanFarScene", 2), ("_OceanDent", 2), ("_OceanDentMove", 2), ("_OceanWake", 2), ("_OceanWakeMove", 2), ("_WeatherShadowMap", 2), ("_OceanScene", 2), ("_CameraDepthTexture", 2)],
         "given": 2,                      # (the picture so far and how far off each pixel of it is: the game's own, handed over as they are)
         "blend": (1.0, 0.0), "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,
     },
@@ -260,17 +311,135 @@ SHADERS = {
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),
     },
+    # Natural Weather's lying snow (Snow.cs): snow laid over the ground as the game drew it, on the near and the far camera's
+    # pictures, before anything in the air is drawn over it.
+    "snow": {
+        "name": "NaturalWeather/Snow", "path": "assets/naturalweather/snow.shader", "id": 7307199000000000106, "program": 1987650106,
+        "bundle": "weathersnow", "file": "CAB-77656174686572736e6f770000000000", "code": "snow.glsl",
+        "fragment": [("_ZBufferParams", 4, False), ("_SnowRight", 4, False), ("_SnowUp", 4, False), ("_SnowAhead", 4, False), ("_SnowCam", 4, False), ("_SnowHere", 4, False),
+                     ("_SnowAcross", 4, False), ("_SnowAlong", 4, False), ("_SnowDeep0", 4, False), ("_SnowDeep1", 4, False), ("_SnowBands", 4, False), ("_SnowSun", 4, False),
+                     ("_SnowSunLight", 4, False), ("_SnowSkyLight", 4, False),
+                     ("_SnowBox0X", 4, False), ("_SnowBox0Y", 4, False), ("_SnowBox0Z", 4, False), ("_SnowBox1X", 4, False), ("_SnowBox1Y", 4, False), ("_SnowBox1Z", 4, False), ("_SnowBox2X", 4, False), ("_SnowBox2Y", 4, False), ("_SnowBox2Z", 4, False), ("_SnowBox3X", 4, False), ("_SnowBox3Y", 4, False), ("_SnowBox3Z", 4, False)],
+        "textures": [("_SnowScene", 2), ("_CameraDepthTexture", 2)],
+        "given": 2,                      # (the picture so far and how far off each pixel is: the game's own, handed over as they are)
+        "vertex": [],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),
+    },
+    # Smooth Running's frame blending (Blend.cs): each frame blended along the way each thing moved while the shutter was open.
+    "blend": {
+        "name": "SmoothRunning/Blend", "path": "assets/smoothrunning/blend.shader", "id": 7307199000000000301, "program": 1987650301,
+        "bundle": "runningblend", "file": "CAB-72756e6e696e67626c656e6400000000", "code": "blend.glsl",
+        "fragment": [("_ZBufferParams", 4, False), ("_BlendRight", 4, False), ("_BlendUp", 4, False), ("_BlendAhead", 4, False), ("_BlendPrevRight", 4, False),
+                     ("_BlendPrevUp", 4, False), ("_BlendPrevAhead", 4, False), ("_BlendMoved", 4, False), ("_BlendCam", 4, False), ("_BlendShutter", 4, False),
+                     ("_BlendAC", 4, False), ("_BlendAX", 4, False), ("_BlendAY", 4, False), ("_BlendAZ", 4, False), ("_BlendAPivot", 4, False), ("_BlendAMove", 4, False), ("_BlendASpin", 4, False),
+                     ("_BlendBC", 4, False), ("_BlendBX", 4, False), ("_BlendBY", 4, False), ("_BlendBZ", 4, False), ("_BlendBPivot", 4, False), ("_BlendBMove", 4, False), ("_BlendBSpin", 4, False)],
+        "textures": [("_BlendScene", 2), ("_CameraDepthTexture", 2)],
+        "given": 2,                      # (the picture so far and how far off each pixel is: handed over by the command that draws it)
+        "vertex": [],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there
+    },
     "cloudshade": {
         "name": "NaturalWeather/CloudShade", "path": "assets/naturalweather/cloudshade.shader", "id": 7307199000000000103, "program": 1987650103,
         "bundle": "weathercloudshade", "file": "CAB-77656174686572636c6f756473686164", "code": "cloudshade.glsl",
         "fragment": [("_ZBufferParams", 4, False), ("_CloudRight", 4, False), ("_CloudUp", 4, False), ("_CloudAhead", 4, False), ("_CloudCam", 4, False), ("_CloudSun", 4, False),
-                     ("_CloudShadeAt", 4, False), ("_CloudShadeX", 4, False), ("_CloudShadeY", 4, False), ("_CloudShade", 4, False), ("_CloudShadeSun", 4, False), ("_CloudWet", 4, False)],
-        "textures": [("_CloudShadowMap", 2), ("_CameraDepthTexture", 2)],
+                     ("_CloudShadeAt", 4, False), ("_CloudShadeX", 4, False), ("_CloudShadeY", 4, False), ("_CloudShade", 4, False), ("_CloudShadeSun", 4, False), ("_CloudWet", 4, False),
+                     ("_CloudShadeTint", 4, False)],
+        "textures": [("_CloudShadowMap", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2)],   # (the depth picture last: the game's own, not the material's)
         "vertex": [("_CloudSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,
         "blend": (2.0, 3.0),             # what is there is multiplied by twice what it draws: darkened or lightened, nothing added
     },
+    # (Cinema Camera's look: the log curve, the LUT, white balance and the cameras' tools. Its entry was in tools/cine/pack_grade.py
+    # alone until 2026-10-19, so that windows.py never made its Direct3D bundle, grade-windows.bundle, which Luts.cs looks for.)
+    "grade": {
+        "name": "CineCamera/Grade", "path": "assets/cinecamera/grade.shader", "id": 7307199000000000501, "program": 1987650501,
+        "bundle": "cinegrade", "file": "CAB-63696e65677261646500000000000000", "code": "grade.glsl",
+        "fragment": [("_GradeMode", 4, False), ("_GradeBalance", 4, False), ("_GradePeak", 4, False), ("_GradeTool", 4, False)],
+        "textures": [("_GradeLut", 3), ("_GradeScene", 2)],
+        "given": 1,                      # (the picture so far: handed over by the command that draws it)
+        "vertex": [],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there
+    },
+    # Far Ground's: "fargroundpoints", the points of the rings round the camera worked out (Kerbin's own heights and land, written
+    # by research/rendering/lab/kerbinground.swift); "fargrounddraw", the rings drawn as ground; "fargrounddepth", the rings again
+    # into the camera's depth picture, for the air laid over the ground by it; "fargroundlights", EVE's city lights laid on them as
+    # EVE lays them on the game's ground (a cube texture among them: its dimension 4, Unity's Cube).
+    "fargroundpoints": {
+        "name": "FarGround/Points", "path": "assets/farground/points.shader", "id": 7307199000000000601, "program": 1987650601,
+        "bundle": "fargroundpoints", "file": "CAB-66617267726f756e64706f696e747330", "code": "fargroundpoints.glsl",
+        "fragment": FG_RINGS + [("_FGPush", 4, False), ("_KDecals", 4, False), ("_KFlats", 4, False)],
+        "textures": [("_KMap", 2), ("_KTables", 2), ("_KDecalMaps", 2)],
+        "given": 0,                      # (the heights, the noises' tables and the decals' maps are the material's own)
+        "vertex": [("_FGSheet", 4, False)],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),             # written as it is
+    },
+    "fargrounddraw": {
+        "name": "FarGround/Draw", "path": "assets/farground/draw.shader", "id": 7307199000000000602, "program": 1987650602,
+        "bundle": "fargrounddraw", "file": "CAB-66617267726f756e6464726177303030", "code": "fargrounddraw.glsl",
+        "fragment": [("_FGSun", 4, False), ("_FGSunLight", 4, False)] + [("_FGSh" + x, 4, False) for x in "ABCDEFG"]
+                    + [("_FGLook", 4, False), ("_FGTint", 4, False), ("_FGPower", 4, False), ("_FGSteep", 4, False), ("_FGTile", 4, False), ("_FGTile2", 4, False), ("_FGBands", 4, False),
+                       ("_FGFog", 4, False)],
+        "textures": [("_FGPoints", 2), ("_lowTex", 2), ("_midTex", 2), ("_highTex", 2), ("_steepTex", 2), ("_fogColorRamp", 2)],
+        "given": 0,                      # (the ground material's textures are copied onto the far ground's own)
+        "vertex": FG_RINGS + [("_FGCam", 4, False), ("_FGRow0", 4, False), ("_FGRow1", 4, False), ("_FGRow2", 4, False), ("_FGRow3", 4, False), ("_FGPush", 4, False), ("_FGCut", 4, False),
+                              ("_FGAhead", 4, False), ("_FGWorldX", 4, False), ("_FGWorldY", 4, False), ("_FGWorldZ", 4, False), ("_FGTexAt", 4, False), ("_FGFogSun", 4, False),
+                              ("_ProjectionParams", 4, False)],
+        "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,   # (solid ground: the nearest kept, as the game's own)
+        "blend": (10.0, 5.0),            # (as the game's own ground: what was drawn behind it shows through by its alpha, the game's _PlanetOpacity)
+    },
+    "fargrounddepth": {
+        "name": "FarGround/Depth", "path": "assets/farground/depth.shader", "id": 7307199000000000603, "program": 1987650603,
+        "bundle": "fargrounddepth", "file": "CAB-66617267726f756e6464657074683030", "code": "fargrounddepth.glsl",
+        "fragment": [],
+        "textures": [("_FGPoints", 2)],
+        "given": 0,
+        "vertex": FG_RINGS + [("_FGCam", 4, False), ("_FGRow0", 4, False), ("_FGRow1", 4, False), ("_FGRow2", 4, False), ("_FGRow3", 4, False), ("_FGPush", 4, False), ("_FGCut", 4, False),
+                              ("_ProjectionParams", 4, False)],
+        "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,   # (into the camera's depth picture: the nearer kept)
+        "blend": (0.0, 1.0),                         # (the colour left as it is)
+    },
+    "fargroundlights": {
+        "name": "FarGround/Lights", "path": "assets/farground/lights.shader", "id": 7307199000000000604, "program": 1987650604,
+        "bundle": "fargroundlights", "file": "CAB-66617267726f756e646c6967687473", "code": "fargroundlights.glsl",
+        "fragment": [("_FGSun", 4, False), ("_FGCityMask", 4, False), ("_FGCity", 4, False)],
+        "textures": [("_FGPoints", 2), ("_FGCityMap", 4)] + [("_FGCity" + f, 2) for f in ("XN", "XP", "YN", "YP", "ZN", "ZP")] + [("_FGCityDark", 2), ("_FGCityLight", 2)],
+        "given": 0,                      # (EVE's textures copied onto the far ground's own)
+        "vertex": FG_RINGS + [("_FGCam", 4, False), ("_FGRow0", 4, False), ("_FGRow1", 4, False), ("_FGRow2", 4, False), ("_FGRow3", 4, False), ("_FGPush", 4, False), ("_FGCut", 4, False),
+                              ("_ProjectionParams", 4, False)],
+        "cull": 0.0, "ztest": 4.0,       # (on the rings just drawn, at their very places: not in front of anything they are behind)
+        "blend": (5.0, 10.0),            # (over them as EVE's lights are over the game's ground: by their alpha)
+    },
 }
+
+# Copies of the clouds' shader without the weather's rarer features, built from the same text (`constants`: those values made
+# constants of nought, so that the compiler leaves out their code; source_of below). Each feature's code costs the walk even
+# where it does not run, and without them the walk is 35-42 % cheaper for the same picture
+# (research/rendering/experiments/cloud-shader-variants.md). Clouds.cs draws the walk with the copy the sky allows: the whole
+# shader with a cyclone or a tornado near; "storm" with storm cells, lightning, a squall line or heaps made as smoke; "calm"
+# otherwise.
+CLOUDS_STORM_GONE = ["_CloudTwistA", "_CloudTwistB", "_CloudEyeA", "_CloudEyeB", "_CloudEyeC", "_CloudEyeD"]
+CLOUDS_CALM_GONE = CLOUDS_STORM_GONE + ["_CloudShelfA", "_CloudShelfB", "_CloudShelfC", "_CloudFlashA", "_CloudFlashB",
+                                        "_CloudHoleA", "_CloudHoleB", "_CloudHoleC"] + ["_CloudCellA%d" % n for n in range(6)] + ["_CloudCellB%d" % n for n in range(6)]
+for _key, _title, _gone, _n, _file in (("cloudsstorm", "Storm", CLOUDS_STORM_GONE, 111, "CAB-77656174686572636c6f75647374726d"),
+                                       ("cloudscalm", "Calm", CLOUDS_CALM_GONE, 112, "CAB-77656174686572636c6f756463616c6d")):
+    _spec = copy.deepcopy(SHADERS["clouds"])
+    _spec.update(name="NaturalWeather/Clouds" + _title, path="assets/naturalweather/clouds%s.shader" % _title.lower(),
+                 id=7307199000000000000 + _n, program=1987650000 + _n, bundle="weatherclouds" + _title.lower(), file=_file, constants=_gone)
+    _spec["fragment"] = [p for p in _spec["fragment"] if p[0] not in _gone]
+    SHADERS[_key] = _spec
+
+# The smoke's shader as a release build has it: the testing switches (_VolGrid.w, the test views; _VolThin.z, the rounds), which
+# are set only from a development build, held at nought, so that the compiler leaves their code out: the walk 6-13 % cheaper,
+# the picture the same to the bit (research/rendering/experiments/smoke-shader-variants.md). Volumetric Explosions draws with it
+# whenever no testing switch is set (Site.TuneVolume).
+SHADERS["volumerelease"] = copy.deepcopy(SHADERS["volume"])
+SHADERS["volumerelease"].update(name="VolumetricExplosions/VolumeRelease", path="assets/volumetricexplosions/volumerelease.shader",
+                                id=7307199000000000012, program=1987650012, bundle="volumetricexplosionsrelease",
+                                file="CAB-766f6c756d657472696372656c656173", replace=[("_VolGrid.w", "0.0"), ("_VolThin.z", "0.0")])
 
 
 def find(folder, name):
@@ -344,13 +513,30 @@ def fixed_locations(code, textures):
     return (head + placed_in(body, "fragment")).encode("utf-8")
 
 
+def source_of(spec):
+    """A shader's text as packed: its file, and for a copy built from another's text (`constants`), each of those values a
+    constant of nought instead of a uniform, so that the compiler leaves out what they switch on; and (`replace`) a text put
+    for another throughout (a testing switch that is one number of a value with others in it, held at nought). Everything that
+    reads a shader's text (this packer, glcheck_all.py, tools/unityshaders/port.py) reads it here."""
+    code = open(os.path.join(HERE, spec["code"]), "rb").read()
+    for name in spec.get("constants", []):
+        code, n = re.subn(rb"^uniform vec4 " + name.encode() + rb";", b"const vec4 " + name.encode() + b" = vec4(0.0);", code, flags=re.M)
+        if n == 0:
+            raise SystemExit("%s: no uniform %s to make a constant of" % (spec["name"], name))
+    for old, new in spec.get("replace", []):
+        if old.encode() not in code:
+            raise SystemExit("%s: no %s to replace" % (spec["name"], old))
+        code = code.replace(old.encode(), new.encode())
+    return code
+
+
 def build(ksp, out_path, which):
     spec = SHADERS[which]
     NAME, PATH, SHADER_ID, FRAGMENT, TEXTURES = spec["name"], spec["path"], spec["id"], spec["fragment"], spec["textures"]
     VERTEX = spec.get("vertex", globals()["VERTEX"])
     shader, shader_tree, shader_type = pattern(ksp, "makinghistory_scene", 48, lambda v: v["m_ParsedForm"]["m_Name"] == "UnlitAlpha")
     index, index_tree, index_type = pattern(ksp, "serenity.kspexpansion", 142, lambda v: True)
-    code = fixed_locations(open(os.path.join(HERE, spec["code"]), "rb").read(), [t[0] for t in TEXTURES])
+    code = fixed_locations(source_of(spec), [t[0] for t in TEXTURES])
 
     names = ["$Globals"] + [p[0] for p in FRAGMENT + VERTEX] + [t[0] for t in TEXTURES]
     number = {name: n for n, name in enumerate(names)}

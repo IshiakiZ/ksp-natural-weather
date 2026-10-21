@@ -26,10 +26,10 @@ namespace NaturalWeather
     /// </summary>
     static class Weather
     {
-        public const string Version = "0.4.0";
+        public const string Version = "0.5.0";
 
         public static Mod Page;
-        public static Toggle On, Push, Tip, Strike, HailBreaks, Icing, Light, Smoke, Rain, Drops, WetGround, Flashes, Fog, Dust, UseCity;
+        public static Toggle On, Push, Tip, Strike, HailBreaks, Icing, Light, Smoke, Rain, Drops, WetGround, LyingSnow, Flashes, Fog, Dust, Devils, UseCity;
         public static Toggle Kerbin, Duna, Eve, Laythe, Jool, Others;
         public static Choice Chosen;
         public static Slider Often, Pace, Wind, Gusts, Thunder, Patter, Whoosh;
@@ -65,12 +65,14 @@ namespace NaturalWeather
             Rain = Page.Toggle("rain", "Rain, snow, hail", true, "What falls, drawn round the camera: rain, snow, ice pellets and hail.");
             Drops = Page.Toggle("drops", "Drops on the camera", true, "Rain leaves drops on the camera's glass: they sit, run and dry. Off: the glass stays clear.");
             WetGround = Page.Toggle("wetground", "Wet ground", true, "Where rain has fallen the ground is darker and shines, and water stands on level ground until it dries.");
+            LyingSnow = Page.Toggle("snowground", "Lying snow", true, "Where snow has fallen in the last days and it has stayed cold enough, the ground is white: in patches while it is thin, and from a line on the hills, deeper higher up, until it thaws; in a wind, its fine snow drifts along the ground in streamers. Seen from the ground and the air, not from orbit. The white ground on the Mac for now (its shader for Windows is still to be built); the drifting everywhere.");
             Flashes = Page.Toggle("lightning", "Lightning", true);
             Thunder = Page.Slider("thunder", "Thunder", 0.8f, 0f, 1f, "", 2, "How loud the thunder is.");
             Patter = Page.Slider("patter", "Rain's sound", 0.6f, 0f, 1f, "", 2, "How loud the rain is.");
-            Whoosh = Page.Slider("whoosh", "Wind's sound", 0.4f, 0f, 1f, "", 2, "How loud the wind is, near the ground, in gusts.");
+            Whoosh = Page.Slider("whoosh", "Wind's sound", 0.4f, 0f, 1f, "", 2, "How loud the wind is, near the ground, in gusts; and the air rushing past a craft in flight, as hard as it presses on it.");
             Fog = Page.Toggle("fog", "Fog", true);
             Dust = Page.Toggle("dust", "Dust", true, "Dust storms (Duna).");
+            Devils = Page.Toggle("devils", "Dust devils", true, "Whirlwinds of dust on a hot, still afternoon over dry ground: on Duna, and in Kerbin's deserts (with Volumetric Explosions 0.8.0 or later).");
             Page.Heading("A real city's weather");
             UseCity = Page.Toggle("usecity", "Use the city's weather", true, "With a city typed in below, Kerbin's weather round the space centre is that city's, from online.");
             Page.Changed += Apply;
@@ -132,6 +134,7 @@ namespace NaturalWeather
         {
             Instance = this;
             Provider.MainThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
+            Climate.Given();
             Weather.Setup();
             Weather.Page.Panel = Panel.Draw;
         }
@@ -140,13 +143,14 @@ namespace NaturalWeather
         {
             Aero.Start();
             Feed.Start();
-            if (HighLogic.LoadedSceneIsFlight) { gameObject.AddComponent<Rain>(); gameObject.AddComponent<Hail>(); gameObject.AddComponent<Rainbow>(); gameObject.AddComponent<Wet>(); gameObject.AddComponent<Icing>(); }
+            if (HighLogic.LoadedSceneIsFlight) { gameObject.AddComponent<Rain>(); gameObject.AddComponent<Hail>(); gameObject.AddComponent<Rainbow>(); gameObject.AddComponent<Wet>(); gameObject.AddComponent<Snow>(); gameObject.AddComponent<Drift>(); gameObject.AddComponent<Icing>(); }
             gameObject.AddComponent<Lightning>();
         }
 
         void OnDestroy()
         {
             Feed.Stop();
+            Model.WarpRate = 1f;
             if (Instance == this) Instance = null;
             if (Weather.Page != null && Weather.Page.Panel == (Action)Panel.Draw) Weather.Page.Panel = null;
         }
@@ -154,6 +158,7 @@ namespace NaturalWeather
         void Update()
         {
             double ut = Planetarium.GetUniversalTime();
+            Model.WarpRate = TimeWarp.fetch != null ? TimeWarp.CurrentRate : 1f;
             CelestialBody body = Here();
             if (body != null && body.atmosphere) World.Of(body).Keep(ut);
             // (a chosen weather is eased in, and out again, over about three quarters of a minute of the computer's time each

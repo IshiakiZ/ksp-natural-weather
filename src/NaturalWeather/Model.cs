@@ -34,6 +34,11 @@ namespace NaturalWeather
         public float Windy;          // a chosen windy weather: the wind above brought down to the ground, 0 to 1
         public float HeldBreeze;     // a chosen weather's own wind at the ground, m/s: the wind its kind of system blows with (holding it evens out the systems that would have made it)
         public bool Overridden;      // a chosen weather or a city's
+        public float Heat;           // how warm the sun has made the ground, lagging the sun (most in the middle of the afternoon), 0 to 1
+        public float Stab;           // how stable the lowest air is under the lid of sinking air above it, 0 (rising: heaps) to 1 (a strong lid: a deck of cloud under it)
+        public float Usual;          // how much of the usual sky's own low and middle cloud there is (1; a chosen clear sky or dust storm: none)
+        public float Aloft;          // and of its middle cloud (1; a chosen fair sky: a little)
+        public float Low;            // how deep the lows are here, for the wind round them: the wet systems' and the storms' (Lows), 0 to 1
     }
 
     /// <summary>The wind and the roughness of the air over one place, worked out now and then and kept for a moment.</summary>
@@ -78,6 +83,16 @@ namespace NaturalWeather
         // ---------------------------------------------------------------- the settings, as the model reads them
 
         public static volatile float Often = 0.25f;     // how often the weather turns bad, 0 never to 1 stormy
+        public static volatile float TestUsual;          // (for setting one against the other: 1 leaves out the usual sky's own cloud (Usual, Dapple), as until 2026-10-18)
+        // (the cover as until 2026-10-19, without the storms of the middle latitudes, the equator's clusters, the decks off west
+        // coasts in their own regions, and the broken sky's clumps: the new cover is installed since 2026-10-19, 04:19, seen from
+        // orbit against the old (docs/cloud-cover-plan.md); the development build's Probe.Cover("old") brings the old back)
+        public static volatile bool OldCover = false;
+#if DEV
+        // (Development build: Probe.Meridian's view into the usual sky's low cloud at the place last worked out while Probing)
+        internal static bool Probing;
+        internal static float PDeck, POffWest, PSubtropic, PReach, PEast, PLifted;
+#endif
         public static volatile float Pace = 1f;         // how fast it changes
         public static volatile float WindStrength = 1f, GustStrength = 1f;
         public static volatile bool FogOn = true, DustOn = true;     // (off: none anywhere, for every mod that asks)
@@ -108,6 +123,22 @@ namespace NaturalWeather
             return n / Noise.Sqrt((1f - wgt) * (1f - wgt) + wgt * wgt);
         }
 
+        /// <summary>
+        /// How the heaps of a broken sky gather (the new cover): seen from afar a field of cumulus is never even, but clumps of
+        /// clumps, patches tens of kilometres across where the ground or the sea warms more, or where outflows and sea breezes meet,
+        /// with clear sky between, and the clumps gathered again into fields of a couple of hundred kilometres (the satellites'
+        /// pictures: "cloud streets" and cell fields, never an even sprinkling). Two drifting patterns, of about 180 km (changing over
+        /// ten hours) and 45 km (three), give each place a share of the weather's cover from nought to about four times it, about
+        /// four fifths of it on average, so a region keeps nearly the cover the weather gives it. Until 2026-10-19 every place had its region's cover,
+        /// and the far field drew it as an even popcorn the whole world over (the owner: "too even and evenly spaced out").
+        /// </summary>
+        static float Clumps(World w, double lat, double lon, double ut, float driftE)
+        {
+            float fields = Drifting(w, lat, lon, ut, 180000.0, 10.0 * 3600.0, 211u, 1, driftE);
+            float clumps = Drifting(w, lat, lon, ut, 45000.0, 3.0 * 3600.0, 223u, 2, driftE);
+            return 2.8f * Noise.Smooth(-0.1f, 0.3f, fields) * (0.15f + 1.4f * Noise.Smooth(-0.15f, 0.35f, clumps));
+        }
+
         static float Pattern(World w, double lat, double lon, double since, double size, uint seed, float driftE, int octaves)
         {
             double cosLat = Math.Max(0.2, Math.Cos(lat * Deg));
@@ -136,9 +167,24 @@ namespace NaturalWeather
             float a = (float)Math.Abs(lat);
             // (wetter near the equator and in the storm tracks, drier in the subtropics and at the poles)
             float bias = 0.07f * Noise.Bump(a, 0f, 14f) - 0.10f * Noise.Bump(a, 28f, 14f) + 0.06f * Noise.Bump(a, 55f, 16f) - 0.08f * Noise.Smooth(70f, 86f, a);
-            float m = 0.5f + 0.62f * n + bias + (Often - 0.45f) * 0.55f + (c.Wet - 1f) * 0.32f;
+            // (Where the storms of the middle latitudes are (Lows), they are the weather's systems, with their shapes: the noise's
+            // wet and dry regions, which are of one size, much weaker there. Until 2026-10-19 the noise was the systems everywhere,
+            // blobs of one size from pole to pole: from afar, the owner's "too even and evenly spaced out".)
+            float tracks = Lows.Has(w) && !OldCover ? Noise.Bump(a, 52f, 20f) : 0f;
+            float m = 0.5f + 0.62f * n * (1f - 0.55f * tracks) - 0.06f * tracks + bias + (Often - 0.45f) * 0.55f + (c.Wet - 1f) * 0.32f;
             b.M = Noise.Clamp01(m);
+            b.Low = b.M;
             b.Front = Noise.Bump(b.M, 0.6f, 0.085f);
+            // ---- the storms of the middle latitudes: their heads, shields and fronts wet, their dry slots clear, showers behind them
+            float lowWet = 0f, lowFront = 0f, lowDry = 0f, lowCells = 0f, lowDeep = 0f;
+            List<Low> lows = OldCover ? Lows.None : Lows.At(w, ut);
+            for (int i = 0; i < lows.Count; i++) Lows.Of(w, lows[i], lat, lon, ref lowWet, ref lowFront, ref lowDry, ref lowCells, ref lowDeep);
+            if (lowWet > 0.001f || lowDry > 0.001f)
+            {
+                b.M = Math.Min(Math.Max(b.M, lowWet), 1f - 0.8f * lowDry);
+                b.Front = Math.Max(b.Front * (1f - lowDry), lowFront);
+            }
+            b.Low = Math.Max(b.Low, 0.5f + 0.45f * lowDeep);
 
             b.Ground = Math.Max(0f, w.Ground(lat, lon));
             b.Land = w.Land(lat, lon);
@@ -148,6 +194,17 @@ namespace NaturalWeather
             float heat = lag > 0f ? lag * lag * Noise.Smooth(-0.05f, 0.3f, b.SunUp + 0.1f) : 0f;
             float latFactor = (float)Math.Sqrt(Math.Max(0.0, Math.Cos(lat * Deg)));
             b.Inst = Noise.Clamp01(heat * (0.3f + 0.7f * b.Land) * latFactor * c.Cumulus + 0.12f * (1f - b.Land) * (1f - heat));
+            // (and over the warm sea of the equator's rain belt, by day and by night: where the trade winds meet and the air rises in
+            // towers, the cumulonimbus of the observers' tables (6 % of the oceans' sky), most of them in a band a few degrees wide)
+            // (Not an even band: from afar the equator's storms are clusters, each some hundreds of kilometres on the Earth, with
+            // clear sea between, along a line that wanders a few degrees either side (NASA's EPIC views, 2026-10-16): here clusters
+            // about a tenth of the world's radius across, drifting west with the trade winds and coming and going over hours.)
+            float wander = 3.5f * (float)Math.Sin(lon * Deg * 2.0 + 1.7 * Math.Sin(lon * Deg * 5.0 + 0.7) + ut / (5.0 * w.Day));
+            float clusters = Noise.Smooth(0.42f, 0.64f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 0.11 * w.Radius, 3.0 * 3600.0, 71u, 2, -0.8f * c.Trade));
+            if (OldCover) b.Inst = Math.Max(b.Inst, 0.62f * Noise.Bump(a, 0f, 11f) * (1f - b.Land) * c.Cumulus);
+            else b.Inst = Math.Max(b.Inst, 0.62f * Noise.Bump((float)Math.Abs(lat - wander), 0f, 9f) * (1f - b.Land) * c.Cumulus * (0.2f + 0.8f * clusters));
+            // (and behind a storm's cold front, cold air over the warmer sea: showers in cells)
+            if (lowCells > 0.001f) b.Inst = Math.Max(b.Inst, 0.5f * lowCells * (0.35f + 0.65f * (1f - b.Land)) * c.Cumulus);
             double sunrise = -90.0;
             b.Dawn = Noise.Bump((float)(b.Hour - sunrise), 12f, 30f);
             float t = w.Temperature(lat, Math.Max(0f, b.Ground));
@@ -158,6 +215,23 @@ namespace NaturalWeather
             // by how deep the cold air under it is: see Build.)
             b.Nose = b.Front * Noise.Smooth(276f, 272.5f, b.T0);
             b.Calm = 1f; b.WindScale = WindStrength; b.StormBias = 0f;
+            b.Heat = heat; b.Usual = TestUsual == 1f ? 0f : 1f; b.Aloft = 1f;
+            // How stable the lowest air is (roughly what the meteorologists call the lower troposphere's stability: how much
+            // warmer the air three kilometres up is than the air over the sea). Where air sinks from aloft and lies warm over
+            // the cooler sea under it (the subtropical highs, strongest about 20 to 35 degrees, and the cold air of high
+            // latitudes), a lid caps the lowest kilometre and it fills with a sheet of stratocumulus, as over the eastern
+            // oceans for weeks on end; where air rises (the equator's rain belt) or the sea is warm under it, it holds heaps.
+            // Over regions a thousand kilometres or so across that last a couple of days, and the drier the air aloft (the
+            // more it has sunk), the stronger the lid.
+            float region = Drifting(w, lat, lon, ut, 700000.0, 12.0 * 3600.0, 57u, 2, b.DriftE * 0.6f);
+            // (The lid of high latitudes in regions, not a ring round the world: the cold seas' decks come and go with the air over
+            // them, some hundreds of kilometres at a time. As a ring, from afar a white belt at 70 degrees, the same all round.)
+            float polar = OldCover ? 1f : Noise.Smooth(0.38f, 0.62f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 1.6 * Lows.Reach(w), 10.0 * 3600.0, 83u, 2, b.DriftE));
+            // (and, the new cover, in regions of a few hundred kilometres as well, the world's size taken into account as the storms'
+            // are: on a small world the 700 km pattern above is nearly the whole of it, and the lid followed the latitude alone, so
+            // that everything it decides (decks, heaps, deserts) changed along a line of latitude: from afar, straight-edged stripes)
+            float lidHere = OldCover ? 0f : 0.3f * Drifting(w, lat, lon, ut, 1.2 * Lows.Reach(w), 18.0 * 3600.0, 61u, 1, b.DriftE);
+            b.Stab = Noise.Clamp01(0.18f + 0.72f * Noise.Bump(a, 27f, 15f) + 0.4f * Noise.Smooth(50f, 72f, a) * polar - 0.18f * Noise.Bump(a, 0f, 9f) + 0.5f * region + lidHere + 0.45f * (0.45f - b.M));
 
             if (c.Dusty > 0f)
             {
@@ -244,6 +318,9 @@ namespace NaturalWeather
             float still = Noise.Smooth(0.4f, 0.56f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 260000.0, 6.0 * 3600.0, 41u, 2, b.DriftE * 0.5f));
             float damp = Noise.Bump(b.M, 0.55f, 0.21f);
             float radiation = 1.5f * Noise.Smooth(0.5f, 0.8f, b.Land) * (day ? 1f - Noise.Smooth(15f, 50f, since) : Noise.Smooth(0.4f, 0.85f, night)) * damp * still * (1f - Noise.Smooth(250f, 900f, b.Ground));
+            // (the new cover: radiation fog lies in patches, the low and damp places, tens of kilometres across, not in sheets the width
+            // of a continent; as sheets they followed the moisture, which goes with the latitude, and from afar made stripes)
+            if (!OldCover) radiation *= Noise.Smooth(0.42f, 0.62f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 0.25 * Lows.Reach(w), 5.0 * 3600.0, 67u, 1, b.DriftE * 0.3f));
 
             float bank = Noise.Smooth(0.5f, 0.68f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 180000.0, 9.0 * 3600.0, 43u, 3, b.DriftE));
             float ashore = Noise.Bump(b.Land, 0.5f, 0.3f) * (day ? 1f - 0.85f * Noise.Smooth(15f, 60f, since) * (1f - Noise.Smooth(150f, 178f, since)) : 1f);
@@ -372,7 +449,8 @@ namespace NaturalWeather
             float shape = Noise.Smooth(0f, 0.3f, through) * (1f - Noise.Smooth(0.65f, 1f, through));
             float strength = most * shape;
             if (strength <= 0.02f) return false;
-            float radiusM = (float)(2500.0 + 5500.0 * most * (0.6f + 0.8f * Noise.Unit(Noise.Hash(h ^ 0xabcu))));
+            // (a storm's cloud 3 to 17 km in radius as it is strong: until 2026-10-18 at most 8, its anvil and the heaps round it left out)
+            float radiusM = (float)(3000.0 + 8000.0 * most * (0.6f + 0.8f * Noise.Unit(Noise.Hash(h ^ 0xabcu))));
             bool thunder = w.Climate.Lightning > 0f && potential > 0.5f && Noise.Unit(Noise.Hash(h ^ 0x777u)) < 0.85f;
             float baseH = cb.Ground + CumulusBase(cb);
             float top = baseH + 1500f + (thunder ? 1f : 0.55f) * most * Math.Max(0f, w.Climate.Tops - baseH - 1500f);
@@ -585,11 +663,185 @@ namespace NaturalWeather
                 foreach (Region one in regions)
                     if (one != null && one.W == w && one.A == a && one.B == bb && one.T == t) return one.Cells;
             }
+            Region r = MakeRegion(w, a, bb, t, box, ut);
+            RegionAhead(w, a, bb, t + 1, box);
+            return r.Cells;
+        }
+
+        static Region MakeRegion(World w, int a, int bb, long t, double box, double ut)
+        {
             var r = new Region { W = w, A = a, B = bb, T = t };
             double reach = box * 0.75 * Math.PI / 180.0 * w.Radius + 25000.0;
             Cells(w, (a + 0.5) * box, (bb + 0.5) * box, reach, ut, r.Cells);
             lock (cacheLock) { regions[regionNext] = r; regionNext = (regionNext + 1) % regions.Length; }
-            return r.Cells;
+            return r;
+        }
+
+        // (Since 0.5.0: the next stretch of the game's time made ahead on another thread, for a place's region (ten seconds) and its
+        // column (two), so that the frame the clock comes to it in finds it made. Made on the game's thread when first asked for,
+        // each new stretch cost whoever asked first 3 to 15 ms: the lightning every ten seconds, the wind on the craft and the
+        // light under the clouds every two, a hitch each time, and under time warp every few frames (2026-10-20).)
+        static readonly HashSet<string> makingAhead = new HashSet<string>();
+
+        static bool StartAhead(string key)
+        {
+            lock (cacheLock)
+            {
+                if (makingAhead.Contains(key) || makingAhead.Count >= 6) return false;
+                makingAhead.Add(key);
+                return true;
+            }
+        }
+
+        static void RegionAhead(World w, int a, int bb, long t, double box)
+        {
+            lock (cacheLock)
+                foreach (Region one in regions)
+                    if (one != null && one.W == w && one.A == a && one.B == bb && one.T == t) return;
+            string key = "r " + w.Name + " " + a + " " + bb + " " + t;
+            if (!StartAhead(key)) return;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { MakeRegion(w, a, bb, t, box, t * 10.0); }
+                catch (Exception) { }
+                finally { lock (cacheLock) makingAhead.Remove(key); }
+            });
+        }
+
+        static void ColumnAhead(World w, double qLat, double qLon, double qUt)
+        {
+            lock (cacheLock)
+                for (int n = 0; n < cache.Length; n++)
+                {
+                    Column one = cache[n];
+                    if (one != null && one.W == w && one.Lat == qLat && one.Lon == qLon && one.Ut == qUt) return;
+                }
+            string key = "c " + w.Name + " " + qLat + " " + qLon + " " + qUt;
+            if (!StartAhead(key)) return;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    Column col = Make(w, qLat, qLon, qUt);
+                    lock (cacheLock) { cache[cacheNext] = col; cacheNext = (cacheNext + 1) % cache.Length; }
+                }
+                catch (Exception) { }
+                finally { lock (cacheLock) makingAhead.Remove(key); }
+            });
+        }
+
+        /// <summary>
+        /// The usual sky's low cloud: what the lowest kilometre or two holds on most days, wet system or none. Over the sea there
+        /// is low cloud nine times in ten, and the commonest kind on Earth is the flat one: stratocumulus covers 22 % of the
+        /// oceans' sky averaged over the year, cumulus 13 %, stratus 13 %; over land 12, 5 and 5 % (Warren, Eastman and Hahn,
+        /// "Clouds: climatology", 2014, from the observers' reports, table 3). Until 2026-10-18 a sky with no wet system over it
+        /// was clear but for the sun's heaps, and Kerbin was under cloud 15 % of the time where Earth is 64 % (Probe.Climate);
+        /// the owner: "the clouds are way too tiny ... the atmosphere feels way too small".
+        /// Over the sea, by how stable the lowest air is (Base.Stab): the heaps of the trade winds (a fifth to a third of the sky,
+        /// bases about 600 m, tops wherever the lid is, deeper the less of one there is), heaps under a breaking sheet, then a
+        /// deck, thinned by the afternoon's sun (it is thickest before dawn), in cold air a low grey sheet. Over land: by day
+        /// the sun's heaps (bases 1 to 2 km, higher the drier); towards evening their tops spread into pads as the heaps under
+        /// them die; by night clear, or a low sheet where the air is damp; nothing over dry land under a strong lid (deserts).
+        /// </summary>
+        static CloudLayer Usual(World w, double lat, double lon, double ut, ref Base b)
+        {
+            var l = new CloudLayer();
+            Climate c = w.Climate;
+            if (b.Usual <= 0.001f || c.Water <= 0f || c.Wet < 0.5f) return l;      // (worlds whose air holds no water to speak of: none)
+            float a = (float)Math.Abs(lat), hour = (float)b.Hour;
+            float sea = 1f - b.Land;
+            // ---- the sea's
+            // (Decks of stratocumulus lie over the cool sea off the west coasts in the subtropics (off Peru and Chile, south-west Africa,
+            // California: hundreds of kilometres of cells, breaking into heaps further out), and over the cool seas of high latitudes;
+            // over the open subtropical sea the air sinks clear but for small heaps. Until 2026-10-19 a deck lay wherever the lid was
+            // strong, over every subtropical sea alike: from afar a belt of grey round the world.)
+            // (how far out to sea a deck reaches goes from place to place and day to day: twice as far here as there, never a band)
+            float reach = (float)Lows.Reach(w) * (0.55f + 0.9f * Noise.Clamp01(0.5f + 0.6f * Drifting(w, lat, lon, ut, 1.2 * Lows.Reach(w), 18.0 * 3600.0, 97u, 2, b.DriftE)));
+            float eastLand = w.EastLand(lat, lon);
+            float offWest = Noise.Smooth(1.8f * reach, 0.4f * reach, eastLand);
+            float subtropic = Noise.Smooth(6f, 14f, a) * (1f - Noise.Smooth(38f, 46f, a));
+            float deck = Noise.Smooth(0.42f, 0.75f, b.Stab) * (OldCover ? 1f : 1f - subtropic * (1f - offWest));
+            // (the new cover: and only in some regions of a stable band, a few hundred kilometres each, as the real decks lie in their
+            // own basins and come and go over days: the band's lid alone, strong from 20 to 35 degrees everywhere, made one deck the
+            // band's whole length)
+            if (!OldCover) deck *= Noise.Smooth(0.35f, 0.6f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 1.5 * Lows.Reach(w), 30.0 * 3600.0, 71u, 1, b.DriftE));
+            float lifted = Noise.Clamp01((1f - b.Stab) * Noise.Smooth(0.25f, 0.7f, b.M));       // (how freely heaps grow)
+#if DEV
+            if (Probing) { PDeck = deck; POffWest = offWest; PSubtropic = subtropic; PReach = reach; PEast = eastLand; PLifted = lifted; }
+#endif
+            var s = new CloudLayer();
+            if (deck >= 0.5f)
+            {
+                bool cold = b.T0 < 291f && b.Stab > 0.55f;                        // (a cool sea under a lid, in the middle and high latitudes: a low grey sheet)
+                s.Kind = cold ? CloudKind.Stratus : CloudKind.Stratocumulus;
+                s.Cover = (0.75f + 0.22f * Noise.Smooth(0.55f, 0.95f, b.Stab)) * (1f - 0.18f * b.Heat);
+                // (the new cover: a deck is closed cells, nearly whole, by the coast and in its heart, and breaks into open cells and
+                // then heaps towards its edges and further out to sea (the decks' westward break-up off California and Peru), so the
+                // broken part gathers into clumps and its edge is ragged. Whole to its edges, as before, a deck ended along a line
+                // of latitude: from afar a straight-edged stripe)
+                if (!OldCover) s.Cover *= 0.45f + 0.55f * Noise.Smooth(0.5f, 0.9f, deck) * (subtropic > 0.01f ? Noise.Smooth(1.6f * reach, 0.3f * reach, eastLand) : 1f);
+                s.Base = b.Ground + (cold ? 250f + 250f * (1f - b.M) : 380f + 450f * (1f - deck) + 300f * (1f - b.M));
+                s.Top = s.Base + (cold ? 300f : 220f + 380f * Noise.Smooth(0.3f, 0.8f, b.M));
+                s.Water = 0.15f;
+            }
+            else
+            {
+                s.Kind = CloudKind.Cumulus;
+                // (heaps under a breaking sheet nearer a deck; few in air that has sunk dry: the clear blue sea between systems)
+                s.Cover = (0.18f + 0.15f * lifted + 0.3f * deck) * (0.35f + 0.65f * Noise.Smooth(0.15f, 0.4f, b.M));
+                s.Base = b.Ground + 450f + 350f * (1f - b.M);
+                // (up to the trade winds' lid, 1.5 to 2.5 km up: heaps a kilometre or two deep and as wide again, deeper still in the
+                // equator's rain belt; shallower under a strong lid. At 450 m deep in dry air, as first written, they were a field of
+                // small flat puffs)
+                s.Top = s.Base + (900f + 1300f * (1f - b.Stab) * (0.4f + 0.6f * Noise.Smooth(0.2f, 0.6f, b.M))) * (1f - 0.5f * deck) + 1600f * lifted * Noise.Bump(a, 0f, 12f);
+                s.Water = 0.15f + 0.5f * Noise.Clamp01((s.Top - s.Base) / 3000f);
+            }
+            // ---- the land's
+            var g = new CloudLayer();
+            float desert = Noise.Smooth(0.55f, 0.8f, b.Stab) * Noise.Smooth(0.45f, 0.25f, b.M);
+            float evening = Noise.Smooth(40f, 75f, hour) * (1f - Noise.Smooth(115f, 140f, hour));
+            float byDay = Noise.Smooth(0.05f, 0.35f, b.Heat);
+            float heaps = (0.15f + 0.35f * Noise.Smooth(0.15f, 0.6f, b.M)) * byDay * (1f - 0.6f * evening);
+            float pads = (0.3f + 0.4f * Noise.Smooth(0.3f, 0.7f, b.M)) * evening;
+            // (a sheet by night where the air is damp, and by day too under a strong lid, where the sun cannot break it up: the grey
+            // days of winter in the middle latitudes)
+            float sheet = Math.Max(Noise.Smooth(0.38f, 0.7f, b.M) * 0.8f * (1f - byDay), 0.7f * Noise.Smooth(0.5f, 0.8f, b.Stab) * Noise.Smooth(0.3f, 0.6f, b.M) * Noise.Smooth(25f, 45f, a));
+            float landBase = b.Ground + 700f + 800f * (1f - b.M);
+            if (heaps >= pads && heaps >= sheet)
+            {
+                float unsettled = b.Heat * Noise.Smooth(0.35f, 0.75f, b.M);
+                g.Kind = CloudKind.Cumulus; g.Cover = heaps; g.Base = landBase;
+                g.Top = g.Base + 400f + 900f * b.Heat * Noise.Smooth(0.15f, 0.5f, b.M) + 1500f * unsettled + 1800f * Noise.Smooth(0.5f, 0.85f, unsettled);
+                g.Water = 0.15f + 0.5f * Noise.Clamp01((g.Top - g.Base) / 3000f);
+            }
+            else if (pads >= sheet)
+            {
+                g.Kind = CloudKind.Stratocumulus; g.Cover = pads; g.Base = landBase - 100f; g.Top = g.Base + 250f + 250f * b.M; g.Water = 0.1f;
+            }
+            else
+            {
+                g.Kind = b.M > 0.62f ? CloudKind.Stratus : CloudKind.Stratocumulus; g.Cover = sheet;
+                g.Base = b.Ground + 350f + 500f * (1f - b.M); g.Top = g.Base + 300f + 300f * b.M; g.Water = 0.15f;
+            }
+            g.Cover *= 1f - desert;
+            // ---- by how much of the place is sea (on a coast, the larger of the two)
+            l = sea >= 0.5f ? s : g;
+            l.Cover = Math.Max(s.Cover * sea, g.Cover * (1f - sea)) * b.Usual * Noise.Clamp01(c.Wet);
+            if (l.Cover < 0.01f) { l.Kind = CloudKind.None; l.Cover = 0f; }
+            return l;
+        }
+
+        /// <summary>The dappled sky's cover: altocumulus in fields a few hundred kilometres across wherever the air aloft is
+        /// damp enough, more of it towards a wet system: 18 % of the oceans' sky and 17 % of the land's, the observers' commonest
+        /// kind after stratocumulus (as Usual). Until 2026-10-18 the middle sky had cloud only in a wet system: 2 % of Kerbin's.</summary>
+        static float Dapple(World w, double lat, double lon, double ut, ref Base b)
+        {
+            if (b.Usual <= 0.001f || w.Climate.Wet < 0.5f) return 0f;
+            float field = Drifting(w, lat, lon, ut, 240000.0, 4.0 * 3600.0, 61u, 3, b.DriftE * 1.5f);
+            // (in patches with edges, not a thin dapple everywhere: seen from far off, cloud spread thinly over the whole world was a
+            // planet of grey fleece, where Earth's is gathered into systems with the blue sea between them. Some 12 % of the sky, not
+            // the observers' 18 %, while the shader draws its elements as small shaded puffs: a sky full of them reads as tiny)
+            return Noise.Smooth(0.1f, 0.35f, field + 0.8f * (b.M - 0.42f)) * 0.75f * b.Usual * b.Aloft;
         }
 
         public static WeatherHere Build(World w, double lat, double lon, double ut, ref Base b, List<WeatherCell> cells)
@@ -625,6 +877,17 @@ namespace NaturalWeather
                 here.Low.Water = 0.15f + 0.5f * Noise.Clamp01((here.Low.Top - here.Low.Base) / 3000f);
             }
             if (here.Low.Cover < 0.01f) { here.Low.Kind = CloudKind.None; here.Low.Cover = 0f; }
+            // ---- the usual sky's own low cloud, where the weather's is less (see Usual)
+            if (here.Low.Kind != CloudKind.Nimbostratus)
+            {
+                CloudLayer usual = Usual(w, lat, lon, ut, ref b);
+                if (usual.Cover > here.Low.Cover) here.Low = usual;
+            }
+            // ---- (the new cover) a broken sky's heaps gathered into clumps, and the clumps into fields, with clear sky between
+            if (!OldCover && (here.Low.Kind == CloudKind.Cumulus || here.Low.Kind == CloudKind.Stratocumulus) && here.Low.Cover < 0.85f)
+                here.Low.Cover = Math.Min(0.95f, here.Low.Cover * Clumps(w, lat, lon, ut, b.DriftE));
+            here.Low.Cover *= c.Low;
+            if (here.Low.Cover < 0.01f) { here.Low.Kind = CloudKind.None; here.Low.Cover = 0f; }
             // ---- the middle and high layers
             float mid = Noise.Smooth(0.5f, 0.76f, b.M) * 0.9f;
             here.Middle.Kind = mid > 0.55f ? CloudKind.Altostratus : CloudKind.Altocumulus;
@@ -633,7 +896,23 @@ namespace NaturalWeather
             here.Middle.Top = here.Middle.Base + 1200f + 1800f * wet;
             here.Middle.Water = 0.3f * wet;
             if (mid < 0.01f) { here.Middle.Kind = CloudKind.None; here.Middle.Cover = 0f; }
+            float dapple = Dapple(w, lat, lon, ut, ref b);
+            if (dapple > here.Middle.Cover)
+            {
+                // (higher in the tropics, where the whole of the weather stands higher: some 5 km over the equator, 2.6 km from 35 degrees)
+                // (where it is thick and the air damp, the grey sheet of altostratus: a wet system's coming)
+                bool sheetAloft = dapple > 0.6f && b.M > 0.68f;
+                here.Middle.Kind = sheetAloft ? CloudKind.Altostratus : CloudKind.Altocumulus; here.Middle.Cover = dapple;
+                here.Middle.Base = Math.Max(b.Ground + 2000f, (2600f + 2200f * Noise.Bump((float)Math.Abs(lat), 0f, 35f)) * tops);
+                here.Middle.Top = here.Middle.Base + (sheetAloft ? 900f + 1200f * wet : 300f + 500f * dapple); here.Middle.Water = sheetAloft ? 0.2f : 0.1f;
+            }
             float cirrus = Noise.Smooth(0.4f, 0.62f, b.M) * 0.55f + 0.3f * Noise.Clamp01(Drifting(w, lat, lon, ut, 120000.0, 2.0 * 3600.0, 31u, 2, b.DriftE * 2f) * 1.5f - 0.2f);
+            // (more over land, 22 % of its sky against 12 % of the sea's (the observers' table), and over the equator's rain belt,
+            // where the storms' anvils spread into it)
+            cirrus += (0.14f * b.Land + 0.15f * Noise.Bump((float)Math.Abs(lat), 0f, 14f)) * b.Usual * Noise.Smooth(0.15f, 0.45f, b.M);
+            here.Middle.Cover *= c.Middle;
+            if (here.Middle.Cover < 0.01f) { here.Middle.Kind = CloudKind.None; here.Middle.Cover = 0f; }
+            cirrus *= c.High;
             here.High.Kind = cirrus > 0.01f ? CloudKind.Cirrus : CloudKind.None;
             here.High.Cover = Noise.Clamp01(cirrus);
             here.High.Base = Math.Max(b.Ground + 4000f, 7500f * tops);
@@ -644,8 +923,13 @@ namespace NaturalWeather
             {
                 here.Middle.Kind = CloudKind.Altostratus; here.Middle.Cover = Math.Max(here.Middle.Cover, c.Deck);
                 here.Middle.Base = c.DeckBase; here.Middle.Top = c.DeckTop; here.Middle.Water = 0.6f;
-                if (w.Name == "Eve" && here.Low.Cover < 0.5f) { here.Low.Kind = CloudKind.Stratus; here.Low.Cover = 0.5f; here.Low.Base = 1500f; here.Low.Top = 3500f; here.Low.Water = 0.4f; }
-                if (w.Name == "Jool") { here.Low.Kind = CloudKind.Stratus; here.Low.Cover = 1f; here.Low.Base = 0f; here.Low.Top = 15000f; here.Low.Water = 0.8f; }
+                // (and under it a low sheet of the world's own, where it has one: Eve's 1.5 to 3.5 km over half the sky at least,
+                // Jool's from the bottom of its air everywhere. Until 0.5.0 by their names: Real Worlds' Venus, in Eve's place, had
+                // Eve's low sheet under its own deck 48 to 70 km up)
+                if (c.UnderDeck > 0f && (c.UnderDeck >= 1f || here.Low.Cover < c.UnderDeck))
+                {
+                    here.Low.Kind = CloudKind.Stratus; here.Low.Cover = c.UnderDeck; here.Low.Base = c.UnderDeckBase; here.Low.Top = c.UnderDeckTop; here.Low.Water = c.UnderDeckWater;
+                }
             }
             // ---- a cyclone: its wall and bands are storm cloud to the top of the weather, the rest of it rain cloud; over all of it
             // a canopy of ice; its eye open to the sky, with a little low cloud on its floor
@@ -758,6 +1042,8 @@ namespace NaturalWeather
 
         // ---------------------------------------------------------------- the wind
 
+        /// <summary>How fast time is warped (set on the game's thread every frame by the weather's driver).</summary>
+        internal static float WarpRate = 1f;
         static readonly object cacheLock = new object();
         static readonly Column[] cache = new Column[64];
         static int cacheNext;
@@ -766,21 +1052,37 @@ namespace NaturalWeather
         public static Column ColumnAt(World w, double lat, double lon, double ut)
         {
             double qLat = Math.Round(lat * 20.0) / 20.0, qLon = Math.Round(lon * 20.0) / 20.0, qUt = Math.Floor(ut / 2.0) * 2.0;
+            Column found = null, older = null;
             lock (cacheLock)
             {
                 for (int n = 0; n < cache.Length; n++)
                 {
                     Column one = cache[n];
-                    if (one != null && one.W == w && one.Lat == qLat && one.Lon == qLon && one.Ut == qUt) return one;
+                    if (one == null || one.W != w || one.Lat != qLat || one.Lon != qLon) continue;
+                    if (one.Ut == qUt) { found = one; break; }
+                    if (one.Ut < qUt && (older == null || one.Ut > older.Ut)) older = one;
                 }
             }
-            Column col = Make(w, qLat, qLon, qUt);
-            lock (cacheLock)
+            // (Since 0.5.0, under time warp, on the game's thread: the newest column made for the place, if it is no more than a
+            // quarter of a second's worth of the warp old, while the one asked for is made on another thread. At x1000 every frame
+            // is sixteen seconds of the game's time and so a new column for every place asked about, ten of them in a frame on
+            // the game's thread, 12 to 28 ms (2026-10-20); the weather of a place moves little in that quarter of a second.)
+            if (found == null && older != null && WarpRate > 4f && qUt - older.Ut <= WarpRate * 0.25 && Provider.OnMain)
             {
-                cache[cacheNext] = col;
-                cacheNext = (cacheNext + 1) % cache.Length;
+                ColumnAhead(w, qLat, qLon, qUt);
+                return older;
             }
-            return col;
+            if (found == null)
+            {
+                found = Make(w, qLat, qLon, qUt);
+                lock (cacheLock)
+                {
+                    cache[cacheNext] = found;
+                    cacheNext = (cacheNext + 1) % cache.Length;
+                }
+            }
+            ColumnAhead(w, qLat, qLon, qUt + 2.0);
+            return found;
         }
 
         /// <summary>Forget what is kept (when a setting has changed).</summary>
@@ -804,8 +1106,8 @@ namespace NaturalWeather
             // ---- the systems' own wind: round the wet lows, as the turning of the world makes it (and straight into them near the equator)
             const double step = 40000.0;
             double dLat = step / w.Radius / Deg, dLon = dLat / Math.Max(0.2, Math.Cos(lat * Deg));
-            float mE = Sample(w, lat, lon + dLon, ut).M - Sample(w, lat, lon - dLon, ut).M;
-            float mN = Sample(w, lat + dLat, lon, ut).M - Sample(w, lat - dLat, lon, ut).M;
+            float mE = Sample(w, lat, lon + dLon, ut).Low - Sample(w, lat, lon - dLon, ut).Low;
+            float mN = Sample(w, lat + dLat, lon, ut).Low - Sample(w, lat - dLat, lon, ut).Low;
             float gE = mE / (float)(2.0 * step / 100000.0), gN = mN / (float)(2.0 * step / 100000.0);       // per 100 km
             float s = (float)Math.Sin(lat * Deg);
             float turn = Noise.Smooth(0.08f, 0.35f, Math.Abs(s));
