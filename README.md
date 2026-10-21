@@ -56,7 +56,7 @@ In the Keystone window: the keystone button on the game's toolbar, or Alt-K (Opt
 
 ## Works on
 
-Mac: tried. Windows 11 (Direct3D 11 and OpenGL): this version tried (fair, cloudy and stormy skies, the shadows, lying snow, the drops on the glass, towering heaps, a thin layer from inside it; with Scatterer and EVE). Linux: never run.
+Mac: tried. Windows 11 (Direct3D 11 and OpenGL): 0.5.0 tried (fair, cloudy and stormy skies, the shadows, lying snow, the drops on the glass, towering heaps, a thin layer from inside it; with Scatterer and EVE); 0.5.1's mend (C# only) not yet. Linux: never run.
 
 **More:** [the long description](https://github.com/IshiakiZ/ksp-natural-weather/wiki/The-long-description) (everything in full, and what
 was tried on each system) and the rest of the [wiki](https://github.com/IshiakiZ/ksp-natural-weather/wiki).

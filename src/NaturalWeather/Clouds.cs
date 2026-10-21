@@ -632,6 +632,9 @@ namespace NaturalWeather
             Undim();
             Detach(far); Detach(near);
             Free(far); Free(near);
+            ShadowAloneOff();
+            if (nearShadow != null) Destroy(nearShadow);
+            if (nearShade != null) nearShade.Release();
             if (laying != null) Destroy(laying);
             if (layNothing != null) Destroy(layNothing);
             Shader.SetGlobalVector(idOthers, Vector4.zero);
@@ -691,6 +694,7 @@ namespace NaturalWeather
         void Off(string said, bool eveBack = true)
         {
             if (far.On || near.On) { Detach(far); Detach(near); }
+            ShadowAloneOff();
             // (EVE's clouds back only where these will not be drawn for a while: switched off, hiding EVE's switched off, no shader,
             // another scene or world, the map view. Through a pause (the map getting ready after a load, no near camera) or with no
             // cloud within sight they stay hidden: brought back, EVE's stock clouds stood in a sky this weather has clear, the
@@ -1689,8 +1693,12 @@ namespace NaturalWeather
             const float nearReach = 450f;
             bool nearWanted = split && alt > shellBottom - nearReach && alt < shellTop + nearReach;
             Setup(far, farCam, split ? farCam.nearClipPlane * 0.98f : 0f, 0f, quality, shadows, true, Common, body, camFixed, ToFixed, shadowMidScene, sunUp, clear, first);
-            if (nearWanted) Setup(near, nearCam, 0f, nearCam.farClipPlane * 1.02f, quality, shadows, false, Common, body, camFixed, ToFixed, shadowMidScene, sunUp, clear, false);
-            else if (near.On) Detach(near);
+            if (nearWanted) { ShadowAloneOff(); Setup(near, nearCam, 0f, nearCam.farClipPlane * 1.02f, quality, shadows, false, Common, body, camFixed, ToFixed, shadowMidScene, sunUp, clear, false); }
+            else
+            {
+                if (near.On) Detach(near);
+                ShadowAlone(split ? nearCam : null, shadows, body, shadowMidScene, sunUp);
+            }
             Mark("each camera");
             Laying(farCam, nearCam);
             Drawing = true;
@@ -1766,6 +1774,106 @@ namespace NaturalWeather
         // (the sixteen pixels a quarter-size walk's dot stands for, in Bayer's order: each frame's lines go through the one whose
         // number is the frame's, so that any four frames running cover the dot evenly)
         static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+
+        /// <summary>
+        /// The clouds' shadow laid on what a camera has drawn, into its pass (cloudshade.glsl): the scene is drawn with the sun dimmed
+        /// by the cloud above the craft (BeforeCamera), and each pixel's light is put right for the cloud above its own place,
+        /// darker in a shadow the craft is not in, lighter in a gap of sunlight when the craft is in shade.
+        /// </summary>
+        void LayShadow(Material s, CommandBuffer into, Camera cam, CelestialBody body, Vector3d shadowMidScene, float sunUp, bool makesShadow, RenderTexture histD)
+        {
+            bool depth = (cam.depthTextureMode & DepthTextureMode.Depth) != 0;
+            float tanY = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad), tanX = tanY * cam.aspect;
+            Vector3 r = cam.transform.right * tanX, u = cam.transform.up * tanY, f = cam.transform.forward;
+            Vector3d camRelScene = (Vector3d)cam.transform.position - body.position;
+            s.SetVector(idSheet, new Vector4(1f, 1f, 0.5f, 1f));
+            s.SetVector(idRight, new Vector4(r.x, r.y, r.z, depth ? 1f : 0f));
+            s.SetVector(idUp, new Vector4(u.x, u.y, u.z, 0f));
+            s.SetVector(idAhead, new Vector4(f.x, f.y, f.z, SystemInfo.usesReversedZBuffer ? 1f : 0f));
+            s.SetVector(idCam, new Vector4((float)camRelScene.x, (float)camRelScene.y, (float)camRelScene.z, (float)body.Radius));
+            s.SetVector(idSun, sunNow);
+            s.SetVector(idShadeAt, new Vector4((float)shadowMidScene.x, (float)shadowMidScene.y, (float)shadowMidScene.z, (float)shadowSide));
+            Vector3 sx = SceneOfFixed(body, shadowX), sy = SceneOfFixed(body, shadowY);
+            s.SetVector(idShadeX, new Vector4(sx.x, sx.y, sx.z, groundHeight));
+            s.SetVector(idShadeY, sy);
+            // (how much brighter the sun makes what faces it than the sky alone does: less with the sun low, when the air has
+            // dimmed it and the sky's share is larger)
+            float sunOverSky = 1.25f * Mathf.Clamp01(sunUp * 2.5f + 0.15f);
+            // (A far shadow fades into the light the craft is in, to half at 30 km: on and near the ground, ground further off
+            // is under more air and the craft's own light is the better guess there.)
+            // (From above all the clouds the walk lays each heap's shadow itself, per pixel (clouds.glsl, "the clouds' shadows
+            // on the ground"): the square's is left off there, faded to nothing, so that nothing is shaded twice.)
+            float camHigh = (float)(camRelScene.magnitude - body.Radius);
+            // (how far the camera is above all the clouds, as the walk has it (clouds.glsl, aboveness): 0 within 100 m over the
+            // shell's top, 1 from 1100 m over it. The square's shadow is weighted by one less this, the walk's own by this, so that
+            // between the two nothing is shaded twice or not at all. Left off at a step 500 m over the top, as until 2026-10-18,
+            // it went out in one frame while the walk's came in over a kilometre.)
+            float above = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(shellTopNow + 100f, shellTopNow + 1100f, camHigh));
+            s.SetVector(idShade, new Vector4(sunOverSky, 30000f, makesShadow ? cam.nearClipPlane * 0.98f : 0f, makesShadow ? 1e9f : cam.farClipPlane * 1.02f));
+            s.SetVector(idShadeSun, new Vector4(sunDim, body.ocean ? 1f : 0f, above, 0f));
+#if DEV
+            s.SetVector(idShadeTint, TestNoTint ? new Vector4(1f, 1f, 1f, 0f) : shadeTint);
+            TintSaid = "tint " + shadeTint.x.ToString("F2") + ", " + shadeTint.y.ToString("F2") + ", " + shadeTint.z.ToString("F2") + (TestNoTint ? " (held off)" : "") + "; above the clouds " + above.ToString("F2");
+#else
+            s.SetVector(idShadeTint, shadeTint);
+#endif
+            // (and wet ground is darker ground, as far as the wet is known round the camera: Wet.cs)
+            s.SetVector("_CloudWet", new Vector4(Weather.WetGround ? Wet.Ground : 0f, 2500f, 0f, 0f));
+            s.SetTexture(idShadowMap, shadowMap);
+            // (and this camera's clouds as taken together this frame, made before this pass: from above the clouds, how much
+            // the walk's own shadow takes from the land, which this pass tints)
+            s.SetTexture(idHistD, histD != null ? (Texture)histD : Texture2D.blackTexture);
+            into.DrawMesh(sheet, Matrix4x4.identity, s, 0, 0);
+            // (And the same shadow handed to what is drawn after this pass and cannot be shaded by it: Natural Ocean's sea,
+            // drawn after Scatterer copies the picture, which reads the shadow at each point of its surface for its sun's
+            // glitter and light (ocean.glsl). In the world's own axes, from the pass that makes the shadow, once a frame.)
+            if (makesShadow)
+            {
+                Vector3d mid = body.position + shadowMidScene;
+                Shader.SetGlobalTexture(idWeatherShadowMap, shadowMap);
+                Shader.SetGlobalVector(idWeatherShadowAt, new Vector4((float)mid.x, (float)mid.y, (float)mid.z, (float)shadowSide));
+                Shader.SetGlobalVector(idWeatherShadowX, new Vector4(sx.x, sx.y, sx.z, groundHeight));
+                Shader.SetGlobalVector(idWeatherShadowY, new Vector4(sy.x, sy.y, sy.z, 0f));
+                Shader.SetGlobalVector(idWeatherShadowCentre, new Vector4((float)body.position.x, (float)body.position.y, (float)body.position.z, (float)body.Radius));
+                Shader.SetGlobalVector(idWeatherShadowFade, new Vector4(sunDim, 30000f, above, 0f));
+                Shader.SetGlobalVector(idWeatherShadowSun, new Vector4(sunNow.x, sunNow.y, sunNow.z, 1f));
+            }
+        }
+
+        // ---- the near camera's shadow alone (2026-10-21). Its shadow is laid by the near camera's clouds' pass, which is drawn only
+        // within 450 m of the clouds (Setup); below that the near camera laid none. The scene's sun is dimmed for both cameras by the
+        // cloud above the craft, and only the far camera's ground was put right: with the craft under a heap, the ground within 400 m
+        // of the camera stayed dimmed all over while beyond it the sunlit land came back, a straight edge across the picture where
+        // the two cameras meet (up to 85 levels of 255 in a climb from the pad; and a heap's shadow within 400 m was not laid at all).
+        // research/rendering/experiments/near-far-seam.md.
+        Material nearShadow;
+        CommandBuffer nearShade;
+        Camera nearShadeCam;
+        bool nearShadeAskedDepth;
+
+        void ShadowAlone(Camera cam, bool shadows, CelestialBody body, Vector3d shadowMidScene, float sunUp)
+        {
+            if (cam == null || !shadows || shadowMap == null || shadeShader == null) { ShadowAloneOff(); return; }
+            if (nearShadow == null)
+            {
+                nearShadow = new Material(shadeShader) { name = "Natural Weather: shadow laid on (near, alone)" };
+                nearShade = new CommandBuffer { name = "Natural Weather: clouds' shadow (near, alone)" };
+            }
+            if (nearShadeCam != cam) { ShadowAloneOff(); cam.AddCommandBuffer(CameraEvent.AfterForwardOpaque, nearShade); nearShadeCam = cam; }
+            if ((cam.depthTextureMode & DepthTextureMode.Depth) == 0) { cam.depthTextureMode |= DepthTextureMode.Depth; nearShadeAskedDepth = true; }
+            nearShade.Clear();
+            LayShadow(nearShadow, nearShade, cam, body, shadowMidScene, sunUp, false, null);
+        }
+
+        void ShadowAloneOff()
+        {
+            if (nearShadeCam != null)
+            {
+                if (nearShade != null) nearShadeCam.RemoveCommandBuffer(CameraEvent.AfterForwardOpaque, nearShade);
+                if (nearShadeAskedDepth) nearShadeCam.depthTextureMode &= ~DepthTextureMode.Depth;
+            }
+            nearShadeCam = null; nearShadeAskedDepth = false;
+        }
 
         void Setup(Pass p, Camera cam, float from, float to, int quality, bool shadows, bool makesShadow, CommonValues common, CelestialBody body, Vector3d camFixed, Turn toFixed, Vector3d shadowMidScene, float sunUp, float clear, bool first)
         {
@@ -1948,63 +2056,7 @@ namespace NaturalWeather
 
             // the shadow, before anything see-through is drawn
             p.Shade.Clear();
-            if (shadows && shadowMap != null)
-            {
-                Material s = p.Shadow;
-                Vector3d camRelScene = (Vector3d)cam.transform.position - body.position;
-                s.SetVector(idSheet, new Vector4(1f, 1f, 0.5f, 1f));
-                s.SetVector(idRight, new Vector4(r.x, r.y, r.z, depth ? 1f : 0f));
-                s.SetVector(idUp, new Vector4(u.x, u.y, u.z, 0f));
-                s.SetVector(idAhead, new Vector4(f.x, f.y, f.z, SystemInfo.usesReversedZBuffer ? 1f : 0f));
-                s.SetVector(idCam, new Vector4((float)camRelScene.x, (float)camRelScene.y, (float)camRelScene.z, (float)body.Radius));
-                s.SetVector(idSun, sunNow);
-                s.SetVector(idShadeAt, new Vector4((float)shadowMidScene.x, (float)shadowMidScene.y, (float)shadowMidScene.z, (float)shadowSide));
-                Vector3 sx = SceneOfFixed(body, shadowX), sy = SceneOfFixed(body, shadowY);
-                s.SetVector(idShadeX, new Vector4(sx.x, sx.y, sx.z, groundHeight));
-                s.SetVector(idShadeY, sy);
-                // (how much brighter the sun makes what faces it than the sky alone does: less with the sun low, when the air has
-                // dimmed it and the sky's share is larger)
-                float sunOverSky = 1.25f * Mathf.Clamp01(sunUp * 2.5f + 0.15f);
-                // (A far shadow fades into the light the craft is in, to half at 30 km: on and near the ground, ground further off
-                // is under more air and the craft's own light is the better guess there.)
-                // (From above all the clouds the walk lays each heap's shadow itself, per pixel (clouds.glsl, "the clouds' shadows
-                // on the ground"): the square's is left off there, faded to nothing, so that nothing is shaded twice.)
-                float camHigh = (float)(camRelScene.magnitude - body.Radius);
-                // (how far the camera is above all the clouds, as the walk has it (clouds.glsl, aboveness): 0 within 100 m over the
-                // shell's top, 1 from 1100 m over it. The square's shadow is weighted by one less this, the walk's own by this, so that
-                // between the two nothing is shaded twice or not at all. Left off at a step 500 m over the top, as until 2026-10-18,
-                // it went out in one frame while the walk's came in over a kilometre.)
-                float above = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(shellTopNow + 100f, shellTopNow + 1100f, camHigh));
-                s.SetVector(idShade, new Vector4(sunOverSky, 30000f, makesShadow ? cam.nearClipPlane * 0.98f : 0f, makesShadow ? 1e9f : cam.farClipPlane * 1.02f));
-                s.SetVector(idShadeSun, new Vector4(sunDim, body.ocean ? 1f : 0f, above, 0f));
-#if DEV
-                s.SetVector(idShadeTint, TestNoTint ? new Vector4(1f, 1f, 1f, 0f) : shadeTint);
-                TintSaid = "tint " + shadeTint.x.ToString("F2") + ", " + shadeTint.y.ToString("F2") + ", " + shadeTint.z.ToString("F2") + (TestNoTint ? " (held off)" : "") + "; above the clouds " + above.ToString("F2");
-#else
-                s.SetVector(idShadeTint, shadeTint);
-#endif
-                // (and wet ground is darker ground, as far as the wet is known round the camera: Wet.cs)
-                s.SetVector("_CloudWet", new Vector4(Weather.WetGround ? Wet.Ground : 0f, 2500f, 0f, 0f));
-                s.SetTexture(idShadowMap, shadowMap);
-                // (and this camera's clouds as taken together this frame, made before this pass: from above the clouds, how much
-                // the walk's own shadow takes from the land, which this pass tints)
-                s.SetTexture(idHistD, histDOut);
-                p.Shade.DrawMesh(sheet, Matrix4x4.identity, s, 0, 0);
-                // (And the same shadow handed to what is drawn after this pass and cannot be shaded by it: Natural Ocean's sea,
-                // drawn after Scatterer copies the picture, which reads the shadow at each point of its surface for its sun's
-                // glitter and light (ocean.glsl). In the world's own axes, from the pass that makes the shadow, once a frame.)
-                if (makesShadow)
-                {
-                    Vector3d mid = body.position + shadowMidScene;
-                    Shader.SetGlobalTexture(idWeatherShadowMap, shadowMap);
-                    Shader.SetGlobalVector(idWeatherShadowAt, new Vector4((float)mid.x, (float)mid.y, (float)mid.z, (float)shadowSide));
-                    Shader.SetGlobalVector(idWeatherShadowX, new Vector4(sx.x, sx.y, sx.z, groundHeight));
-                    Shader.SetGlobalVector(idWeatherShadowY, new Vector4(sy.x, sy.y, sy.z, 0f));
-                    Shader.SetGlobalVector(idWeatherShadowCentre, new Vector4((float)body.position.x, (float)body.position.y, (float)body.position.z, (float)body.Radius));
-                    Shader.SetGlobalVector(idWeatherShadowFade, new Vector4(sunDim, 30000f, above, 0f));
-                    Shader.SetGlobalVector(idWeatherShadowSun, new Vector4(sunNow.x, sunNow.y, sunNow.z, 1f));
-                }
-            }
+            if (shadows && shadowMap != null) LayShadow(p.Shadow, p.Shade, cam, body, shadowMidScene, sunUp, makesShadow, histDOut);
             else if (makesShadow) Shader.SetGlobalVector(idWeatherShadowSun, Vector4.zero);
             if (!p.On)
             {

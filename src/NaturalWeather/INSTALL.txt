@@ -42,9 +42,10 @@ KNOWN FAULTS
 
 WHERE IT WORKS
   Made and tried on a Mac. Its clouds are shaders of its own, packed for the game's OpenGL
-  and built for Direct3D. This version was tried on Windows 11 (Direct3D 11 and OpenGL, with
+  and built for Direct3D. 0.5.0 was tried on Windows 11 (Direct3D 11 and OpenGL, with
   Scatterer and EVE): fair, cloudy and stormy skies over the pad, the clouds' shadows, lying
   snow, the drops on the glass, towering heaps, a thin layer seen from inside it, alike on
-  both. Nobody has run it on Linux yet.
+  both. 0.5.1's mend (C#, no shader changed) has run on the Mac only so far. Nobody has run
+  it on Linux yet.
 
 Everything else: https://github.com/IshiakiZ/ksp-natural-weather
