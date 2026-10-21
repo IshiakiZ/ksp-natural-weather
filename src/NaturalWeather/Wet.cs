@@ -8,8 +8,9 @@ namespace NaturalWeather
     /// <summary>
     /// What rain leaves behind it: the ground wet (darker, which is done where the clouds' shadow is laid on; a mirror of
     /// the sky seen along it, and water standing on level ground, which are done here) and drops on the camera's glass.
-    /// One pass over the near camera's finished picture (tools/shaderpack/wet.glsl), put on only while there is something
-    /// for it to draw.
+    /// Two passes over the near camera's picture with the one shader (tools/shaderpack/wet.glsl), put on only while there
+    /// is something for them to draw: the ground's with the solid things, before anything see-through is drawn; the glass's
+    /// over the finished picture.
     ///
     /// How wet. The ground is wetted by rain in seconds (a heavy shower) to minutes (drizzle) and dries in a quarter of an
     /// hour; water gathers on level ground while it rains hard enough and drains and dries in ten minutes after. The
@@ -48,6 +49,10 @@ namespace NaturalWeather
         Material material;
         CommandBuffer pass;
         Camera on;
+        // (the ground's part, with the solid things: see BeforeCamera; and what leaves out the other half of the shader in each)
+        CommandBuffer groundPass;
+        MaterialPropertyBlock glassLeftOut, groundLeftOut;
+        static readonly int idGround = Shader.PropertyToID("_WetGround"), idGlass = Shader.PropertyToID("_WetGlass");
 
         // (where the wet is known for, and when it was last brought up to date)
         string body = "";
@@ -99,6 +104,7 @@ namespace NaturalWeather
         void Off()
         {
             if (on != null && pass != null) on.RemoveCommandBuffer(CameraEvent.AfterForwardAlpha, pass);
+            if (on != null && groundPass != null) on.RemoveCommandBuffer(CameraEvent.AfterForwardOpaque, groundPass);
             on = null;
         }
 
@@ -108,6 +114,7 @@ namespace NaturalWeather
             if (instance == this) instance = null;
             Off();
             if (pass != null) { pass.Release(); pass = null; }
+            if (groundPass != null) { groundPass.Release(); groundPass = null; }
             if (material != null) Destroy(material);
             if (dropMaterial != null) Destroy(dropMaterial);
             drops.Dispose();
@@ -194,8 +201,14 @@ namespace NaturalWeather
             if (wanted && !tried) LoadShader();
             if (!wanted || shader == null) { Off(); return; }
             if (material == null) material = new Material(shader) { name = "Natural Weather: rain on the glass and the ground" };
-            if (pass == null) pass = new CommandBuffer { name = "Natural Weather: rain on the glass and the ground" };
-            if (on != cam) { Off(); cam.AddCommandBuffer(CameraEvent.AfterForwardAlpha, pass); on = cam; }
+            if (pass == null) pass = new CommandBuffer { name = "Natural Weather: rain on the glass" };
+            if (groundPass == null)
+            {
+                groundPass = new CommandBuffer { name = "Natural Weather: rain on the ground" };
+                glassLeftOut = new MaterialPropertyBlock(); glassLeftOut.SetVector(idGlass, Vector4.zero);
+                groundLeftOut = new MaterialPropertyBlock(); groundLeftOut.SetVector(idGround, Vector4.zero);
+            }
+            if (on != cam) { Off(); cam.AddCommandBuffer(CameraEvent.AfterForwardOpaque, groundPass); cam.AddCommandBuffer(CameraEvent.AfterForwardAlpha, pass); on = cam; }
             drawGround = ground; drawPuddles = puddles; drawGlass = glass; drawRain = rainNow * under;
         }
 
@@ -364,7 +377,7 @@ namespace NaturalWeather
         /// </summary>
         void BeforeCamera(Camera cam)
         {
-            if (cam == null || cam != on || pass == null || material == null) return;
+            if (cam == null || cam != on || pass == null || groundPass == null || material == null) return;
             StepDrops(cam);
             CelestialBody b = FlightGlobals.currentMainBody;
             if (b == null) return;
@@ -411,6 +424,7 @@ namespace NaturalWeather
             light = light.sqrMagnitude > 1e-4f ? light.normalized : Vector2.up;
             material.SetVector("_WetSun", new Vector4(light.x, light.y, sunStrong, 0f));
             pass.Clear();
+            groundPass.Clear();
             // (the drops first, into their own picture of how high the water stands: half the picture's size)
             bool dropsDrawn = drops.Count > 0 && dropShader != null;
             if (dropsDrawn)
@@ -421,11 +435,28 @@ namespace NaturalWeather
                 material.SetVector(idDropsSize, new Vector4(1f / drops.Picture.width, 1f / drops.Picture.height, Drops.Tall / drops.Picture.height, 1f));
             }
             else material.SetVector(idDropsSize, Vector4.zero);
-            pass.GetTemporaryRT(idScene, -1, -1, 0, FilterMode.Bilinear, RenderTextureFormat.DefaultHDR);
-            pass.Blit(BuiltinRenderTextureType.CameraTarget, idScene);
-            pass.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
-            pass.DrawMesh(sheet, Matrix4x4.identity, material, 0, 0);
-            pass.ReleaseTemporaryRT(idScene);
+            // The ground's half with the solid things, so that smoke, flame, spray and the sea are drawn over its pools as over
+            // the ground itself, and the haze and the rain's veil laid on them as on it (straight after the solid things, as the
+            // clouds' shadow is: Scatterer copies the picture after that and lays its haze on from the copy before anything
+            // see-through is drawn, wiping what came between); the glass's over all of it. (One pass over the finished
+            // picture, as until 2026-10-21, found the ground by the depth picture, which nothing see-through is in, and laid
+            // the pools' mirror over whatever stood in front of it: a burst's fire over wet ground in a storm had the pools
+            // behind it drawn across its lower part, rows of flat blocks in the sky's grey, and in the fire's own colour with
+            // drops ringing them; the owner's "rectangles and squares showing through the fire and smoke", 2026-10-21.
+            // research/rendering/experiments/fire-slabs.md. The pools now mirror what is drawn before them, the sky and the
+            // far camera's picture, not a fire in front of the near camera.)
+            if (ground > 0.01f) Lay(groundPass, glassLeftOut);
+            if (glass > 0.5f) Lay(pass, groundLeftOut);
+        }
+
+        /// <summary>The picture so far copied, and the shader laid over it with one of its halves left out.</summary>
+        void Lay(CommandBuffer into, MaterialPropertyBlock leftOut)
+        {
+            into.GetTemporaryRT(idScene, -1, -1, 0, FilterMode.Bilinear, RenderTextureFormat.DefaultHDR);
+            into.Blit(BuiltinRenderTextureType.CameraTarget, idScene);
+            into.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
+            into.DrawMesh(sheet, Matrix4x4.identity, material, 0, 0, leftOut);
+            into.ReleaseTemporaryRT(idScene);
         }
     }
 }
