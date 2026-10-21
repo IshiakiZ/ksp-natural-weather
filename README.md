@@ -3,9 +3,9 @@
 Weather that is seen and felt: wind on craft and smoke, clouds that dim the sun, rain and snow, lightning and
 thunder, fog and dust storms, hurricanes.
 
-![Heaps over the pad, clouds from 11 km and from orbit, a hurricane, lightning, rain, snow, fog](src/NaturalWeather/img/natural-weather-tour.jpg)
+![Towering heaps over the pad, heaps from 11 km, Kerbin's weather from 160 km, a hurricane from above, lightning by the pad at night, rain, snow, fog](src/NaturalWeather/img/natural-weather-tour.jpg)
 
-![Lightning strikes beside the launch pad at night](src/NaturalWeather/img/natural-weather-lightning.gif)
+![Rain on the lens, then a hurricane's gust: the drops torn away, a rocket blown over on the pad, its fire and smoke blown off (the fire is Volumetric Explosions')](src/NaturalWeather/img/natural-weather-storm.gif)
 
 For Kerbal Space Program 1.12.x. **Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.9 or later**, a separate download
 ([on SpaceDock](https://spacedock.info/mod/4665/Keystone)): this mod does not load without it.
@@ -35,6 +35,8 @@ goes with the wind; dust devils) and HarmonyKSP (the wind moves craft).
 * **Launch weather** (a go / no go and a three-hour forecast), or **a real city's weather** at the space centre.
 
 ![Raindrops on the camera](src/NaturalWeather/img/natural-weather-drops.gif)
+
+![Lightning strikes beside the launch pad at night](src/NaturalWeather/img/natural-weather-lightning.gif)
 
 ## Install
 
