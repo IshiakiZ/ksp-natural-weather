@@ -5,7 +5,7 @@ using UnityEngine;
 
 #if !DEV
 [assembly: KSPAssembly("NaturalWeather", 0, 2)]
-[assembly: KSPAssemblyDependency("Keystone", 0, 7)]
+[assembly: KSPAssemblyDependency("Keystone", 0, 10)]
 #endif
 
 namespace NaturalWeather
@@ -26,20 +26,39 @@ namespace NaturalWeather
     /// </summary>
     static class Weather
     {
-        public const string Version = "0.5.2";
+        public const string Version = "0.6.0";
 
         public static Mod Page;
-        public static Toggle On, Push, Tip, Strike, HailBreaks, Icing, Light, Smoke, Rain, Drops, WetGround, LyingSnow, Flashes, Fog, Dust, Devils, UseCity;
+        public static Toggle On, Push, Tip, Strike, HailBreaks, Icing, Light, Smoke, Rain, Drops, WetGround, LyingSnow, Flashes, Fog, Dust, Devils, UseCity, Doppler, Booms;
         public static Toggle Kerbin, Duna, Eve, Laythe, Jool, Others;
         public static Choice Chosen;
+        public static Hotkey CentreKey;
         public static Slider Often, Pace, Wind, Gusts, Thunder, Patter, Whoosh;
         static readonly Provider provider = new Provider();
+
+        /// <summary>
+        /// Whether there is a flight to draw the weather in: the game's FlightGlobals.ready, and also the frame or so it has that false
+        /// while it gives the controls to another craft near by (a switch, a docking), the new craft already in place. Taken at its
+        /// word, every switch had one frame with no clouds of these and EVE's own layer shown in their place, the thin wisps of a
+        /// clear sky: a flash (found 2026-10-24 with the Aeris 4A and its pilot on the runway; mended 2026-10-25).
+        /// </summary>
+        public static bool FlightReady
+        {
+            get
+            {
+                if (FlightGlobals.ready) { readyFrame = Time.frameCount; return true; }
+                Vessel v = FlightGlobals.ActiveVessel;
+                return HighLogic.LoadedSceneIsFlight && Time.frameCount - readyFrame <= 5 && v != null && v.loaded && v.mainBody != null;
+            }
+        }
+        static int readyFrame = -100;
 
         public static void Setup()
         {
             if (Page != null && Kit.Find("Natural Weather") == Page) return;
             Page = Kit.Register("Natural Weather", Version, "Weather that is seen and felt: wind and gusts on craft and smoke, cloud and rain, storms and lightning, fog and dust, the same for every mod; a launch go / no go with a forecast; a real city's weather if you like.");
             On = Page.Toggle("on", "Natural Weather", true, "Off: still air and clear skies everywhere, as the game has it.");
+            CentreKey = Page.Hotkey("centrekey", "Weather centre", KeyCode.Y, true, "Opens and shuts the weather centre: the weather here as a forecaster sees it, a map with satellite, radar, the pressure and fronts, lightning and the storms' paths, the forecast, the air above, and the storms of note.");
             Page.Heading("The weather");
             Chosen = Page.Choice("weather", "Weather", 0, Model.Choices, "As it comes, or one kind held everywhere (eased in over a minute or two): for pictures, or for practising a crosswind landing.");
             Often = Page.Slider("often", "Bad weather", 0.25f, 0f, 1f, "", 2, "How often the weather turns bad: 0 never, 0.25 mostly fair (as installed), 0.5 like a temperate coast, 1 stormy.");
@@ -70,6 +89,8 @@ namespace NaturalWeather
             Thunder = Page.Slider("thunder", "Thunder", 0.8f, 0f, 1f, "", 2, "How loud the thunder is.");
             Patter = Page.Slider("patter", "Rain's sound", 0.6f, 0f, 1f, "", 2, "How loud the rain is.");
             Whoosh = Page.Slider("whoosh", "Wind's sound", 0.4f, 0f, 1f, "", 2, "How loud the wind is, near the ground, in gusts; and the air rushing past a craft in flight, as hard as it presses on it.");
+            Doppler = Page.Toggle("doppler", "Doppler", true, "A passing craft's sounds come in higher and fall away lower, by how fast it comes and goes against the speed of sound. A camera going with the craft hears it unchanged.");
+            Booms = Page.Toggle("booms", "Sonic booms", true, "Where a craft faster than sound sweeps its cone of shock over the camera, the boom: its double crack, as loud as the craft is long against how far off it passes, dulled with distance. A camera going with the craft hears none, as a pilot does.");
             Fog = Page.Toggle("fog", "Fog", true);
             Dust = Page.Toggle("dust", "Dust", true, "Dust storms (Duna).");
             Devils = Page.Toggle("devils", "Dust devils", true, "Whirlwinds of dust on a hot, still afternoon over dry ground: on Duna, and in Kerbin's deserts (with Volumetric Explosions 0.8.0 or later).");
@@ -143,7 +164,7 @@ namespace NaturalWeather
         {
             Aero.Start();
             Feed.Start();
-            if (HighLogic.LoadedSceneIsFlight) { gameObject.AddComponent<Rain>(); gameObject.AddComponent<Hail>(); gameObject.AddComponent<Rainbow>(); gameObject.AddComponent<Wet>(); gameObject.AddComponent<Snow>(); gameObject.AddComponent<Drift>(); gameObject.AddComponent<Icing>(); }
+            if (HighLogic.LoadedSceneIsFlight) { gameObject.AddComponent<Rain>(); gameObject.AddComponent<Hail>(); gameObject.AddComponent<Rainbow>(); gameObject.AddComponent<Wet>(); gameObject.AddComponent<Snow>(); gameObject.AddComponent<Drift>(); gameObject.AddComponent<Icing>(); gameObject.AddComponent<AirSound>(); }
             gameObject.AddComponent<Lightning>();
         }
 
@@ -182,6 +203,7 @@ namespace NaturalWeather
             Feed.Start();
             Launch.Tick();
             City.Tick();
+            Centre.Tick();
             if (Time.realtimeSinceStartup > statusAt) { statusAt = Time.realtimeSinceStartup + 0.5f; Weather.Status = Describe(); }
         }
 

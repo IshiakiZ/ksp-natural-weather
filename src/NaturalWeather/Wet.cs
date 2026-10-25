@@ -145,7 +145,7 @@ namespace NaturalWeather
         {
             Camera cam = FlightCamera.fetch != null ? FlightCamera.fetch.mainCamera : null;
             CelestialBody b = FlightGlobals.currentMainBody;
-            bool flight = HighLogic.LoadedSceneIsFlight && FlightGlobals.ready && cam != null && b != null && !MapView.MapIsEnabled;
+            bool flight = HighLogic.LoadedSceneIsFlight && Weather.FlightReady && cam != null && b != null && !MapView.MapIsEnabled;
             bool weather = flight && b.atmosphere && Weather.On && Model.Allowed(b);
             if (!weather) { Ground = Puddles = Glass = 0f; at = double.NaN; Off(); Report = ""; return; }
             Vector3 camPos = cam.transform.position;

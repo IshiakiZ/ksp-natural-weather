@@ -68,7 +68,7 @@ namespace NaturalWeather
 
         void FixedUpdate()
         {
-            bool on = HighLogic.LoadedSceneIsFlight && FlightGlobals.ready && Weather.On != null && Weather.On && Weather.Icing != null && Weather.Icing;
+            bool on = HighLogic.LoadedSceneIsFlight && Weather.FlightReady && Weather.On != null && Weather.On && Weather.Icing != null && Weather.Icing;
             if (!on) { craft.Clear(); Now = 0f; Building = false; Report = ""; return; }
             float dt = TimeWarp.fixedDeltaTime;
             double ut = Planetarium.GetUniversalTime();

@@ -146,7 +146,7 @@ namespace NaturalWeather
             lastSlot = slot;
         }
 
-        static WeatherFlash Make(CelestialBody body, World w, WeatherCell c, double time, uint h)
+        internal static WeatherFlash Make(CelestialBody body, World w, WeatherCell c, double time, uint h)
         {
             float angle = 6.2831853f * Noise.Unit(Noise.Hash(h ^ 0x11u)), reach = c.Radius * 0.7f * Noise.Sqrt(Noise.Unit(Noise.Hash(h ^ 0x12u)));
             double dn = reach * Math.Cos(angle), de = reach * Math.Sin(angle);
@@ -469,6 +469,19 @@ namespace NaturalWeather
             if (loud < 0.01f) return;
             int seed = b.F.Seed;
             float delay = nearest / 343f;
+            // (since 0.6.0, where the mod has its recordings: a real clap within a kilometre and a half, a far rumble beyond, in
+            // place of the rumble made from the bolt's own shape; see Recordings)
+            List<AudioClip> recorded = Recordings.Starting(nearest < 1500f ? "thunder-near-" : "thunder-far-");
+            if (recorded.Count > 0)
+            {
+                AudioSource voice = Voice();
+                if (voice.clip != null && voice.clip.name == "thunder") Destroy(voice.clip);
+                voice.clip = recorded[(seed & 0x7FFFFFFF) % recorded.Count];
+                voice.volume = loud;
+                voice.pitch = 0.92f + 0.12f * (((seed >> 8) & 0xFF) / 255f);
+                voice.PlayDelayed(delay);
+                return;
+            }
             Task<float[]> made = Task.Run(() => Rumble(dist, len, wt, nearest, seed));
             StartCoroutine(PlayWhenMade(made, delay, loud));
         }
@@ -480,11 +493,12 @@ namespace NaturalWeather
             if (made.IsFaulted || made.Result == null) yield break;
             float[] samples = made.Result;
             AudioSource voice = Voice();
-            if (voice.clip != null) Destroy(voice.clip);
+            if (voice.clip != null && voice.clip.name == "thunder") Destroy(voice.clip);      // (a made one; a recording is kept)
             AudioClip clip = AudioClip.Create("thunder", samples.Length, 1, Rate, false);
             clip.SetData(samples, 0);
             voice.clip = clip;
             voice.volume = loud;
+            voice.pitch = 1f;
             voice.PlayDelayed(Mathf.Max(0f, delay - (Time.realtimeSinceStartup - asked)));
         }
 

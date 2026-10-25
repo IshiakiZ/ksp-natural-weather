@@ -272,10 +272,14 @@ namespace NaturalWeather
             public bool AskedDepth, On;
             /// <summary>When in the camera's drawing the clouds are laid on (see Setup, "first").</summary>
             public CameraEvent When = CameraEvent.BeforeForwardAlpha;
+            /// <summary>When the clouds' own pictures are made (see EarlyFor).</summary>
+            public CameraEvent EarlyWhen = CameraEvent.AfterDepthTexture;
             // where the camera was last frame (the planet's axes), and how it looked
             public Vector3d PrevAt;
             public Vector3 PrevRight, PrevUp, PrevAhead;
             public bool HavePrev;
+            /// <summary>Frames since the camera last jumped (or first looked): see where the frames are taken together.</summary>
+            public int SinceCut;
             public string PrevBody = "";
         }
 
@@ -666,11 +670,21 @@ namespace NaturalWeather
                 if (p.Draw != null) p.Cam.RemoveCommandBuffer(p.When, p.Draw);
                 if (p.After != null) p.Cam.RemoveCommandBuffer(CameraEvent.AfterForwardAlpha, p.After);
                 if (p.Shade != null) p.Cam.RemoveCommandBuffer(CameraEvent.AfterForwardOpaque, p.Shade);
-                if (p.Early != null) p.Cam.RemoveCommandBuffer(CameraEvent.AfterDepthTexture, p.Early);
+                if (p.Early != null) p.Cam.RemoveCommandBuffer(p.EarlyWhen, p.Early);
                 if (p.AskedDepth) p.Cam.depthTextureMode &= ~DepthTextureMode.Depth;
             }
             p.Cam = null; p.AskedDepth = false; p.On = false; p.HavePrev = false;
         }
+
+        /// <summary>
+        /// When in a camera's drawing the clouds' own pictures are made (Pass.Early): once its depth picture is made. Under deferred
+        /// shading (as the Deferred mod has the game's cameras draw) no depth picture is made of its own, the depth coming with the
+        /// G-buffer, and a buffer hung after one is never run: the clouds' pictures were never made, and read as no light through,
+        /// the sky and everything far off black (Natural Weather issue #1; seen on the PC with Deferred 1.3.5, 2026-10-24). There
+        /// the depth is ready before the lighting, and the picture drawn into after it is the lighting's own.
+        /// </summary>
+        static CameraEvent EarlyFor(Camera cam) =>
+            cam.actualRenderingPath == RenderingPath.DeferredShading ? CameraEvent.BeforeLighting : CameraEvent.AfterDepthTexture;
 
         static void Free(Pass p)
         {
@@ -880,6 +894,7 @@ namespace NaturalWeather
             }
 #endif
             if (cam == null || !Drawing || sunDim >= 0.999f || (!Names.Is(cam, "Camera 01") && !Names.Is(cam, "Camera 00"))) return;
+            if (!DimsFor(cam)) { Undim(); return; }
             Light sun = Sun.Instance != null ? Sun.Instance.sunLight : null;
             if (sun == null) return;
             if (dimmed == null) { dimmed = sun; dimmedFrom = sun.intensity; sun.intensity = dimmedFrom * sunDim; }
@@ -889,6 +904,15 @@ namespace NaturalWeather
         {
             if (cam != null && Names.Is(cam, "Camera 00")) Undim();
         }
+
+        /// <summary>
+        /// Whether the scene's sun is dimmed for a camera by the cloud over the craft, the clouds' shadow then putting each place
+        /// right (BeforeCamera, LayShadow). Not under deferred shading (as the Deferred mod draws): there the light on the ground comes
+        /// almost all from the sun, and the shadow, which puts each place right as the game's own shaders share the light between
+        /// the sun and the sky, could not give it back: under any cloud's shade the ground went dark all over (seen on the PC with
+        /// Deferred 1.3.5, 2026-10-24). There the sun is left as it is, and the shadow laid on place by place.
+        /// </summary>
+        static bool DimsFor(Camera cam) => cam.actualRenderingPath != RenderingPath.DeferredShading;
 
         void Undim()
         {
@@ -1000,7 +1024,7 @@ namespace NaturalWeather
 
         void LateUpdate()
         {
-            bool waits = HighLogic.LoadedSceneIsFlight && FlightGlobals.ready && !MapView.MapIsEnabled;
+            bool waits = HighLogic.LoadedSceneIsFlight && Weather.FlightReady && !MapView.MapIsEnabled;
 #if DEV
             if (due || !waits) traceWho = "LateUpdate";
 #endif
@@ -1048,13 +1072,13 @@ namespace NaturalWeather
             // over the land in the far ground's high views, 2026-10-20 14:00, the dark blotches of the owner's crops.)
             if (heldOff)
             {
-                CelestialBody held = HighLogic.LoadedSceneIsFlight && FlightGlobals.ready ? FlightGlobals.currentMainBody : null;
+                CelestialBody held = HighLogic.LoadedSceneIsFlight && Weather.FlightReady ? FlightGlobals.currentMainBody : null;
                 if (held != null && CloudsPage.HideEve != null && CloudsPage.HideEve) CloudsEve.Hide(held);
                 Off("Clouds held off (development build).", false);
                 return;
             }
 #endif
-            if (!CloudsPage.Wanted || !HighLogic.LoadedSceneIsFlight || !FlightGlobals.ready || MapView.MapIsEnabled) { Off(""); return; }
+            if (!CloudsPage.Wanted || !HighLogic.LoadedSceneIsFlight || !Weather.FlightReady || MapView.MapIsEnabled) { Off(""); return; }
             CelestialBody body = FlightGlobals.currentMainBody;
             if (!CloudSource.Worth(body)) { Off(CloudSource.WhyNot(body)); return; }
             if (!tried) LoadShaders();
@@ -1773,6 +1797,9 @@ namespace NaturalWeather
 
         // (the sixteen pixels a quarter-size walk's dot stands for, in Bayer's order: each frame's lines go through the one whose
         // number is the frame's, so that any four frames running cover the dot evenly)
+        /// <summary>A point of the R2 sequence, each of its two numbers from -0.5 to 0.5: spread as evenly as any over the first few, and never the same.</summary>
+        static Vector2 SubDot(int n) => new Vector2((float)((0.5 + n * 0.7548776662) % 1.0) - 0.5f, (float)((0.5 + n * 0.5698402910) % 1.0) - 0.5f);
+
         static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
 
         /// <summary>
@@ -1810,7 +1837,9 @@ namespace NaturalWeather
             // it went out in one frame while the walk's came in over a kilometre.)
             float above = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(shellTopNow + 100f, shellTopNow + 1100f, camHigh));
             s.SetVector(idShade, new Vector4(sunOverSky, 30000f, makesShadow ? cam.nearClipPlane * 0.98f : 0f, makesShadow ? 1e9f : cam.farClipPlane * 1.02f));
-            s.SetVector(idShadeSun, new Vector4(sunDim, body.ocean ? 1f : 0f, above, 0f));
+            // (what the game's sun was dimmed by for this camera: nothing under deferred shading, see DimsFor)
+            float dimmedBy = DimsFor(cam) ? sunDim : 1f;
+            s.SetVector(idShadeSun, new Vector4(dimmedBy, body.ocean ? 1f : 0f, above, 0f));
 #if DEV
             s.SetVector(idShadeTint, TestNoTint ? new Vector4(1f, 1f, 1f, 0f) : shadeTint);
             TintSaid = "tint " + shadeTint.x.ToString("F2") + ", " + shadeTint.y.ToString("F2") + ", " + shadeTint.z.ToString("F2") + (TestNoTint ? " (held off)" : "") + "; above the clouds " + above.ToString("F2");
@@ -1835,7 +1864,7 @@ namespace NaturalWeather
                 Shader.SetGlobalVector(idWeatherShadowX, new Vector4(sx.x, sx.y, sx.z, groundHeight));
                 Shader.SetGlobalVector(idWeatherShadowY, new Vector4(sy.x, sy.y, sy.z, 0f));
                 Shader.SetGlobalVector(idWeatherShadowCentre, new Vector4((float)body.position.x, (float)body.position.y, (float)body.position.z, (float)body.Radius));
-                Shader.SetGlobalVector(idWeatherShadowFade, new Vector4(sunDim, 30000f, above, 0f));
+                Shader.SetGlobalVector(idWeatherShadowFade, new Vector4(dimmedBy, 30000f, above, 0f));
                 Shader.SetGlobalVector(idWeatherShadowSun, new Vector4(sunNow.x, sunNow.y, sunNow.z, 1f));
             }
         }
@@ -1932,16 +1961,22 @@ namespace NaturalWeather
             p.Together.SetVector(idStage, new Vector4(3f, frame % 64, from, to));
             // (which of the four pixels this frame's lines go through: the two on one diagonal, then the two on the other; of sixteen,
             // in Bayer's order; and, w, how much finer a kept dot is than the walk's)
+            // (And each round of them moved by a point of the R2 sequence within half a kept dot, since 2026-10-21: each kept dot's own line
+            // went through its middle every time, and a crisp edge was a stair of whole dots, notched, where a heap stood against the sky
+            // (the main chat's pictures; the owner, of blackrack's clouds, "way better"). Seen at more places within each dot over the
+            // frames, as the picture's other taking-together does, the edge is smooth and the grain within less, in the lab.)
             Vector4 jitter = Vector4.zero;
             if (finer && div == 2)
             {
                 int turn = frame & 3;
-                jitter = new Vector4((turn == 0 || turn == 3 ? -0.25f : 0.25f) / w, (turn == 0 || turn == 2 ? -0.25f : 0.25f) / h, 1f, 0.5f);
+                Vector2 sub = SubDot(frame >> 2) * 0.5f;
+                jitter = new Vector4(((turn == 0 || turn == 3 ? -0.25f : 0.25f) + sub.x * 0.5f) / w, ((turn == 0 || turn == 2 ? -0.25f : 0.25f) + sub.y * 0.5f) / h, 1f, 0.5f);
             }
             else if (finer)
             {
                 int k = Array.IndexOf(Bayer4, frame & 15);
-                jitter = new Vector4(((k % 4 + 0.5f) / 4f - 0.5f) / w, ((k / 4 + 0.5f) / 4f - 0.5f) / h, 1f, 0.25f);
+                Vector2 sub = SubDot(frame >> 4) * 0.5f;
+                jitter = new Vector4(((k % 4 + 0.5f + sub.x) / 4f - 0.5f) / w, ((k / 4 + 0.5f + sub.y) / 4f - 0.5f) / h, 1f, 0.25f);
             }
             p.Walk.SetVector("_CloudJitter", jitter);
             p.Together.SetVector("_CloudJitter", jitter);
@@ -1951,7 +1986,21 @@ namespace NaturalWeather
             bool usable = p.HavePrev && p.PrevBody == body.bodyName && (camFixed - p.PrevAt).magnitude < 5000.0;
             Vector3d moved = camFixed - p.PrevAt;
             p.Together.SetVector(idPrevAt, new Vector4((float)moved.x, (float)moved.y, (float)moved.z, usable ? 1f : 0f));
-            p.Together.SetVector(idPrevRight, new Vector4(p.PrevRight.x, p.PrevRight.y, p.PrevRight.z, 0.14f));
+            // (w: how much of this frame's walk a kept pixel takes: 0.07 since 2026-10-21, 0.14 until then. Set beside the same view
+            // taken together over 64 frames, the game's picture was grainy all over every heap: the walk's own noise, half taken
+            // away; the shading that gives each lobe its form was lost in it, and a sky of heaps looked like cotton (the owner: the
+            // clouds of blackrack's "look way better"). With half as much each frame, the grain is about half; turning, the picture
+            // is as soft as before (research/rendering/experiments/clouds-kwp-blackrack.md).)
+            // (And after a cut, more of each frame for the first few, easing down: 0.3 / (1 + frames since / 6), never less than 0.07.
+            // With 0.07 from the first frame, what a cut showed afresh took twice as long to lose its grain (the main chat, 19:0x: a
+            // second against half that); with this it settles as fast as with 0.14 and goes on to the finer picture (the lab, after a
+            // cut, against the picture taken over 32 frames: 3.87, 2.78, 2.37, 2.07 at 4, 8, 16, 32 frames, where 0.14 gave 3.85, 2.89,
+            // 2.52, 2.41 and 0.07 4.07, 3.34, 2.70, 2.16). A cut: nothing kept that can be used, or the camera turned through more
+            // than twenty degrees since the last frame (a turn of twenty degrees a second is under half a degree a frame).)
+            bool cut = !usable || Vector3.Dot(toFixed(cam.transform.forward), p.PrevAhead) < 0.94f;
+            p.SinceCut = cut ? 0 : Math.Min(p.SinceCut + 1, 1000);
+            float take = Mathf.Max(0.07f, Mathf.Min(0.45f, 0.3f / (1f + p.SinceCut / 6f)));
+            p.Together.SetVector(idPrevRight, new Vector4(p.PrevRight.x, p.PrevRight.y, p.PrevRight.z, take));
             p.Together.SetVector(idPrevUp, p.PrevUp);
             p.Together.SetVector(idPrevAhead, p.PrevAhead);
             p.PrevAt = camFixed;
@@ -2063,7 +2112,8 @@ namespace NaturalWeather
                 // (the shadow straight after the camera's solid things: Scatterer copies the picture after that and lays its haze on
                 // from the copy before anything see-through is drawn, so a shadow laid on later is wiped out by it. Its sea, drawn
                 // after the copy, takes no shadow so.)
-                cam.AddCommandBuffer(CameraEvent.AfterDepthTexture, p.Early);
+                p.EarlyWhen = EarlyFor(cam);
+                cam.AddCommandBuffer(p.EarlyWhen, p.Early);
                 cam.AddCommandBuffer(CameraEvent.AfterForwardOpaque, p.Shade);
                 p.When = CameraEvent.BeforeForwardAlpha;
                 cam.AddCommandBuffer(p.When, p.Draw);
@@ -2071,7 +2121,15 @@ namespace NaturalWeather
                 p.Cam = cam;
                 p.On = true;
             }
+            else if (p.EarlyWhen != EarlyFor(cam))
+            {
+                // (the camera switched between forward and deferred shading since: see EarlyFor)
+                cam.RemoveCommandBuffer(p.EarlyWhen, p.Early);
+                p.EarlyWhen = EarlyFor(cam);
+                cam.AddCommandBuffer(p.EarlyWhen, p.Early);
+            }
         }
+
 
         /// <summary>
         /// Where among the see-through things the clouds are laid on: after Scatterer's sky (2998) and everything else that
@@ -2172,6 +2230,14 @@ namespace NaturalWeather
         static bool heldOff;
         /// <summary>(Development build: the clouds off, or on again, without touching the player's settings: for timing.)</summary>
         public static string Switch() { heldOff = !heldOff; return heldOff ? "clouds held off" : "clouds on"; }
+        /// <summary>(Development build: both passes' pictures and buffers let go, to be made afresh in the next frame as at a flight's
+        /// start: with the cameras drawn deferred (CloudsProbe.Deferred), what a game with the Deferred mod has from the first frame.)</summary>
+        public static string Afresh()
+        {
+            if (instance == null) return "no clouds";
+            foreach (Pass p in new[] { instance.far, instance.near }) { Detach(p); Free(p); }
+            return "the clouds' pictures made afresh";
+        }
         /// <summary>(Development build: the shadows' sky tint held off ("off") or as worked out ("on"), and what it is.)</summary>
         public static bool TestNoTint;
         public static string TintSaid = "not drawn yet";

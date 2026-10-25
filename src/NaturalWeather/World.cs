@@ -108,6 +108,8 @@ namespace NaturalWeather
         public double Radius, Depth, Day, Spin;
         public uint Seed;
         public Climate Climate;
+        public CloudClimate Clouds;            // where its cloud usually is, if that is known (stock Kerbin's: see CloudClimate); read on the game's thread (Keep)
+        bool cloudsAsked;
         public bool Air;
         public bool Grounded;                  // whether there is ground under the air (Jool has none)
 
@@ -167,6 +169,8 @@ namespace NaturalWeather
                 SunLat = Body.GetLatitude(at); SunLon = Body.GetLongitude(at); SunAt = ut;
             }
             if (temps == null && Air) MakeTemps();
+            // (its cloud's climate, once: the game's folder is known on its own thread alone; the weather worked out before it is forgotten)
+            if (!cloudsAsked) { cloudsAsked = true; Clouds = CloudClimate.For(Name, Radius); if (Clouds != null) Model.Forget(); }
             // (a few dozen points a frame: each asks the terrain, which is not cheap; the whole map is made in a few seconds)
             if (!Mapped) MapSome(32);
         }

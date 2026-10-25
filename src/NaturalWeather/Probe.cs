@@ -14,6 +14,9 @@ namespace NaturalWeather
         /// <summary>A weather held for tests (the number of one of Model.Choices), without touching the player's settings; -1 lets go.</summary>
         public static int Hold = -1;
 
+        /// <summary>"on": the weather's shade given whole as each answer is worked out, unblended, as until 2026-10-25 (Provider.TestSteps); anything else eased.</summary>
+        public static string ShadeSteps(string arg) { Provider.TestSteps = (arg ?? "").Trim() == "on"; return Provider.TestSteps ? "the shade given whole, in steps" : "the shade eased from answer to answer"; }
+
         /// <summary>
         /// What falls, set by hand everywhere for a test or a picture (what the weather itself gives is rare and passes in
         /// minutes): "hail 0.8 30" (how thickly, the stones' size in mm), "pellets 0.7", "freezing 0.6", "snow 0.7", "rain 0.5";
@@ -180,6 +183,38 @@ namespace NaturalWeather
         public static bool NoPush;
         public static string Push(string arg) { NoPush = arg != null && arg.Trim() == "off"; return NoPush ? "wind does not move craft (test)" : "wind moves craft as set"; }
 
+        /// <summary>
+        /// Where Ferram Aerospace Research is installed: the wind it gets for the craft's root part (FARAtmosphere.GetWind, which
+        /// calls this mod's), the weather's own wind there, and whether this mod stands aside for another's (Aero.OthersPush: the
+        /// override in ModularFlightIntegrator, and whose it is).
+        /// </summary>
+        public static string FarWind()
+        {
+            Vessel v = FlightGlobals.ActiveVessel;
+            if (v == null || v.rootPart == null) return "no craft";
+            var say = new StringBuilder();
+            Vector3 at = v.rootPart.transform.position;
+            foreach (System.Reflection.Assembly a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type far = a.GetType("FerramAerospaceResearch.FARAtmosphere", false);
+                if (far != null)
+                {
+                    object got = far.GetMethod("GetWind", new[] { typeof(CelestialBody), typeof(Part), typeof(Vector3) }).Invoke(null, new object[] { v.mainBody, v.rootPart, at });
+                    say.Append("FAR's wind for the root part: ").Append(((Vector3)got).ToString("F2")).Append("; ");
+                }
+                Type mfi = a.GetType("ModularFI.ModularFlightIntegrator", false);
+                System.Reflection.FieldInfo f = mfi != null ? mfi.GetField("updateAerodynamicsOverride", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static) : null;
+                if (f != null)
+                {
+                    var d = f.GetValue(null) as Delegate;
+                    say.Append("MFI's aerodynamics override: ").Append(d == null ? "none" : d.Method.DeclaringType.Assembly.GetName().Name + " " + d.Method.DeclaringType.FullName + "." + d.Method.Name).Append("; ");
+                }
+            }
+            say.Append("the weather's wind there: ").Append(((Vector3)Keystone.Weather.Wind(v.mainBody, (Vector3d)at, Planetarium.GetUniversalTime())).ToString("F2"));
+            say.Append("; stands aside for another's: ").Append(Aero.OthersPushNow);
+            return say.ToString();
+        }
+
         /// <summary>Where the craft is against the space centre's pad (metres east and north), how high, and how fast over the ground east, north and up.</summary>
         public static string Track()
         {
@@ -310,6 +345,31 @@ namespace NaturalWeather
         /// <summary>(For setting one against the other: "old" makes the cover as until 2026-10-19, without the storms of the middle latitudes, the equator's clusters and the decks off west coasts; "new" as now.)</summary>
         public static string Cover(string arg) { Model.OldCover = arg != null && arg.Trim() == "old"; Model.Forget(); return Model.OldCover ? "the cover as until 2026-10-19" : "the cover with the storms, the clusters and the decks"; }
 
+        /// <summary>
+        /// (For setting one against the other, since 2026-10-21: "old" as until then, the storms drawn as made, the drifting patterns
+        /// read where they are and the regional wet and dry by latitude alone; "noclimate" the flow's work without Kerbin's cloud
+        /// climate; "noflow" the climate without the flow's work; "new" (or nothing) all of it. Or numbers: "climate 0.7" how strongly
+        /// the climate sets the regional wet and dry, "warp 1" how far the patterns are pulled about.)
+        /// </summary>
+        public static string Flow(string arg)
+        {
+            string[] t = (arg ?? "").Trim().Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            string how = t.Length > 0 ? t[0] : "new";
+            float v = t.Length > 1 && float.TryParse(t[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x) ? x : -1f;
+            switch (how)
+            {
+                case "old": Lows.Flow = false; Model.Warp = 0f; Model.Climatology = 0f; break;
+                case "noclimate": Lows.Flow = true; Model.Warp = 1f; Model.Climatology = 0f; break;
+                case "noflow": Lows.Flow = false; Model.Warp = 0f; Model.Climatology = 1f; break;
+                case "climate": if (v >= 0f) Model.ClimateGain = v; break;
+                case "warp": if (v >= 0f) Model.Warp = v; break;
+                default: Lows.Flow = true; Model.Warp = 1f; Model.Climatology = 1f; break;
+            }
+            Model.Forget();
+            return "storms wound by their flow " + (Lows.Flow ? "yes" : "no") + ", patterns pulled " + Model.Warp.ToString("F2") + ", Kerbin's cloud climate " + Model.Climatology.ToString("F0")
+                + " (strength " + Model.ClimateGain.ToString("F2") + ")";
+        }
+
         /// <summary>(For setting one against the other: "old" leaves out the usual sky's own cloud, as until 2026-10-18; "new" puts it back.)</summary>
         public static string Usual(string arg) { Model.TestUsual = arg != null && arg.Trim() == "old" ? 1f : 0f; Model.Forget(); return Model.TestUsual == 1f ? "the usual sky left out (as until 2026-10-18)" : "the usual sky in"; }
 
@@ -412,6 +472,15 @@ namespace NaturalWeather
             b.Append("(" + (t.ElapsedMilliseconds) + " ms for 1536 places; r = rain, ~ = snow, X = here)");
             return b.ToString();
         }
+
+        /// <summary>(The air's sounds: the last boom heard, and how many.)</summary>
+        public static string Booms() => AirSound.Booms + " booms; the last: " + AirSound.Said + " | now: " + AirSound.State();
+        /// <summary>(A craft that is not there passed by the camera: "speed off length"; see AirSound.Pass.)</summary>
+        public static string Pass(string how) => AirSound.Pass(how);
+        public static string BoomFile(string how) => AirSound.BoomFile(how);
+
+        /// <summary>(The weather centre worked from outside: see Centre.Drive.)</summary>
+        public static string Centre(string how) => NaturalWeather.Centre.Drive(how);
 
         public static string Timing()
         {

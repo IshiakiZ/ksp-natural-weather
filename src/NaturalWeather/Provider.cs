@@ -89,13 +89,52 @@ namespace NaturalWeather
         public WeatherShade Shade(CelestialBody body, Vector3d world, Vector3d toSun, double ut)
         {
             if (!Allowed(body) || !OnMain || Weather.Light == null || !Weather.Light) return WeatherShade.Clear;
-            // (the same answer for a quarter of a second: it is asked every frame, and the clouds do not change that fast)
-            if (Time.realtimeSinceStartup - shadeAt < 0.25f && body == shadeBody && (world - shadeWorld).sqrMagnitude < 400.0) return Last;
-            shadeAt = Time.realtimeSinceStartup; shadeBody = body; shadeWorld = world;
+            // (The same answer for a quarter of a second, for much the same place and light coming the same way: it is asked every
+            // frame, by more than one mod, and the clouds do not change that fast. Until 2026-10-25 one answer was kept: Natural Light
+            // asks at the craft and Natural Ocean at the camera, tens of metres apart at the pad, and each put the other's out, so that
+            // both were worked out afresh every frame (on the PC 0.15 ms of the sea's frame); nor was which way the light came looked
+            // at, and the sea's second ask, for the Mun's light, was given the sun's.)
+            // (And each answer given eased from the one before it over its quarter second, from the nearest answer of the last second
+            // where there is one: the light is set from it as it comes, and a craft going fast under broken heaps, worked out afresh
+            // every 20 m, or one standing under a heap's edge every quarter second, had the sun's light step. At most a quarter second
+            // behind now.)
+            float now = Time.realtimeSinceStartup;
+            Vector3d way = toSun.normalized;
+            int near = -1;
+            double nearest = 250000.0;
+            for (int k = 0; k < shades.Length; k++)
+            {
+                if (shades[k].body != body || Vector3d.Dot(way, shades[k].way) <= 0.9998) continue;
+                double d = (world - shades[k].world).sqrMagnitude;
+                if (now - shades[k].at < ShadeKept && d < 400.0) return Eased(shades[k], now);
+                if (d < nearest && now - shades[k].at < 1f) { nearest = d; near = k; }
+            }
             double lat = body.GetLatitude(world), lon = body.GetLongitude(world), alt = body.GetAltitude(world);
             Axes(body, world, out Vector3d east, out Vector3d north, out Vector3d up);
-            return ShadeAt(World.Of(body), lat, lon, alt, (float)Vector3d.Dot(toSun, east), (float)Vector3d.Dot(toSun, north), (float)Vector3d.Dot(toSun, up), ut);
+            WeatherShade got = ShadeAt(World.Of(body), lat, lon, alt, (float)Vector3d.Dot(toSun, east), (float)Vector3d.Dot(toSun, north), (float)Vector3d.Dot(toSun, up), ut);
+            WeatherShade from = near >= 0 && !TestSteps ? Eased(shades[near], now) : got;
+            int oldest = 0;
+            for (int k = 1; k < shades.Length; k++) if (shades[k].at < shades[oldest].at) oldest = k;
+            shades[oldest] = new KeptShade { at = now, body = body, world = world, way = way, from = from, shade = got };
+            return from;
         }
+
+        const float ShadeKept = 0.25f;
+
+        /// <summary>A kept answer as it stands now: on its way from the one before it to its own over its quarter second.</summary>
+        static WeatherShade Eased(KeptShade s, float now)
+        {
+            float f = (now - s.at) / ShadeKept;
+            if (f >= 1f || TestSteps) return s.shade;
+            if (f <= 0f) return s.from;
+            return new WeatherShade { Sun = Mathf.Lerp(s.from.Sun, s.shade.Sun, f), Sky = Mathf.Lerp(s.from.Sky, s.shade.Sky, f), Grey = Mathf.Lerp(s.from.Grey, s.shade.Grey, f), SunDimmed = s.shade.SunDimmed };
+        }
+
+        /// <summary>(For the development build's comparing: each answer given whole, unblended, as until 2026-10-25.)</summary>
+        internal static bool TestSteps;
+
+        struct KeptShade { public float at; public CelestialBody body; public Vector3d world, way; public WeatherShade from, shade; }
+        static readonly KeptShade[] shades = new KeptShade[4];
 
         // ---------------------------------------------------------------- the pattern of the clouds
 
@@ -221,9 +260,6 @@ namespace NaturalWeather
         static bool CloudsDrawing() => Clouds.Drawing;
 
         public static WeatherShade Last = WeatherShade.Clear;
-        static float shadeAt = -1f;
-        static CelestialBody shadeBody;
-        static Vector3d shadeWorld;
 
         /// <summary>How the clouds dim the sun and change the sky at a place, for a sun in the given direction (east, north, up parts).</summary>
         public static WeatherShade ShadeAt(World w, double lat, double lon, double alt, float sunE, float sunN, float sunUp, double ut)

@@ -42,6 +42,8 @@ namespace NaturalWeather
         AudioSource rush;
         AudioLowPassFilter rushMuffle, hissMuffle;
         Vector3 gustNow;
+        // (since 0.6.0: recordings of real rain and wind in their place, where the mod has them: see Recordings)
+        readonly Loops rainLoops = new Loops("NaturalWeather rain (recorded)"), windLoops = new Loops("NaturalWeather wind (recorded)");
 
         const float Box = 24f;           // how far round the camera drops are drawn (beyond a few tens of metres a drop is too thin to see)
         const float Shutter = 1f / 48f;  // the exposure a streak is smeared over: a film camera's half-turn shutter at 24 frames (it was 1/20: streaks twice as long as a camera makes them)
@@ -175,6 +177,7 @@ namespace NaturalWeather
             if (roarClip != null) Destroy(roarClip);
             if (rush != null) Destroy(rush.gameObject);
             if (rushClip != null) Destroy(rushClip);
+            rainLoops.Drop(); windLoops.Drop();
             if (follower != null) Destroy(follower);
             if (dropMat != null) Destroy(dropMat);
 #if DEV
@@ -363,6 +366,22 @@ namespace NaturalWeather
             bool inside = Inside;
             float meets = 1f + Mathf.Clamp01(going / 150f);
             float want = Weather.Patter * GameSettings.AMBIENCE_VOLUME * Mathf.Pow(Mathf.Clamp01(rain * meets), 0.6f) * (inside ? 1.35f : 1f) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
+            // (since 0.6.0, where the mod has its recordings: real rain, light, medium and hard crossfaded by how hard it falls, and
+            // from the cockpit the drops on its glass; the made hiss let go)
+            if (Loops.Can("rain-light") && Loops.Can("rain-medium") && Loops.Can("rain-hard"))
+            {
+                if (hiss != null && hiss.isPlaying) { hiss.volume = Mathf.MoveTowards(hiss.volume, 0f, Time.unscaledDeltaTime * 0.5f); if (hiss.volume <= 0f) hiss.Stop(); }
+                float r = Mathf.Clamp01(rain * meets);
+                float hard = Noise.Smooth(0.55f, 0.85f, r), light = 1f - Noise.Smooth(0.2f, 0.5f, r), medium = Mathf.Max(0f, 1f - hard - light);
+                bool glass = inside && Loops.Can("rain-cockpit");
+                if (want >= 0.005f)
+                {
+                    if (glass) rainLoops.Want("rain-cockpit", want);
+                    else { rainLoops.Want("rain-light", want * Mathf.Sqrt(light)); rainLoops.Want("rain-medium", want * Mathf.Sqrt(medium)); rainLoops.Want("rain-hard", want * Mathf.Sqrt(hard)); }
+                }
+                rainLoops.Step(0.4f, inside && !glass ? 1800f : 22000f);
+                return;
+            }
             if (want < 0.005f) { if (hiss != null && hiss.isPlaying) { hiss.volume = Mathf.MoveTowards(hiss.volume, 0f, Time.unscaledDeltaTime * 0.5f); if (hiss.volume <= 0f) hiss.Stop(); } return; }
             if (hiss == null)
             {
@@ -383,6 +402,21 @@ namespace NaturalWeather
         {
             float speed = new Vector2(gust.x, gust.y).magnitude, agl = gust.z;
             float want = Weather.Whoosh * GameSettings.AMBIENCE_VOLUME * Noise.Smooth(4f, 22f, speed) * Noise.Smooth(400f, 80f, agl) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
+            // (since 0.6.0, where the mod has its recordings: real wind, gusty, strong and a hurricane's crossfaded by how hard it
+            // blows, and from the cockpit its howl at the walls; the made roar let go)
+            if (Loops.Can("wind-gusty") && Loops.Can("wind-strong") && Loops.Can("wind-hurricane"))
+            {
+                if (roar != null && roar.isPlaying) { roar.volume = Mathf.MoveTowards(roar.volume, 0f, Time.unscaledDeltaTime * 0.5f); if (roar.volume <= 0f) roar.Stop(); }
+                float hurricane = Noise.Smooth(22f, 32f, speed), gusty = 1f - Noise.Smooth(9f, 17f, speed), strong = Mathf.Max(0f, 1f - gusty - hurricane);
+                bool walls = Inside && Loops.Can("wind-inside");
+                if (want >= 0.004f)
+                {
+                    if (walls) windLoops.Want("wind-inside", want);
+                    else { windLoops.Want("wind-gusty", want * Mathf.Sqrt(gusty)); windLoops.Want("wind-strong", want * Mathf.Sqrt(strong)); windLoops.Want("wind-hurricane", want * Mathf.Sqrt(hurricane)); }
+                }
+                windLoops.Step(0.8f);
+                return;
+            }
             if (want < 0.004f) { if (roar != null && roar.isPlaying) { roar.volume = Mathf.MoveTowards(roar.volume, 0f, Time.unscaledDeltaTime * 0.5f); if (roar.volume <= 0f) roar.Stop(); } return; }
             if (roar == null)
             {

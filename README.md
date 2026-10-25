@@ -7,7 +7,7 @@ thunder, fog and dust storms, hurricanes.
 
 ![Rain on the lens, then a hurricane's gust: the drops torn away, a rocket blown over on the pad, its fire and smoke blown off (the fire is Volumetric Explosions')](src/NaturalWeather/img/natural-weather-storm.gif)
 
-For Kerbal Space Program 1.12.x. **Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.9 or later**, a separate download
+For Kerbal Space Program 1.12.x. **Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.10 or later**, a separate download
 ([on SpaceDock](https://spacedock.info/mod/4665/Keystone)): this mod does not load without it.
 
 Three other mods each add one thing, and none is needed: [Natural Light](https://github.com/IshiakiZ/ksp-natural-light) (the light under
@@ -31,8 +31,12 @@ goes with the wind; dust devils) and HarmonyKSP (the wind moves craft).
 * **Lying snow** (0.5.0, a setting): after snow, the ground white until it thaws, from a line on the hills; drifting along
   the ground in a wind.
 * **Its sounds,** made by the mod: rain, hail, thunder, the wind; and (0.5.0) the air rushing past a craft in flight, and
-  rain and hail drumming on the cockpit.
+  rain and hail drumming on the cockpit; and (0.6.0) a passing craft's roar falling in pitch as it goes by, and the double
+  boom of one going faster than sound.
 * **Launch weather** (a go / no go and a three-hour forecast), or **a real city's weather** at the space centre.
+* **The weather centre** (0.6.0, Alt-Y): the weather here as a METAR; maps with satellite, radar, pressure and fronts, wind,
+  lightning and the storms' paths, from three hours back to a day ahead; the forecast hour by hour and a TAF; a sounding;
+  the storms of note.
 
 ![Raindrops on the camera](src/NaturalWeather/img/natural-weather-drops.gif)
 
@@ -58,7 +62,7 @@ In the Keystone window: the keystone button on the game's toolbar, or Alt-K (Opt
 
 ## Works on
 
-Mac: tried. Windows 11 (Direct3D 11 and OpenGL): 0.5.0 tried (fair, cloudy and stormy skies, the shadows, lying snow, the drops on the glass, towering heaps, a thin layer from inside it; with Scatterer and EVE); 0.5.1's and 0.5.2's mends (C# only) not yet. Linux: never run.
+Mac: tried. Windows 11 (Direct3D 11 and OpenGL): 0.5.0 tried (fair, cloudy and stormy skies, the shadows, lying snow, the drops on the glass, towering heaps, a thin layer from inside it; with Scatterer and EVE); this state (the lumpier heaps and less grain since 0.5.2) tried in fair, cloudy and stormy skies, held still and in motion; beside Deferred 1.3.5 on Direct3D, tried; beside FAR and KSP Community Fixes, tried. 0.6.0's weather centre, Doppler and sonic booms: the Mac only so far. Linux: never run.
 
 **More:** [the long description](https://github.com/IshiakiZ/ksp-natural-weather/wiki/The-long-description) (everything in full, and what
 was tried on each system) and the rest of the [wiki](https://github.com/IshiakiZ/ksp-natural-weather/wiki).

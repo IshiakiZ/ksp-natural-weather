@@ -37,7 +37,8 @@ namespace NaturalWeather
         /// <summary>
         /// Where Ferram Aerospace Research is installed, it does the aerodynamics instead of the game, and takes a wind from one
         /// function (FARAtmosphere.SetWindFunction): ours, set by name (this mod is not built against FAR). WindAPI, where it is
-        /// installed too, takes such a function as the first of the winds it adds up. (Not tried: FAR is not installed here.)
+        /// installed too, takes such a function as the first of the winds it adds up. (Tried on the PC, 2026-10-24, with FAR 0.16.1.2:
+        /// FARAtmosphere.GetWind for a craft's part gives the weather's wind there: Probe.FarWind.)
         /// </summary>
         static void Far()
         {
@@ -83,9 +84,13 @@ namespace NaturalWeather
             {
                 foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    Type t = a.GetType("ModularFlightIntegrator.ModularFlightIntegrator", false);
+                    // (ModularFI.ModularFlightIntegrator: until 2026-10-24 looked up as ModularFlightIntegrator.ModularFlightIntegrator,
+                    // which is not its name, so that this never stood aside. And not for FAR's override: that is its aerodynamics, which
+                    // take the weather's wind from this mod (Far), not a wind of its own; seen on the PC with FAR 0.16.1.2)
+                    Type t = a.GetType("ModularFI.ModularFlightIntegrator", false);
                     FieldInfo f = t != null ? t.GetField("updateAerodynamicsOverride", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static) : null;
-                    if (f != null && f.GetValue(null) != null) { others = true; break; }
+                    Delegate d = f != null ? f.GetValue(null) as Delegate : null;
+                    if (d != null && d.Method.DeclaringType.Assembly.GetName().Name != "FerramAerospaceResearch") { others = true; break; }
                 }
             }
             catch (Exception) { }
@@ -93,6 +98,9 @@ namespace NaturalWeather
             return others;
         }
         static float othersAt = -1f;
+#if DEV
+        internal static bool OthersPushNow => OthersPush();
+#endif
         static bool others, saidOthers;
 
         static bool HarmonyThere()
@@ -248,7 +256,12 @@ namespace NaturalWeather
         static readonly MethodInfo dragged = AccessTools.Method(typeof(Aero), nameof(Aero.Dragged));
         static readonly MethodInfo lifted = AccessTools.Method(typeof(Aero), nameof(Aero.Lifted));
 
-        /// <summary>In the drag sums: just before the part's airspeed is stored (part.dragVector = velocity + the frame's velocity), take the wind away from it.</summary>
+        /// <summary>
+        /// In the drag sums: just before the part's airspeed is stored (part.dragVector = velocity + the frame's velocity), take the
+        /// wind away from it. (Beside KSP Community Fixes the game's drag sums are its own, FlightIntegratorPerf's, which read the
+        /// frame's velocity once a physics step into a field of theirs, krakensbaneFrameVelocityF: that is taken for it too. Found on
+        /// the PC with 1.41.1, 2026-10-24: there the wind had stopped pushing on the drag, the wings and control surfaces still did.)
+        /// </summary>
         static IEnumerable<CodeInstruction> DragIL(IEnumerable<CodeInstruction> code)
         {
             var list = new List<CodeInstruction>(code);
@@ -261,6 +274,7 @@ namespace NaturalWeather
                 {
                     near.Append(list[j].opcode.Name).Append(' ').Append(list[j].operand is MemberInfo mm ? mm.Name : list[j].operand != null ? list[j].operand.ToString() : "").Append("; ");
                     if (list[j].operand is MethodBase m && m.Name == "GetFrameVelocity") fromFrame = true;
+                    if (list[j].operand is FieldInfo kept && kept.Name.IndexOf("FrameVelocity", StringComparison.OrdinalIgnoreCase) >= 0 && list[j].opcode.Name.StartsWith("ldfld", StringComparison.Ordinal)) fromFrame = true;
                 }
                 if (!fromFrame) { if (dragSites == 0) Weather.Log("a store to dragVector without the frame's velocity before it: " + near); continue; }
                 list.Insert(i, new CodeInstruction(OpCodes.Ldarg_1));

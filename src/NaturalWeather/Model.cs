@@ -109,15 +109,15 @@ namespace NaturalWeather
         // ---------------------------------------------------------------- the large fields
 
         /// <summary>A pattern of noise over the planet that drifts east at `drift` m/s and changes into a new one every `period` seconds.</summary>
-        static float Drifting(World w, double lat, double lon, double ut, double size, double period, uint seed, int octaves, float driftE)
+        static float Drifting(World w, double lat, double lon, double ut, double size, double period, uint seed, int octaves, float driftE, float pulled = 0f)
         {
             period /= Pace <= 0.05f ? 0.05f : Pace;
             double k = ut / period;
             int k0 = Noise.Floor(k);
             float f = (float)(k - k0);
             float wgt = f * f * (3f - 2f * f);
-            float a = Pattern(w, lat, lon, ut - k0 * period, size, seed + (uint)k0 * 7919u, driftE, octaves);
-            float b = Pattern(w, lat, lon, ut - (k0 + 1) * period, size, seed + (uint)(k0 + 1) * 7919u, driftE, octaves);
+            float a = Pattern(w, lat, lon, ut - k0 * period, size, seed + (uint)k0 * 7919u, driftE, octaves, pulled);
+            float b = Pattern(w, lat, lon, ut - (k0 + 1) * period, size, seed + (uint)(k0 + 1) * 7919u, driftE, octaves, pulled);
             float n = a * (1f - wgt) + b * wgt;
             // (two unrelated patterns mixed half and half are flatter than either: made as lively again)
             return n / Noise.Sqrt((1f - wgt) * (1f - wgt) + wgt * wgt);
@@ -134,19 +134,39 @@ namespace NaturalWeather
         /// </summary>
         static float Clumps(World w, double lat, double lon, double ut, float driftE)
         {
-            float fields = Drifting(w, lat, lon, ut, 180000.0, 10.0 * 3600.0, 211u, 1, driftE);
-            float clumps = Drifting(w, lat, lon, ut, 45000.0, 3.0 * 3600.0, 223u, 2, driftE);
+            float fields = Drifting(w, lat, lon, ut, 180000.0, 10.0 * 3600.0, 211u, 1, driftE, Warp);
+            float clumps = Drifting(w, lat, lon, ut, 45000.0, 3.0 * 3600.0, 223u, 2, driftE, Warp);
             return 2.8f * Noise.Smooth(-0.1f, 0.3f, fields) * (0.15f + 1.4f * Noise.Smooth(-0.15f, 0.35f, clumps));
         }
 
-        static float Pattern(World w, double lat, double lon, double since, double size, uint seed, float driftE, int octaves)
+        static float Pattern(World w, double lat, double lon, double since, double size, uint seed, float driftE, int octaves, float pulled)
         {
             double cosLat = Math.Max(0.2, Math.Cos(lat * Deg));
             double lo = (lon - driftE * since / (w.Radius * cosLat) / Deg) * Deg, la = lat * Deg;
             double r = w.Radius / size;
-            double cl = Math.Cos(la);
-            return Noise.Fbm(cl * Math.Cos(lo) * r, cl * Math.Sin(lo) * r, Math.Sin(la) * r, octaves, seed ^ w.Seed);
+            double cl = Math.Cos(la), sl = Math.Sin(la), co = Math.Cos(lo), so = Math.Sin(lo);
+            double px = cl * co * r, py = cl * so * r, pz = sl * r;
+            // (The flow's work, 2026-10-21, for the patterns that are seen as cloud: the pattern read where the air now here was, pulled
+            // about by a wind of eddies three times its own size, more east and west than north and south, as the jets shear the weather
+            // out along them. Read where it is, a pattern of noise is round blobs of one kind from pole to pole; the satellites' and the
+            // weather models' cloud is drawn out into bands, swirls and filaments. The owner, of the Kerbal Weather Project's: "their
+            // clouds are better /more realistic". Not for those that only decide what kind of sky a region has: unseen, and it costs.)
+            if (pulled > 0f)
+            {
+                double q = 0.33;
+                uint ws = seed ^ w.Seed ^ 0x77a1u;
+                float fe = Noise.Fbm(px * q + 3.1, py * q, pz * q, 2, ws), fn = Noise.Fbm(px * q, py * q + 5.7, pz * q - 2.3, 2, ws ^ 0x5u);
+                double ae = 1.9 * pulled * fe, an = 0.9 * pulled * fn;
+                px += ae * -so + an * -sl * co; py += ae * co + an * -sl * so; pz += an * cl;
+            }
+            return Noise.Fbm(px, py, pz, octaves, seed ^ w.Seed);
         }
+
+        /// <summary>(Development: how much of the regional wet and dry over Kerbin goes by its cloud's climate (CloudClimate), 0 none, 1 all; and how strongly, and the shift of the whole.)</summary>
+        public static volatile float Climatology = 1f, ClimateGain = 0.7f, ClimateShift = 0f;
+
+        /// <summary>(Development: how far the drifting patterns are pulled about by their eddies, 0 not at all, 1 as made since 2026-10-21.)</summary>
+        public static volatile float Warp = 1f;
 
         /// <summary>How the weather systems move at a latitude, east (m/s): westward in the trade winds, eastward in the westerlies.</summary>
         static float BandDrift(World w, double lat)
@@ -157,16 +177,28 @@ namespace NaturalWeather
             return -0.9f * c.Trade * (1f - Noise.Smooth(18f, 34f, a)) + 1.4f * c.Wester * Noise.Bump(a, 48f, 22f) - 0.3f * c.Trade * Noise.Smooth(66f, 80f, a);
         }
 
+        /// <summary>(For the weather centre's pressure: the prevailing wind east at a latitude, above the ground's calm, m/s.)</summary>
+        internal static float PrevailingEast(World w, double lat) => BandDrift(w, lat) * Prevail;
+
+        /// <summary>(And how strongly the systems' wind turns round their lows there: the wind for a unit of Base.Low across 100 km, m/s.)</summary>
+        internal static float SystemsWind(World w, double lat) => 28f * (w.Climate.Wester / 7f) * Noise.Smooth(0.08f, 0.35f, (float)Math.Abs(Math.Sin(lat * Deg)));
+
         public static Base Sample(World w, double lat, double lon, double ut)
         {
             var b = new Base();
             Climate c = w.Climate;
             b.DriftE = BandDrift(w, lat);
             b.DriftN = 0f;
-            float n = Drifting(w, lat, lon, ut, c.Systems, 3.0 * 3600.0, 11u, 3, b.DriftE);
+            float n = Drifting(w, lat, lon, ut, c.Systems, 3.0 * 3600.0, 11u, 3, b.DriftE, Warp);
             float a = (float)Math.Abs(lat);
             // (wetter near the equator and in the storm tracks, drier in the subtropics and at the poles)
             float bias = 0.07f * Noise.Bump(a, 0f, 14f) - 0.10f * Noise.Bump(a, 28f, 14f) + 0.06f * Noise.Bump(a, 55f, 16f) - 0.08f * Noise.Smooth(70f, 86f, a);
+            // (Over stock Kerbin, since 2026-10-21, where a weather model of its air over its land and sea puts its cloud, by place and
+            // the time of day, against its average (CloudClimate): the storm tracks, the subtropics, the poles, the deserts and the
+            // cloudier sea, where the bands by latitude above knew only the latitude, and made the land cloudier than the sea.)
+            CloudClimate usualCloud = w.Clouds;
+            if (usualCloud != null && Climatology > 0f)
+                bias += (ClimateGain * (usualCloud.At(CloudClimate.Total, lat, lon, ut) - usualCloud.Mean) + ClimateShift - bias) * Climatology;
             // (Where the storms of the middle latitudes are (Lows), they are the weather's systems, with their shapes: the noise's
             // wet and dry regions, which are of one size, much weaker there. Until 2026-10-19 the noise was the systems everywhere,
             // blobs of one size from pole to pole: from afar, the owner's "too even and evenly spaced out".)
@@ -200,7 +232,7 @@ namespace NaturalWeather
             // clear sea between, along a line that wanders a few degrees either side (NASA's EPIC views, 2026-10-16): here clusters
             // about a tenth of the world's radius across, drifting west with the trade winds and coming and going over hours.)
             float wander = 3.5f * (float)Math.Sin(lon * Deg * 2.0 + 1.7 * Math.Sin(lon * Deg * 5.0 + 0.7) + ut / (5.0 * w.Day));
-            float clusters = Noise.Smooth(0.42f, 0.64f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 0.11 * w.Radius, 3.0 * 3600.0, 71u, 2, -0.8f * c.Trade));
+            float clusters = Noise.Smooth(0.42f, 0.64f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 0.11 * w.Radius, 3.0 * 3600.0, 71u, 2, -0.8f * c.Trade, Warp));
             if (OldCover) b.Inst = Math.Max(b.Inst, 0.62f * Noise.Bump(a, 0f, 11f) * (1f - b.Land) * c.Cumulus);
             else b.Inst = Math.Max(b.Inst, 0.62f * Noise.Bump((float)Math.Abs(lat - wander), 0f, 9f) * (1f - b.Land) * c.Cumulus * (0.2f + 0.8f * clusters));
             // (and behind a storm's cold front, cold air over the warmer sea: showers in cells)
@@ -401,6 +433,34 @@ namespace NaturalWeather
                         }
             }
             return found + Violent.SquallCells(w, lat, lon, radius, ut, into);
+        }
+
+        /// <summary>
+        /// (Since 0.6.0, for the weather centre's map of the whole world.) Every storm and shower on the world, as Cells finds those
+        /// near a place: the boxes of both lattices the world's surface passes through, all of them. (Cells asked for the whole
+        /// world from one place walks a cube as wide as the world's half way round, three times the world itself: 2.8 s on Kerbin.)
+        /// </summary>
+        public static int AllCells(World w, double ut, List<WeatherCell> into)
+        {
+            if (w.Climate.Storms <= 0f && !StormsHeld) return 0;
+            int found = 0;
+            double cycle = CellCycle / (Pace <= 0.05f ? 0.05f : Pace);
+            double rr = w.Radius / CellBox;
+            int reach = (int)Math.Ceiling(rr) + 2;
+            for (int lattice = 0; lattice < 2; lattice++)
+            {
+                Cycle(w, lattice, ut, cycle, out double since, out uint seed);
+                for (int a = -reach; a <= reach; a++)
+                    for (int bb = -reach; bb <= reach; bb++)
+                        for (int cc = -reach; cc <= reach; cc++)
+                        {
+                            if (!Born(w, a, bb, cc, seed, since, cycle, rr, out uint h, out float through, out double cLat, out double cLon, out float cDrift)) continue;
+                            if (!Grown(w, h, through, cLat, cLon, cDrift, ut, out WeatherCell cell)) continue;
+                            into.Add(cell);
+                            found++;
+                        }
+            }
+            return found + Violent.SquallCells(w, 0.0, 0.0, Math.PI * w.Radius, ut, into);
         }
 
         /// <summary>One of the two lattices storms are born on, at a moment: how long its cycle has run, and the cycle's own number in its seed.</summary>
@@ -634,6 +694,9 @@ namespace NaturalWeather
         /// <summary>How high above the ground heaped cloud has its base: lower in moist air, higher in the afternoon.</summary>
         static float CumulusBase(Base b) => 350f + (1f - b.M) * 1500f + 500f * b.Inst;
 
+        /// <summary>(For the weather centre: the height air from the ground would be lifted to before its water condenses, m above the ground: the dew point from it.)</summary>
+        internal static float LiftedBase(Base b) => CumulusBase(b);
+
         // ---------------------------------------------------------------- the weather at a place
 
         public static WeatherHere Here(World w, double lat, double lon, double ut) => ColumnAt(w, lat, lon, ut).Here;
@@ -764,7 +827,7 @@ namespace NaturalWeather
             // (the new cover: and only in some regions of a stable band, a few hundred kilometres each, as the real decks lie in their
             // own basins and come and go over days: the band's lid alone, strong from 20 to 35 degrees everywhere, made one deck the
             // band's whole length)
-            if (!OldCover) deck *= Noise.Smooth(0.35f, 0.6f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 1.5 * Lows.Reach(w), 30.0 * 3600.0, 71u, 1, b.DriftE));
+            if (!OldCover) deck *= Noise.Smooth(0.35f, 0.6f, 0.5f + 0.5f * Drifting(w, lat, lon, ut, 1.5 * Lows.Reach(w), 30.0 * 3600.0, 71u, 1, b.DriftE, Warp));
             float lifted = Noise.Clamp01((1f - b.Stab) * Noise.Smooth(0.25f, 0.7f, b.M));       // (how freely heaps grow)
 #if DEV
             if (Probing) { PDeck = deck; POffWest = offWest; PSubtropic = subtropic; PReach = reach; PEast = eastLand; PLifted = lifted; }
@@ -837,7 +900,7 @@ namespace NaturalWeather
         static float Dapple(World w, double lat, double lon, double ut, ref Base b)
         {
             if (b.Usual <= 0.001f || w.Climate.Wet < 0.5f) return 0f;
-            float field = Drifting(w, lat, lon, ut, 240000.0, 4.0 * 3600.0, 61u, 3, b.DriftE * 1.5f);
+            float field = Drifting(w, lat, lon, ut, 240000.0, 4.0 * 3600.0, 61u, 3, b.DriftE * 1.5f, Warp);
             // (in patches with edges, not a thin dapple everywhere: seen from far off, cloud spread thinly over the whole world was a
             // planet of grey fleece, where Earth's is gathered into systems with the blue sea between them. Some 12 % of the sky, not
             // the observers' 18 %, while the shader draws its elements as small shaded puffs: a sky full of them reads as tiny)
@@ -906,7 +969,7 @@ namespace NaturalWeather
                 here.Middle.Base = Math.Max(b.Ground + 2000f, (2600f + 2200f * Noise.Bump((float)Math.Abs(lat), 0f, 35f)) * tops);
                 here.Middle.Top = here.Middle.Base + (sheetAloft ? 900f + 1200f * wet : 300f + 500f * dapple); here.Middle.Water = sheetAloft ? 0.2f : 0.1f;
             }
-            float cirrus = Noise.Smooth(0.4f, 0.62f, b.M) * 0.55f + 0.3f * Noise.Clamp01(Drifting(w, lat, lon, ut, 120000.0, 2.0 * 3600.0, 31u, 2, b.DriftE * 2f) * 1.5f - 0.2f);
+            float cirrus = Noise.Smooth(0.4f, 0.62f, b.M) * 0.55f + 0.3f * Noise.Clamp01(Drifting(w, lat, lon, ut, 120000.0, 2.0 * 3600.0, 31u, 2, b.DriftE * 2f, 1.5f * Warp) * 1.5f - 0.2f);
             // (more over land, 22 % of its sky against 12 % of the sea's (the observers' table), and over the equator's rain belt,
             // where the storms' anvils spread into it)
             cirrus += (0.14f * b.Land + 0.15f * Noise.Bump((float)Math.Abs(lat), 0f, 14f)) * b.Usual * Noise.Smooth(0.15f, 0.45f, b.M);

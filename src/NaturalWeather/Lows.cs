@@ -40,6 +40,8 @@ namespace NaturalWeather
         static int keptNext;
         static readonly object locker = new object();
         static readonly List<Low> none = new List<Low>();
+        /// <summary>(Development: the storms' shapes wound and pulled about by their own flow, as since 2026-10-21; off, drawn as made.)</summary>
+        public static volatile bool Flow = true;
         /// <summary>No storms (for setting one against the other: Model.OldCover).</summary>
         public static List<Low> None => none;
 
@@ -134,6 +136,28 @@ namespace NaturalWeather
             float x = r * te, y = r * tn * s.Pole;
             low = Math.Max(low, s.Now * (float)Math.Exp(-(r * r) / (1.5f * 1.5f)));
 
+            // ---- the flow's work (2026-10-21). What is drawn below is the storm's pattern as made, ellipses and lines; what is seen is
+            // that pattern carried for some hours by the storm's own wind: wound round its centre the way the wind turns, more near it,
+            // where the air goes round fastest, and pulled about by eddies a fraction of a head across. So each place shows what the
+            // pattern held where its air came from: the place turned back against the wind by the twist there, and moved back by the
+            // eddies. And what is drawn is not even: its texture, laid on the pattern as made, is wound with it into bands. (Until
+            // then drawn as made: from afar a ring with a ruled tail, against the commas drawn out into arms of a weather model's
+            // satellite pictures; the owner, 2026-10-21, of the Kerbal Weather Project's: "their clouds are better /more realistic".)
+            float texture = 1f;
+            if (Flow)
+            {
+                float twist = (1.1f + 1.6f * s.Wound) * (float)Math.Exp(-r * 0.75f);
+                float cs = (float)Math.Cos(twist), sn = (float)Math.Sin(twist);
+                float xr = x * cs + y * sn, yr = -x * sn + y * cs;
+                uint seed = (uint)s.Id;
+                float ex = 0.9f * Noise.Perlin(xr * 0.9, yr * 0.9, 0.37, seed ^ 0x51u) + 0.3f * Noise.Perlin(xr * 2.6, yr * 2.6, 1.9, seed ^ 0x52u);
+                float ey = 0.9f * Noise.Perlin(xr * 0.9, yr * 0.9, 4.1, seed ^ 0x53u) + 0.3f * Noise.Perlin(xr * 2.6, yr * 2.6, 5.3, seed ^ 0x54u);
+                x = xr + 0.42f * ex; y = yr + 0.42f * ey;
+                r = (float)Math.Sqrt(x * x + y * y);
+                float grain = Noise.Fbm(xr * 2.2, yr * 2.2, 7.7, 3, seed ^ 0x55u);
+                texture = 0.45f + 0.55f * Noise.Smooth(-0.32f, 0.3f, grain);
+            }
+
             // ---- the head: a solid mass poleward of the centre, and a band wound round it the way the wind turns (anticlockwise
             // north of the equator), from the warm front's end east-south-east of the centre round over the pole's side and west,
             // inward as it goes, further the older the storm (as in the EPIC views: a broad comma, not a thin hook)
@@ -174,8 +198,9 @@ namespace NaturalWeather
             // ---- the cold air behind the front: showers in cells, broken
             float behind = Ellipse(x, y, -1.35f, -0.75f, 1.25f, 1.4f, 0.7f) * (1f - slot) * (1f - cold);
 
-            float its = Math.Max(Math.Max(head * 0.95f, core * 0.92f), Math.Max(shield * 0.86f, Math.Max(cold * 0.9f, warm * 0.9f)));
-            its = Math.Max(its, Math.Max(sector * 0.64f, behind * 0.6f));
+            float firm = 0.8f + 0.2f * texture;
+            float its = Math.Max(Math.Max(head * 0.95f * firm, core * 0.92f), Math.Max(shield * 0.86f * texture, Math.Max(cold * 0.9f * firm, warm * 0.9f * texture)));
+            its = Math.Max(its, Math.Max(sector * 0.64f * texture, behind * 0.6f * texture));
             wet = Math.Max(wet, s.Now * its);
             front = Math.Max(front, s.Now * Math.Max(cold, 0.55f * warm));
             dry = Math.Max(dry, s.Now * slot);

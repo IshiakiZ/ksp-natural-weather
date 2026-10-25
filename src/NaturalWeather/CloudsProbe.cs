@@ -23,7 +23,7 @@ namespace NaturalWeather
             {
                 if (c == null) continue;
                 o.Append(c.name).Append(": depth ").Append(c.depth).Append(", ").Append(c.nearClipPlane.ToString("G4")).Append(" to ").Append(c.farClipPlane.ToString("G6"))
-                 .Append(", clear ").Append(c.clearFlags).Append(", hdr ").Append(c.allowHDR).Append(", into ").Append(c.targetTexture != null ? c.targetTexture.name : "screen")
+                 .Append(", clear ").Append(c.clearFlags).Append(", path ").Append(c.actualRenderingPath).Append(", hdr ").Append(c.allowHDR).Append(", into ").Append(c.targetTexture != null ? c.targetTexture.name : "screen")
                  .Append(", depth picture ").Append(c.depthTextureMode).Append(", mask ").Append(c.cullingMask).Append(", fov ").Append(c.fieldOfView.ToString("F1"))
                  .Append(", ").Append(c.pixelWidth).Append("x").Append(c.pixelHeight).Append(", at ").Append(c.transform.position.ToString("F1"));
                 foreach (CameraEvent e in Enum.GetValues(typeof(CameraEvent)))
@@ -40,6 +40,38 @@ namespace NaturalWeather
             o.Append("graphics ").Append(SystemInfo.graphicsDeviceType).Append(" ").Append(SystemInfo.graphicsDeviceVersion).Append(", 3D render textures ").Append(SystemInfo.supports3DRenderTextures)
              .Append(", float textures ").Append(SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBHalf)).Append(", reversed z ").Append(SystemInfo.usesReversedZBuffer)
              .Append(", copy texture ").Append(SystemInfo.copyTextureSupport);
+            return o.ToString();
+        }
+
+        static readonly Dictionary<string, RenderingPath> pathWas = new Dictionary<string, RenderingPath>();
+
+        /// <summary>
+        /// The scene's cameras drawn deferred ("on"), as the Deferred mod (LGhassen/Deferred, 1.3.5) sets them at every scene's
+        /// load: the local cameras ("Camera 01" and "Camera 00" on OpenGL, "Camera 00" alone on Direct3D) and "Camera
+        /// ScaledSpace". "off" puts back what each had. Only the cameras' path: none of that mod's shaders for the game's parts
+        /// and ground, so these are still drawn forward within it. For Natural Weather #1 (2026-10-23: with Deferred, "the
+        /// whole scene goes black" once the clouds are on).
+        /// </summary>
+        public static string Deferred(string arg)
+        {
+            bool on = arg == null || arg.Trim() != "off";
+            var o = new StringBuilder();
+            foreach (string name in new[] { "Camera 01", "Camera 00", "Camera ScaledSpace" })
+            {
+                Camera c = null;
+                foreach (Camera k in Camera.allCameras) if (k != null && k.name == name) { c = k; break; }
+                if (c == null) { o.Append(name).Append(": not there; "); continue; }
+                if (on)
+                {
+                    if (!pathWas.ContainsKey(name)) pathWas[name] = c.renderingPath;
+                    c.renderingPath = RenderingPath.DeferredShading;
+                }
+                else if (pathWas.TryGetValue(name, out RenderingPath was)) { c.renderingPath = was; pathWas.Remove(name); }
+                o.Append(name).Append(": ").Append(c.renderingPath).Append(" (drawn ").Append(c.actualRenderingPath).Append("); ");
+            }
+            // (and the clouds' pictures made afresh, as at a flight's start: what they kept from the cameras' forward frames would
+            // otherwise be laid on as it stands)
+            if (arg != null && arg.Trim() == "afresh") o.Append(Clouds.Afresh());
             return o.ToString();
         }
 

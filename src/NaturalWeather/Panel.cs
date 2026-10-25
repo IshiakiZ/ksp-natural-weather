@@ -12,6 +12,12 @@ namespace NaturalWeather
 
         public static void Draw()
         {
+            // ---- (since 0.6.0) the weather centre
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(Centre.Open ? "Shut the weather centre" : "Open the weather centre", GUILayout.Width(190f))) Centre.Toggle();
+            GUILayout.Label("<color=#aaaaaa>maps, radar, fronts, storms' paths, the forecast" + (Weather.CentreKey != null && Weather.CentreKey.Code != KeyCode.None ? "  ·  " + Weather.CentreKey.Shown : "") + "</color>", Host.Small);
+            GUILayout.EndHorizontal();
+            GUILayout.Space(4f);
             // ---- the weather now
             if (WeatherDriver.Place(out CelestialBody body, out double lat, out double lon, out double alt, out float agl) && body.atmosphere && Weather.On && Model.Allowed(body))
             {

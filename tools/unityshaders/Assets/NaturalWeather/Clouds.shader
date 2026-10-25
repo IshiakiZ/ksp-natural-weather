@@ -1639,18 +1639,24 @@ Shader "NaturalWeather/Clouds"
                     if (slab > inside) { size = lerp(size, 0.42 * C, 0.5); lift = 0.0; }
                     inside = larger(inside, slab, 0.5 * join);
                 } }
-                // (the lumps: the largest three tenths of a cell across on a heap, half that on a pad, and wide and slight on a sheet;
+                // (the lumps: the largest about a third of a cell across on a heap, half that on a pad, and wide and slight on a sheet;
                 // how far they can stand out)
-                float lump = C * lerp(lerp(0.15, 0.4, sheet), 0.3, heapy);
+                // (On a heap larger and prouder since 2026-10-21, three tenths of a cell and as proud as their size before: set beside stills of
+                // blackrack's clouds, which the owner holds "look way better", our heaps were a smooth dome under an even coat of small lumps,
+                // cotton, where his and the photographs' are lobes upon lobes, each a good part of the heap, with deep creases between.)
+                float lump = C * lerp(lerp(0.15, 0.4, sheet), 0.36, heapy);
                 // (and not as proud everywhere: over some kilometres a top is smoother, where the air has stopped rising, and over
                 // others lumpier, where it still is; lumps all alike over a whole bank were a sheet of bubbles)
-                float proud = lerp(lerp(0.7, 0.22, sheet), 1.0, heapy) * lerp(0.45, 1.25, smoothstep(0.42, 0.6, softWide));
+                float proud = lerp(lerp(0.7, 0.22, sheet), 1.25, heapy) * lerp(0.45, 1.25, smoothstep(0.42, 0.6, softWide));
                 // (Under the lid of a shallow layer the lumps count for little: the air there is held down, and what spreads out
                 // under it is flat and thin. With lumps a hundred metres proud on a pad a hundred metres thick, the pad was torn
                 // into leaves, one over another. And they reach as much less far: the walk goes slowly only as near a surface as its
                 // lumps can stand out from it, which over the flat top of a bank seen from just above is most of the way.)
                 float damp = (1.0 - 0.8 * heapy * (1.0 - smoothstep(1400.0, 2600.0, deep)) * smoothstep(0.5, 0.85, above / used)) * bankShare;
-                float reach = 0.5 * lump * proud * damp;
+                // (On a heap two thirds of it: its lumps no further out than before they were made larger and prouder, held to a fifth of their
+                // share (below), however much deeper their creases. With the whole, the walk went slowly over a wider band round every heap:
+                // 5 ms a frame more at the pad (the main chat, 2026-10-21), for the same picture within a level.)
+                float reach = 0.5 * lump * proud * damp * lerp(1.0, 0.67, heapy);
                 insideOut = -1e9; openOut = -1.0;
                 // (How far off the nearest cloud is, is known only for the heaps of the three points looked at: a heap of the next
                 // triangle may stand just across its edge. So the walk is never told it may stride further than three tenths of a
@@ -1688,7 +1694,10 @@ Shader "NaturalWeather/Clouds"
                     float3 domes = 1.0 - (1.0 - big.gba) * (1.0 - big.gba);
                     // (A crease between two lumps no deeper than three tenths of a lump's size: the cells' own creases go down to
                     // nothing between any two of them, and a heap's side was scored with clefts, some of them through it.)
-                    moved = dot(max(domes - 0.715, ((float3)(-0.3))) * part, float3(1.0, 0.5, 0.25)) * 1.6 * lump * proud;
+                    // (The smaller two sizes count for more than they did, two thirds and two fifths of the largest, not a half and a quarter:
+                    // lumps on lumps. And no lump stands out by more than a fifth of its share: prouder, they stood clear of their heap, loose
+                    // puffs over its top, a spray of popcorn.)
+                    moved = dot(clamp(domes - 0.715, ((float3)(-0.3)), ((float3)(0.2))) * part, float3(1.0, 0.65, 0.4)) * 1.6 * lump * proud;
                     // (read no finer than a pixel of the picture is wide: the small noise's cells are a sixteenth of what is read here
                     // to a dot of it. Read two sizes finer than that, as it first was, cells of nine metres were read by pixels ten
                     // metres apart, and what came of it was level stripes across every heap a few kilometres off.)
@@ -3211,9 +3220,12 @@ Shader "NaturalWeather/Clouds"
                         // ---- the sun: through the air, then through the cloud between here and the sun (six steps, each longer)
                         float3 sunHere = sunTop * sunThroughAir(h, sunUp);
                         float toward = lastToward, beyond = lastFar;
-                        // (walked again on every other lit step only, and on the first after clear air: the next one along is lit much the
-                        // same; and with four steps instead of six beyond 8 km, where a cloud is small in the picture)
-                        bool again = (lit_ & 1) == 0 || lastToward < 0.0;
+                        // (walked again on every lit step, since 2026-10-21; with four steps instead of six beyond 8 km, where a cloud is small in
+                        // the picture. On every other one only, as until then, each step's light was the last one's half the time: the shaded
+                        // sides of heaps came out too bright, in bands, and speckled where the two differed, a grain over every heap that the
+                        // frames taken together did not take away (research/rendering/experiments/cloud-walk-noise.md: 18-32 % nearer the truth
+                        // at the same steps; the walk 3-5 % dearer, as it stops a few steps into a dense heap).)
+                        bool again = true;
                         lit_++;
                         stormLod = lod;
                         if (again && dot(sunHere, sunHere) > 1e-8)
