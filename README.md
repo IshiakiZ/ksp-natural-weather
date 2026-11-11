@@ -3,11 +3,13 @@
 Weather that is seen and felt: wind on craft and smoke, clouds that dim the sun, rain and snow, lightning and
 thunder, fog and dust storms, hurricanes.
 
-![Towering heaps over the pad, heaps from 11 km, Kerbin's weather from 160 km, a hurricane from above, lightning by the pad at night, rain, snow, fog](src/NaturalWeather/img/natural-weather-tour.jpg)
+![Towers of cloud over the sea in the evening with rain under the largest; towering heaps over the pad; the same kind of sky from 12 km; a hurricane from 320 km; lightning by the pad at night; rain; snow; fog; puddles after rain](src/NaturalWeather/img/natural-weather-tour.jpg)
+
+![The camera going once round at 3 km in the evening: towers of cloud over the sea and the land, shafts of rain under the largest](src/NaturalWeather/img/natural-weather-clouds.gif)
 
 ![Rain on the lens, then a hurricane's gust: the drops torn away, a rocket blown over on the pad, its fire and smoke blown off (the fire is Volumetric Explosions')](src/NaturalWeather/img/natural-weather-storm.gif)
 
-For Kerbal Space Program 1.12.x. **Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.10 or later**, a separate download
+For Kerbal Space Program 1.12.x. **Needs [Keystone](https://github.com/IshiakiZ/ksp-keystone) 0.11 or later**, a separate download
 ([on SpaceDock](https://spacedock.info/mod/4665/Keystone)): this mod does not load without it.
 
 Three other mods each add one thing, and none is needed: [Natural Light](https://github.com/IshiakiZ/ksp-natural-light) (the light under
@@ -38,9 +40,11 @@ goes with the wind; dust devils) and HarmonyKSP (the wind moves craft).
   lightning and the storms' paths, from three hours back to a day ahead; the forecast hour by hour and a TAF; a sounding;
   the storms of note.
 
-![Raindrops on the camera](src/NaturalWeather/img/natural-weather-drops.gif)
+![Rain on the camera's glass under a broken sky: each drop smears what is behind it](src/NaturalWeather/img/natural-weather-drops.gif)
 
-![Lightning strikes beside the launch pad at night](src/NaturalWeather/img/natural-weather-lightning.gif)
+![Snow on the launch pad: the ground whitening, flakes and melt water on the glass](src/NaturalWeather/img/natural-weather-snow.gif)
+
+![Lightning strikes beside the launch pad at night, each flash lighting the ground](src/NaturalWeather/img/natural-weather-lightning.gif)
 
 ## Install
 
