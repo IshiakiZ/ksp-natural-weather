@@ -27,8 +27,8 @@ sys.path.insert(0, PACK)
 import make_bundle  # noqa: E402  (for each shader's name, textures and how it is blended)
 
 # Where each goes in the Unity project.
-FOLDER = {"volume": "VolumetricExplosions", "enlarge": "VolumetricExplosions", "layers": "VolumetricExplosions", "motion": "VolumetricExplosions", "carry": "VolumetricExplosions", "mark": "VolumetricExplosions", "shock": "VolumetricExplosions", "shadow": "VolumetricExplosions", "sundepth": "VolumetricExplosions", "lens": "Keystone", "farmotion": "Keystone",
-          "shafts": "NaturalLight", "clean": "NaturalLight", "veil": "NaturalLight", "clouds": "NaturalWeather", "cloudsover": "NaturalWeather", "cloudshade": "NaturalWeather", "wet": "NaturalWeather", "snow": "NaturalWeather", "drops": "NaturalWeather",
+FOLDER = {"volume": "VolumetricExplosions", "enlarge": "VolumetricExplosions", "layers": "VolumetricExplosions", "motion": "VolumetricExplosions", "carry": "VolumetricExplosions", "mark": "VolumetricExplosions", "shock": "VolumetricExplosions", "shadow": "VolumetricExplosions", "sundepth": "VolumetricExplosions", "sprite": "VolumetricExplosions", "lens": "Keystone", "farmotion": "Keystone",
+          "shafts": "NaturalLight", "clean": "NaturalLight", "veil": "NaturalLight", "clouds": "NaturalWeather", "cloudskeep": "NaturalWeather", "cloudsover": "NaturalWeather", "cloudshade": "NaturalWeather", "wet": "NaturalWeather", "snow": "NaturalWeather", "drops": "NaturalWeather",
           "ocean": "NaturalOcean", "oceanfoam": "NaturalOcean", "oceanweed": "NaturalOcean", "oceanunder": "NaturalOcean", "blend": "SmoothRunning", "grade": "CineCamera",
           "fargroundpoints": "FarGround", "fargrounddraw": "FarGround", "fargrounddepth": "FarGround", "fargroundlights": "FarGround"}
 
@@ -70,6 +70,9 @@ SPECIAL = [
 #endif
     vs_TEXCOORD0 = vec2(in_POSITION0.x * 0.5 + 0.5, in_POSITION0.y * way * 0.5 + 0.5);"""),
     (("lens",), "fragment", "        turn = further * turn;", "        turn = mul(further, turn);"),
+    # (a sprite's picture read as GLSL's texture() reads it, from the level of its mipmaps that suits its size on the screen, as the
+    # game's own particle shaders read it: not the full-size level SampleFlat reads, which sparks and far puffs would shimmer by)
+    (("sprite",), "fragment", "    vec4 picture = texture(_MainTex, vs_TEXCOORD0);", "    vec4 picture = SampleMipped(_MainTex, vs_TEXCOORD0);"),
     (("shafts",), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
      """    // (the first two goes are drawn into pictures of the shafts' own, which lie as every picture does on this system; the
     // third into whatever the camera is drawing into, which may lie either way: as for the lens, above)
@@ -78,7 +81,7 @@ SPECIAL = [
     way = _ShaftStage.x < 2.5 ? -1.0 : _ProjectionParams.x;
 #endif
     vs_TEXCOORD0 = vec2(in_POSITION0.x * 0.5 + 0.5, in_POSITION0.y * way * 0.5 + 0.5);"""),
-    (("clouds",), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
+    (("clouds", "cloudskeep"), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
      """    // (every go of the clouds is drawn into pictures of their own (the noise's slices among them), which lie as every
     // picture does on this system: as for the lens's first go, above)
     float way = 1.0;
@@ -142,7 +145,7 @@ SPECIAL = [
 # its point in the picture, the same on Direct3D as on OpenGL, and is handed on as it comes. (Neither is drawn by a camera's own
 # projection, so _ProjectionParams, which FragCoord goes by, says nothing of them: the white water is worked out before any
 # camera has drawn, with whatever the last one of the frame before left there.)
-OWN = ("clouds", "oceanfoam", "fargroundpoints")
+OWN = ("clouds", "cloudskeep", "oceanfoam", "fargroundpoints")
 
 UNITYCG = """            #include "UnityCG.cginc"
 """
@@ -199,6 +202,7 @@ COMMON = """
             #define hlslcc_mtx4x4unity_MatrixV transpose(UNITY_MATRIX_V)
             #define SampleLod(S, uv, lod) S.SampleLevel(sampler##S, uv, lod)
             #define SampleFlat(S, uv) S.SampleLevel(sampler##S, uv, 0.0)
+            #define SampleMipped(S, uv) S.Sample(sampler##S, uv)
             #define SampleGradient(S, uv, dx, dy) S.SampleGrad(sampler##S, uv, dx, dy)
             #define Mod(x, y) ((x) - (y) * floor((x) / (y)))
             #define GreaterThan(a, b) ((a) > (b))
@@ -227,6 +231,19 @@ COMMON = """
             #endif
                 return pos;
             }
+"""
+
+# The size of a level other than the finest (GLSL's textureSize(t, k), with k anything but a written 0). TextureSize, above, gives
+# the finest's whatever level it is handed, and is handed only a written 0 (see sizes). It is left as it is: every program's HLSL
+# holds it, and a program whose HLSL changes by a byte is compiled afresh (windows.py's kept: the clouds' six take the compiler
+# half an hour). These honour the level, one for each kind of texture read here, and go only into a program that uses one. (The
+# review of the clouds' stride, 2026-10-27: patternMost asked the size of the pattern's coarser levels and was given the finest's,
+# on Direct3D alone, so it read outside them, got nought, and called the air clear everywhere.)
+LEVELLED = """            // (the size of the level asked for, which TextureSize does not give: see LEVELLED in tools/unityshaders/port.py)
+            int2 TextureSizeAt(Texture2D t, int lod) { uint w, h, n; t.GetDimensions((uint)lod, w, h, n); return int2(w, h); }
+            int3 TextureSizeAt(Texture3D t, int lod) { uint w, h, d, n; t.GetDimensions((uint)lod, w, h, d, n); return int3(w, h, d); }
+            int3 TextureSizeAt(Texture2DArray t, int lod) { uint w, h, e, n; t.GetDimensions((uint)lod, w, h, e, n); return int3(w, h, e); }
+            int2 TextureSizeAt(TextureCube t, int lod) { uint w, h, n; t.GetDimensions((uint)lod, w, h, n); return int2(w, h); }
 """
 
 BLEND = {0.0: "Zero", 1.0: "One", 2.0: "DstColor", 3.0: "SrcColor", 5.0: "SrcAlpha", 10.0: "OneMinusSrcAlpha"}
@@ -331,6 +348,23 @@ def two_argument_atan(text):
     return text
 
 
+def sizes(text):
+    """GLSL's textureSize(t, k), the size of t's level k: with k a written 0, TextureSize, as it always was (every call in
+    tools/shaderpack has one, 2026-10-27, and its HLSL stays as it was); with any other level, TextureSizeAt, which honours it (see
+    LEVELLED). (Said in a comment, it is renamed as it always was. A written 0 of a texture that is not flat finds no TextureSize,
+    and the compiler says so, as before.)"""
+    pattern = re.compile(r"(?<![\w.])textureSize\(")
+    at = 0
+    while True:
+        found = pattern.search(text, at)
+        if not found: return text
+        said = text.rfind("//", text.rfind("\n", 0, found.start()) + 1, found.start()) >= 0
+        nought = said or arguments(text[found.end():bracket(text, found.end() - 1)])[1:] == ["0"]
+        now = "TextureSize(" if nought else "TextureSizeAt("
+        text = text[:found.start()] + now + text[found.end():]
+        at = found.start() + len(now)
+
+
 KIND = r"(?:float|int|uint|bool)(?:[234](?:x[234])?)?"
 
 
@@ -422,7 +456,8 @@ def convert(text, stage, vectors={}, own=False):
     text = re.sub(r"\bbvec([234])\b", r"bool\1", text)
     text = re.sub(r"\bvec([234])\b", r"float\1", text)
     text = re.sub(r"\bmat([234])\b", r"float\1x\1", text)
-    for was, now in (("textureLod(", "SampleLod("), ("textureGrad(", "SampleGradient("), ("texture(", "SampleFlat("), ("texelFetch(", "TexelFetch("), ("textureSize(", "TextureSize("), ("mix(", "lerp("), ("fract(", "frac("),
+    text = sizes(text)
+    for was, now in (("textureLod(", "SampleLod("), ("textureGrad(", "SampleGradient("), ("texture(", "SampleFlat("), ("texelFetch(", "TexelFetch("), ("mix(", "lerp("), ("fract(", "frac("),
                      ("inversesqrt(", "rsqrt("), ("mod(", "Mod("), ("greaterThanEqual(", "GreaterThanEqual("), ("greaterThan(", "GreaterThan("), ("lessThanEqual(", "LessThanEqual("), ("lessThan(", "LessThan("), ("dFdx(", "ddx("), ("dFdy(", "ddy("), ("floatBitsToInt(", "asint(")):
         text = re.sub(r"(?<![\w.])" + re.escape(was), now, text)
     text = makers(text)
@@ -631,6 +666,9 @@ def program(which, header):
     out.append("\n            struct v2f\n            {\n%s\n            };\n" % "\n".join(passed))
     if vertex["helpers"].strip(): out.append(indented(convert(vertex["helpers"], "vertex", outside, own), "            ") + "\n")
     numbered = ", uint vertexId : SV_VertexID" if re.search(r"\bgl_VertexID\b", uncommented(vertex["main"] + vertex["helpers"])) else ""
+    # (and a colour or uv from the mesh, where the vertex program takes one: a particle's, make_bundle's VERTEX_INPUTS)
+    taken = dict(vertex["ins"])
+    numbered = "".join(", %s %s : %s" % (kind(taken[name]), name, meaning) for name, _, _, meaning in make_bundle.VERTEX_INPUTS if name in taken) + numbered
     out.append("            v2f vert(float3 in_POSITION0 : POSITION%s)\n            {\n                v2f OUT = (v2f)0;" % numbered)
     out.append(indented(re.sub(r"\breturn;", "return OUT;", convert(vertex["main"], "vertex", outside, own)), "            "))
     out.append("                return OUT;\n            }\n")
@@ -654,6 +692,8 @@ def program(which, header):
         if placed: out.append("                fragPos = IN.pos;")
         out.append(indented(re.sub(r"\bgl_FragDepth\b", "fragDepth", re.sub(r"\breturn;", "return result;", convert(fragment["main"], "fragment", outside, own))), "            "))
         out.append("                return result;\n            }")
+    # (a level's size asked for, see sizes: its helpers after the others, only in a program that uses them)
+    if re.search(r"(?<![\w.])TextureSizeAt\(", uncommented("\n".join(out[1:]))): out[0] += LEVELLED
     return out, clash
 
 
@@ -687,7 +727,7 @@ def port(which):
 
 if __name__ == "__main__":
     asked = sys.argv[1:]
-    for name in asked or ["volume", "enlarge", "layers", "motion", "carry", "mark", "shock", "shadow", "sundepth", "lens", "shafts", "clean", "veil", "clouds", "cloudsover", "cloudshade", "wet", "snow",
+    for name in asked or ["volume", "enlarge", "layers", "motion", "carry", "mark", "shock", "shadow", "sundepth", "lens", "shafts", "clean", "veil", "clouds", "cloudskeep", "cloudsover", "cloudshade", "wet", "snow",
                           "ocean", "oceanfoam", "oceanweed", "oceanunder", "drops", "blend", "farmotion", "grade", "fargroundpoints", "fargrounddraw", "fargrounddepth", "fargroundlights"]:
         # (a repository of one mod has that mod's shaders and not the others': those are passed over)
         if not asked and not os.path.exists(os.path.join(PACK, make_bundle.SHADERS[name]["code"])):

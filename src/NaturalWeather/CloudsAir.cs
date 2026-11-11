@@ -37,6 +37,7 @@ namespace NaturalWeather
         public float HazeHeight;        // and the haze's
         public bool Scatterers;         // (taken from Scatterer's config for the world)
         public Color Sky;               // the sky's colour as light (its brightest part 1)
+        public Color SkyOwn;            // (the same before it is taken a quarter of the way to white: the air's own scattering's colour)
         public bool Ready => Lut != null;
 
         Color[] made;
@@ -93,7 +94,8 @@ namespace NaturalWeather
             }
             var s = new Vector3(1f / Mathf.Pow(w.r, 4f), 1f / Mathf.Pow(w.g, 4f), 1f / Mathf.Pow(w.b, 4f));
             float most = Mathf.Max(s.x, Mathf.Max(s.y, s.z));
-            Sky = Color.Lerp(new Color(s.x / most, s.y / most, s.z / most), Color.white, 0.25f);
+            SkyOwn = new Color(s.x / most, s.y / most, s.z / most);
+            Sky = Color.Lerp(SkyOwn, Color.white, 0.25f);
 
             Vector3 ray = Rayleigh;
             float haze = Haze, top = Top, rayH = Scatterers ? RayleighHeight : 0f, hazeH = Scatterers ? HazeHeight : 0f;

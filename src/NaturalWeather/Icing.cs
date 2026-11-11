@@ -120,8 +120,9 @@ namespace NaturalWeather
             // (Since 0.5.0 the region's cells as the model keeps them, made ahead (see Model.RegionCells): worked out afresh for the
             // craft every half second, 30 km round, they were 10 ms a time, a hitch twice a second where ice could form (2026-10-20).
             // Only those the craft is inside count, and the region's reach holds every one of them.)
+            // (none under Blackrack's clouds, drawn in place of these: his towers are in the layers the weather here has from him)
             List<WeatherCell> cells = Model.RegionCells(w, v.latitude, v.longitude, ut);
-            for (int k = 0; k < cells.Count; k++)
+            for (int k = 0; k < (HisSky.On ? 0 : cells.Count); k++)
             {
                 WeatherCell c = cells[k];
                 if (alt < c.Base || alt > c.Top) continue;

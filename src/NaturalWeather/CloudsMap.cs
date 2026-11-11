@@ -110,6 +110,8 @@ namespace NaturalWeather
             // (the weather asked for all the places at once: with Natural Weather's own, every storm on the world is found once
             // for the lot. A map of Kerbin took 3.4 s of this thread until 0.2.2, each place asked by itself; see CloudSource.Many)
             Func<double, double, WeatherHere> weatherAt = CloudSource.Many(body, ut);
+            bool formTwo = Clouds.FormTwo;
+            float deckDeep = Clouds.DeckDeep2;
             for (int j = 0; j < High; j += stride)
             {
                 double lat = (j + 0.5 * stride) / High * 180.0 - 90.0;
@@ -120,7 +122,11 @@ namespace NaturalWeather
                     float lowKind = CloudSource.Kind(w.Low), midKind = CloudSource.Kind(w.Middle);
                     float lowCover = lowKind < 0f ? 0f : Mathf.Clamp01(w.Low.Cover), midCover = midKind < 0f ? 0f : Mathf.Clamp01(w.Middle.Cover);
                     float highCover = w.High.Kind == CloudKind.Cirrus || w.High.Kind == CloudKind.Altostratus ? Mathf.Clamp01(w.High.Cover) : 0f;
-                    var ca = new Color32(Byte(lowCover), Byte(Mathf.Max(0f, lowKind)), Byte(w.Low.Base / 8000f), Byte(w.Low.Top / 16000f));
+                    // (the second form's low decks as deep as Blackrack's, from the weather's base up: Clouds.DeckDeep2)
+                    float lowTop = w.Low.Top;
+                    if (formTwo && deckDeep > 0f && lowCover > 0.01f && (w.Low.Kind == CloudKind.Stratus || w.Low.Kind == CloudKind.Stratocumulus))
+                        lowTop = Mathf.Max(lowTop, Mathf.Min(w.Low.Base + deckDeep, midCover > 0.01f ? w.Middle.Base - 300f : float.MaxValue));
+                    var ca = new Color32(Byte(lowCover), Byte(Mathf.Max(0f, lowKind)), Byte(w.Low.Base / 8000f), Byte(lowTop / 16000f));
                     var cb = new Color32(Byte(Mathf.Max(w.Low.Water, w.Rain)), Byte(highCover), Byte(w.Storm), Byte(midCover));
                     var cc = new Color32(Byte(Mathf.Max(0f, midKind)), Byte(w.Middle.Base / 12000f), Byte(w.Middle.Top / 16000f), Byte(w.Middle.Water));
                     for (int jj = j; jj < Math.Min(High, j + stride); jj++)
@@ -135,7 +141,7 @@ namespace NaturalWeather
                     if (dLat < reach && dLon * Math.Cos(lat * Math.PI / 180.0) < reach)
                     {
                         if (lowCover > 0.01f && w.Low.Kind == CloudKind.Fog) { fogTop = Math.Max(fogTop, w.Low.Top); fogLowest = Math.Min(fogLowest, w.Low.Base); fogTopLowest = Math.Min(fogTopLowest, w.Low.Top); }
-                        else if (lowCover > 0.01f) { top = Math.Max(top, w.Low.Top); lowest = Math.Min(lowest, w.Low.Base); any = true; }
+                        else if (lowCover > 0.01f) { top = Math.Max(top, lowTop); lowest = Math.Min(lowest, w.Low.Base); any = true; }
                         if (midCover > 0.01f) { top = Math.Max(top, w.Middle.Top); lowest = Math.Min(lowest, w.Middle.Base); any = true; }
                         if (highCover > 0.01f) { highSum += 0.5f * (w.High.Base + w.High.Top) * highCover; highWeight += highCover; any = true; }
                     }

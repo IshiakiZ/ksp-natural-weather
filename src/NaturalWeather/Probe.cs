@@ -154,6 +154,37 @@ namespace NaturalWeather
         public static float RowNow = 1f;
 
         /// <summary>
+        /// One storm held where it is put, for a picture: "km heading" from where the camera's craft is now (heading in degrees
+        /// from north, or "upwind": against the wind high up, so that its anvil is blown over the craft), and optionally how
+        /// strong (0 to 1, by default 0.9) and how far through its life (0 to 1, by default 0.5, its prime). Grown there as a
+        /// storm of the weather's own would be, and still; "off" lets it go. (Model.HeldCells.)
+        /// </summary>
+        public static string Cell(string arg)
+        {
+            string[] t = (arg ?? "").Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            double V(int i, double otherwise) => i < t.Length && double.TryParse(t[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : otherwise;
+            if (t.Length == 0 || t[0] == "off") { Model.CellHeld = false; Model.Forget(); Launch.Again(); return "no storm held"; }
+            if (!WeatherDriver.Place(out CelestialBody body, out double lat, out double lon, out double alt, out float agl)) return "nowhere";
+            World w = World.Of(body);
+            double heading;
+            if (t.Length > 1 && t[1] == "upwind")
+            {
+                Column col = Model.ColumnAt(w, lat, lon, Planetarium.GetUniversalTime());
+                heading = Math.Atan2(-col.JE, -col.JN) * 180.0 / Math.PI;
+            }
+            else heading = V(1, 0.0);
+            double d = V(0, 0.0) * 1000.0 / w.Radius, h = heading * Math.PI / 180.0, la = lat * Math.PI / 180.0;
+            double la2 = Math.Asin(Math.Sin(la) * Math.Cos(d) + Math.Cos(la) * Math.Sin(d) * Math.Cos(h));
+            double lo2 = lon * Math.PI / 180.0 + Math.Atan2(Math.Sin(h) * Math.Sin(d) * Math.Cos(la), Math.Cos(d) - Math.Sin(la) * Math.Sin(la2));
+            Model.CellWorld = body.bodyName;
+            Model.CellLat = la2 * 180.0 / Math.PI; Model.CellLon = lo2 * 180.0 / Math.PI;
+            Model.CellStrength = Mathf.Clamp01((float)V(2, 0.9)); Model.CellLife = Mathf.Clamp01((float)V(3, 0.5));
+            Model.CellHeld = true;
+            Model.Forget(); Launch.Again();
+            return "a storm held at " + Model.CellLat.ToString("F3") + ", " + Model.CellLon.ToString("F3") + " (" + V(0, 0.0).ToString("F1") + " km on " + heading.ToString("F0") + " degrees), strength " + Model.CellStrength.ToString("F2") + ", life " + Model.CellLife.ToString("F2");
+        }
+
+        /// <summary>
         /// The wind along a line over the space centre, without gusts: "e0 n0 e1 n1 steps height" (metres east and north of
         /// the pad for its two ends, how many places, how high above the ground). For each place: east, north and up, m/s.
         /// </summary>

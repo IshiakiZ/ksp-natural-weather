@@ -286,7 +286,8 @@ namespace NaturalWeather
                     double run = Math.Min(40000.0, (mid - alt) * level / sunUp);
                     double dn = level > 1e-4f ? run * sunN / level : 0.0, de = level > 1e-4f ? run * sunE / level : 0.0;
                     double la = lat + dn / w.Radius / Deg, lo = lon + de / (w.Radius * Math.Max(0.05, Math.Cos(lat * Deg))) / Deg;
-                    pattern = CloudAt(w, la, lo, mid, ut);
+                    // (where Blackrack's clouds are drawn in place of these, his cloud along the line)
+                    pattern = HisSky.On ? HisSky.CoverAt(w, la, lo, mid) : CloudAt(w, la, lo, mid, ut);
                     // (the rest of the layer's depth along the slanting line: thicker the lower the sun)
                     pattern *= Math.Min(3f, 1f / Math.Max(0.15f, sunUp));
                 }

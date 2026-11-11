@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace NaturalWeather
 {
@@ -11,7 +13,8 @@ namespace NaturalWeather
     /// the ground ("EVE ScreenSpaceShadow"); each renderer is told not to draw (forceRenderingOff, which EVE's own switching
     /// leaves alone), never destroyed; the puffs' holders are made inactive, whole (see HidePuffs). City lights are left as they
     /// are. Looked for every few seconds and whenever the camera's height crosses a power of two of kilometres; the puffs, which EVE
-    /// makes anew whenever the camera comes near, every frame (HidePuffs).
+    /// makes anew whenever the camera comes near, every frame (HidePuffs). Blackrack's clouds, drawn as volumes by his own EVE, and
+    /// what comes with them (his rain, his drops on the cockpit's windows, his sounds, his wet ground), hidden the same way (HideHis).
     /// </summary>
     static class CloudsEve
     {
@@ -26,7 +29,12 @@ namespace NaturalWeather
         static readonly Dictionary<Material, float> shadowsKept = new Dictionary<Material, float>();
         static readonly int idShadowFactor = Shader.PropertyToID("_ShadowFactor");
 
-        public static int Count => hidden.Count + puffs.Count;
+        public static int Count => hidden.Count + puffs.Count + his.Count;
+
+        /// <summary>For the mod's page: where Blackrack's clouds are installed, whether they are hidden or drawn ("" without them).</summary>
+        public static string Report =>
+            his.Count > 0 ? "Blackrack's clouds hidden on " + hiddenFor + " while these are drawn (" + his.Count + (his.Count == 1 ? " layer" : " layers") + (hisWet.Count > 0 ? ", and his wet ground" : "") + ")."
+            : HisFound() ? "Blackrack's clouds drawn" + (CloudsPage.Wanted ? "" : ", in place of these") + (HisSky.On ? "; the rain, the storms, the ice and the light near the camera go by them." : ".") : "";
 
         static bool IsEveCloud(Material m)
         {
@@ -50,6 +58,7 @@ namespace NaturalWeather
             if (name != hiddenFor) Show();
             if (body == null) return;
             HidePuffs(body);
+            HideHisWet();
             Quiet();
             // (The rest of EVE's clouds it makes once, at a scene's start, and switches on and off by the camera's height (its flat
             // layer's picture near or far, its shadow on the ground near: EVE's Clouds2D): so looked for every few seconds, and at once
@@ -73,11 +82,14 @@ namespace NaturalWeather
                 hidden.Add(r);
                 if (m.shader.name.IndexOf("CloudShadow", StringComparison.Ordinal) >= 0 && !shadowsKept.ContainsKey(m)) shadowsKept[m] = m.GetFloat(idShadowFactor);
             }
+            int hisBefore = his.Count;
+            HideHis(body);
+            HideHisWet();
             Quiet();
             // (Every renderer in the scene looked through takes milliseconds with everything installed: 4.3 at the pad, a hitch
             // every four seconds until 2026-10-18. So again in four seconds while EVE is still making its clouds (some found
             // this time), then after 8, 16 ... up to two minutes; from the start again on another world.)
-            lookEvery = hidden.Count > before ? 4f : Mathf.Min(lookEvery * 2f, 120f);
+            lookEvery = hidden.Count > before || his.Count > hisBefore ? 4f : Mathf.Min(lookEvery * 2f, 120f);
 #if DEV
             Scans++; NewlyHidden = hidden.Count - before;
 #endif
@@ -121,9 +133,197 @@ namespace NaturalWeather
             }
         }
 
+        // Blackrack's clouds (his own EVE, which draws a world's clouds as volumes: Atmosphere.CloudsRaymarchedVolume). His renderer
+        // draws each layer for every camera that is about to draw the layer's holder, an invisible mesh (EVE/Invisible: the search
+        // above, which goes by the material's shader, never knew them), and his CloudsPQS switches each layer's parts on and off every
+        // frame by the camera's height: a part switched off from here would be on again a frame later. So the CloudsPQS of each of his
+        // layers on the world is switched off whole (its own `enabled`, which takes its flat layer and its volume with it, and the
+        // volume its rain, its drops on the cockpit's windows, its sounds and its shadows), and is left so until Show. Found by name,
+        // through reflection: nothing of his is built against. Where any of it is not there as looked for (EVE without his clouds, or
+        // a later one of his made otherwise), nothing of this is done and the search above goes on as before.
+        static bool hisLooked;
+        static Type hisPqs;
+        static FieldInfo hisVolume, hisBody;
+        static PropertyInfo hisOn;
+        static readonly List<MonoBehaviour> his = new List<MonoBehaviour>();
+        // (His renderer's own "make every camera's renderer afresh", which he calls when his quality settings change: see ShowHis.)
+        static MethodInfo hisAfresh;
+#if DEV
+        /// <summary>(Development build: his renderers left as they were when his clouds are shown again, as before 2026-11-03.)</summary>
+        public static bool TestKeepHisRenderers;
+#endif
+
+        static Type hisVolumes;
+        /// <summary>His clouds' type (Atmosphere.CloudsRaymarchedVolume) where they are installed as looked for; else null.</summary>
+        internal static Type HisVolumeType => HisFound() ? hisVolumes : null;
+        /// <summary>Whether his layers are hidden here now (these clouds drawn in their place).</summary>
+        internal static bool HidingHis => his.Count > 0;
+        /// <summary>How many times his layers have been shown again (for HisSky, which then lists them afresh).</summary>
+        internal static int HisShown { get; private set; }
+
+        /// <summary>His volumes on this world, those whose layer is switched on and not hidden from here (for HisSky).</summary>
+        internal static void HisVolumes(CelestialBody body, List<object> into)
+        {
+            into.Clear();
+            if (his.Count > 0 || body == null || !HisFound()) return;
+            foreach (UnityEngine.Object o in UnityEngine.Object.FindObjectsOfType(hisPqs))
+            {
+                var layer = o as MonoBehaviour;
+                if (layer == null) continue;
+                try
+                {
+                    object volume = hisVolume.GetValue(layer);
+                    if (volume != null && ReferenceEquals(hisBody.GetValue(layer), body) && (bool)hisOn.GetValue(layer, null)) into.Add(volume);
+                }
+                catch (Exception) { }
+            }
+        }
+
+        static bool HisFound()
+        {
+            if (hisLooked) return hisPqs != null;
+            hisLooked = true;
+            const BindingFlags inside = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach (AssemblyLoader.LoadedAssembly a in AssemblyLoader.loadedAssemblies)
+            {
+                if (a == null || a.assembly == null || a.assembly.GetName().Name != "Atmosphere") continue;       // (EVE's library, his too)
+                try
+                {
+                    Type pqs = a.assembly.GetType("Atmosphere.CloudsPQS", false), volumes = a.assembly.GetType("Atmosphere.CloudsRaymarchedVolume", false);
+                    if (pqs == null || volumes == null) continue;
+                    FieldInfo volume = pqs.GetField("layerRaymarchedVolume", inside), body = pqs.GetField("celestialBody", inside);
+                    PropertyInfo on = pqs.GetProperty("enabled", BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
+                    if (volume == null || body == null || on == null || on.PropertyType != typeof(bool) || !on.CanRead || !on.CanWrite) continue;
+                    hisPqs = pqs; hisVolume = volume; hisBody = body; hisOn = on; hisVolumes = volumes;
+                    hisAfresh = a.assembly.GetType("Atmosphere.DeferredRaymarchedVolumetricCloudsRenderer", false)?.GetMethod("ReinitAll", BindingFlags.Static | BindingFlags.Public, null, Type.EmptyTypes, null);
+                }
+                catch (Exception) { }
+            }
+            return hisPqs != null;
+        }
+
+        /// <summary>Each of Blackrack's layers on this world switched off (only those he draws as volumes, and only those that were on).</summary>
+        static void HideHis(CelestialBody body)
+        {
+            if (!HisFound()) return;
+            his.RemoveAll(p => p == null);
+            foreach (UnityEngine.Object o in UnityEngine.Object.FindObjectsOfType(hisPqs))
+            {
+                var layer = o as MonoBehaviour;
+                if (layer == null || his.Contains(layer)) continue;
+                try
+                {
+                    if (hisVolume.GetValue(layer) == null || !ReferenceEquals(hisBody.GetValue(layer), body) || !(bool)hisOn.GetValue(layer, null)) continue;
+                    hisOn.SetValue(layer, false, null);
+                    his.Add(layer);
+                }
+                catch (Exception) { }
+            }
+        }
+
+        // His wet ground is a pass of its own on the near and the far camera ("EVE Wet Effects CommandBuffer", before the reflections
+        // in the deferred picture), put on once by each camera's renderer of his and never again, and worked out from where his clouds
+        // have rained, switched on or not: taken off while his layers are, and put back after only where that renderer of his is
+        // still on its camera. Looked for each frame only when a camera's count of command buffers has changed. Taken off too while
+        // his clouds are drawn and the weather's own wet ground is on (QuietHisWet): that goes by his clouds then (HisSky), and the
+        // two together were two wet grounds.
+        const string HisWetName = "EVE Wet Effects CommandBuffer";
+        static readonly List<KeyValuePair<Camera, CommandBuffer>> hisWet = new List<KeyValuePair<Camera, CommandBuffer>>();
+        static readonly Dictionary<Camera, int> wetCounted = new Dictionary<Camera, int>();
+        static readonly string[] wetCameras = { "Camera 00", "Camera 01" };
+        static bool wetQuiet;
+
+        /// <summary>Whether the weather's own wet ground is drawn (then his is not, wherever his clouds are drawn).</summary>
+        static bool OursWet => Weather.On != null && Weather.On && Weather.WetGround != null && Weather.WetGround;
+
+        /// <summary>His wet ground taken off while his clouds are drawn and the weather's own is on, and put back when it is not (HisSky).</summary>
+        internal static void QuietHisWet()
+        {
+            wetQuiet = OursWet;
+            if (wetQuiet) HideHisWet();
+            else if (his.Count == 0) ShowHisWet();
+        }
+
+        static void HideHisWet()
+        {
+            if (his.Count == 0 && !wetQuiet) return;
+            foreach (string named in wetCameras)
+            {
+                Camera c = Keystone.Names.CameraNamed(named, false);
+                if (c == null || (wetCounted.TryGetValue(c, out int counted) && counted == c.commandBufferCount)) continue;
+                foreach (CommandBuffer b in c.GetCommandBuffers(CameraEvent.BeforeReflections))
+                {
+                    if (b == null || b.name != HisWetName) continue;
+                    c.RemoveCommandBuffer(CameraEvent.BeforeReflections, b);
+                    hisWet.Add(new KeyValuePair<Camera, CommandBuffer>(c, b));
+                }
+                wetCounted[c] = c.commandBufferCount;
+            }
+        }
+
+        static void ShowHis()
+        {
+            if (his.Count > 0) HisShown++;
+            // (His renderer blends each picture of his clouds with the one before, carried over to where the camera now is. Shown
+            // again after being hidden, the one before was the last from before they were hidden, from wherever the camera was
+            // then: in one film of three that old picture was drawn for a frame. So every camera's renderer of his is made afresh,
+            // as his own settings do when they change, and starts from nothing.)
+            bool afresh = his.Count > 0 && hisAfresh != null;
+#if DEV
+            afresh = afresh && !TestKeepHisRenderers;
+#endif
+            if (afresh) try { hisAfresh.Invoke(null, null); } catch (Exception) { }
+            foreach (MonoBehaviour layer in his)
+                if (layer != null) try { hisOn.SetValue(layer, true, null); } catch (Exception) { }
+            his.Clear();
+            // (kept off where the weather's own wet ground will stand in for it at once: HisSky asks again twice a second)
+            wetQuiet = wetQuiet && OursWet;
+            if (!wetQuiet) ShowHisWet();
+        }
+
+        static void ShowHisWet()
+        {
+            foreach (KeyValuePair<Camera, CommandBuffer> k in hisWet)
+            {
+                Camera c = k.Key;
+                if (c == null || k.Value == null || !HisWetOn(c)) continue;
+                bool there = false;
+                foreach (CommandBuffer b in c.GetCommandBuffers(CameraEvent.BeforeReflections)) if (b == k.Value) there = true;
+                if (!there) c.AddCommandBuffer(CameraEvent.BeforeReflections, k.Value);
+            }
+            hisWet.Clear(); wetCounted.Clear();
+        }
+
+        /// <summary>Whether his wet ground's renderer is still on this camera (by its type's name: it is his).</summary>
+        static bool HisWetOn(Camera c)
+        {
+            foreach (MonoBehaviour m in c.GetComponents<MonoBehaviour>())
+                if (m != null && m.GetType().Name == "WetSurfacesPerCameraRenderer") return true;
+            return false;
+        }
+
 #if DEV
         /// <summary>(Development build: how many times the scene has been looked through, and how many were hidden the last time.)</summary>
         public static int Scans, NewlyHidden;
+        /// <summary>(Development build: his wet ground, on the cameras or taken off.)</summary>
+        public static string WetSays()
+        {
+            var say = new System.Text.StringBuilder("his wet ground: " + hisWet.Count + " taken off" + (wetQuiet ? " (the weather's own drawn in its place)" : "") + ";");
+            foreach (string named in wetCameras)
+            {
+                Camera c = Keystone.Names.CameraNamed(named, false);
+                int on = 0;
+                if (c != null) foreach (CommandBuffer b in c.GetCommandBuffers(CameraEvent.BeforeReflections)) if (b != null && b.name == HisWetName) on++;
+                say.Append(' ').Append(named).Append(c == null ? " none" : ": " + on + " on" + (HisWetOn(c) ? "" : ", his renderer gone"));
+            }
+            return say.ToString();
+        }
+        /// <summary>(Development build: "keep", his renderers left as they were when his clouds are shown again; "afresh", made afresh.)</summary>
+        public static string HisRenderers(string v)
+        {
+            if (v == "keep" || v == "afresh") TestKeepHisRenderers = v == "keep";
+            return "his renderers " + (TestKeepHisRenderers ? "kept" : "made afresh") + " when his clouds are shown again" + (hisAfresh == null ? " (his ReinitAll not found)" : "");
+        }
         /// <summary>(Development build: look through the scene again at the next frame.)</summary>
         public static string Rescan() { lookedAt = -100f; lookEvery = 4f; return "EVE's clouds looked for again at the next frame (" + hidden.Count + " hidden now)"; }
         static readonly List<Renderer> planetHidden = new List<Renderer>();
@@ -170,8 +370,16 @@ namespace NaturalWeather
             shadowsKept.Clear();
             foreach (GameObject g in puffs) if (g != null) g.SetActive(true);
             puffs.Clear(); seen.Clear();
+            ShowHis();
             hiddenFor = "";
             lookedAt = -100f; lookEvery = 4f;
+        }
+
+        /// <summary>Everything of EVE's shown again, his wet ground too (these clouds gone: another scene, or the mod taken out).</summary>
+        public static void Release()
+        {
+            wetQuiet = false;
+            Show();
         }
     }
 }

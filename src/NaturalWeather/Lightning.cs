@@ -34,7 +34,8 @@ namespace NaturalWeather
             public readonly List<Vector3> Points = new List<Vector3>();       // in metres east, north, up from its foot
             public readonly List<int> From = new List<int>();                 // the point each one hangs from (-1 none)
             public readonly List<float> Weight = new List<float>();           // how bright each length is, 1 the main channel
-            public Vector3 Shift;              // a strike on a craft: where the craft is, from the foot
+            public bool OnCraft;               // a strike on a craft,
+            public Vector3 Through;            // and where on the craft the channel meets it, from the foot (east, north, up)
             public GameObject Go;
             public Mesh Mesh;
             public MeshRenderer Renderer;
@@ -51,7 +52,28 @@ namespace NaturalWeather
         long lastSlot = long.MinValue;
         Material core, glow;
         Texture2D soft;
+        // (How a flash lights the scene, see Lit: 3, in the even light of each camera that draws the scene, as built since
+        // 2026-11-10. The development build's LightAs changes it, and only there are these two lights of Unity's made, for
+        // films of how it was before: a light from the way of the flash and a lamp at a near strike's foot.)
         Light flashLight, nearLight;
+        static int lightAs = 3;
+        static bool lightDark = false;
+        static float lightGain = 1f;
+        // (for the development build's films of how it was: a flash's light as strong by day as by night)
+        static bool lightAllDay = false;
+        // (how much of a flash's light showed for the daylight at the last flash, see ByDay)
+        internal static float dayShare = 1f;
+        // (how much of a flash's light comes from all round as well as from its own way, see Lit)
+        static float lightRound = 0.125f;
+        static readonly Color flashColour = new Color(0.84f, 0.88f, 1f);
+        const int litLayers = ~((1 << 5) | (1 << 9) | (1 << 10) | (1 << 16) | (1 << 20));
+        // (the flash's light this frame: how strong, and the way to it; and what a camera's even light was before it was added)
+        float litNow;
+        Vector3 litFrom = Vector3.up;
+        int litMask = litLayers;
+        bool litSet;
+        SphericalHarmonicsL2 litWas;
+        AmbientMode litMode;
         readonly List<AudioSource> voices = new List<AudioSource>();
         float strikeCheck;
         float sasBackAt = -1f;
@@ -68,26 +90,108 @@ namespace NaturalWeather
                 core = new Material(add) { mainTexture = soft, renderQueue = 3150 };
                 glow = new Material(add) { mainTexture = soft, renderQueue = 3150 };
             }
-            flashLight = MakeLight("NaturalWeather flash", LightType.Directional);
-            nearLight = MakeLight("NaturalWeather strike", LightType.Point);
+            // (what the sun lights, a flash lights)
+            litMask = Sun.Instance != null && Sun.Instance.sunLight != null ? Sun.Instance.sunLight.cullingMask : litLayers;
+#if DEV
+            flashLight = MakeLight("NaturalWeather flash", LightType.Directional, litMask);
+            nearLight = MakeLight("NaturalWeather strike", LightType.Point, litMask);
             nearLight.range = 2500f;
             nearLight.renderMode = LightRenderMode.ForceVertex;
+#endif
             Clouds.InFront += InFront;
+            Camera.onPreRender += Lit;
+            Camera.onPostRender += Unlit;
         }
 
-        static Light MakeLight(string name, LightType type)
+#if DEV
+        static Light MakeLight(string name, LightType type, int mask)
         {
             var go = new GameObject(name);
             Light l = go.AddComponent<Light>();
             l.type = type; l.intensity = 0f; l.enabled = false; l.shadows = LightShadows.None;
-            l.color = new Color(0.84f, 0.88f, 1f);
-            l.cullingMask = Sun.Instance != null && Sun.Instance.sunLight != null ? Sun.Instance.sunLight.cullingMask : ~((1 << 5) | (1 << 9) | (1 << 10) | (1 << 16) | (1 << 20));
+            l.color = flashColour;
+            l.cullingMask = mask;
             return l;
+        }
+#endif
+
+        /// <summary>
+        /// A flash's light, given to a camera that is about to draw the scene: added to the even light the camera gives
+        /// everything it draws (the ambient probe: nine numbers a colour, which say how much light comes from each way), and
+        /// taken out again when the camera has drawn (Unlit). The light comes from the way of the flash, as a far light's does,
+        /// with an eighth as much from all round as well (the sky and the ground a flash lights up), so that no face is
+        /// given less than nothing: by itself, a light from one way written in nine numbers gives the faces turned 100 to 150
+        /// degrees from it a little less than nothing (a twenty-seventh of the light at the worst), and that would be taken
+        /// off whatever else lights them.
+        ///
+        /// Why not a light of Unity's, as until 2026-11-10 (a far light from the way of the flash, and a lamp at the foot of a
+        /// strike within 3 km): at night on the launch pad under Natural Light's floodlights both made the pad DARKER while
+        /// they shone (filmed, the picture's lower half measured in levels of 255, about 23 before a flash). The lamp took the
+        /// place of one of the four lamps Unity lights each thing by, and two of the pad's walls lost a floodlight for as long
+        /// as the flash lasted: 29 levels darker over a third of the lower half, 6 on the whole, a strike 2.5 km off with only
+        /// the lamp lit. The far light alone, a strike 3.5 km ahead: 1.3 to 1.6 darker on the whole (the faces turned sideways
+        /// to it darker, as above; a tenth of it shone from the far side as well did not mend it). In the even light a flash
+        /// only ever adds: strikes 3.5, 2.5, 1 and 0.3 km ahead and 0.5 km behind, no frame darker than before.
+        /// </summary>
+        void Lit(Camera cam)
+        {
+            if (litNow <= 0f || litSet || cam == null || (cam.cullingMask & litMask) == 0) return;
+            litWas = RenderSettings.ambientProbe; litMode = RenderSettings.ambientMode; litSet = true;
+            SphericalHarmonicsL2 with = EvenNow(litMode);
+            with.AddDirectionalLight(litFrom, flashColour, litNow);
+            with.AddAmbientLight(flashColour * (litNow * lightRound));
+            if (litMode != AmbientMode.Custom) RenderSettings.ambientMode = AmbientMode.Custom;
+            RenderSettings.ambientProbe = with;
+        }
+
+        /// <summary>
+        /// The even light as nine numbers, whatever way it is set. Set as a probe (by a mod: Natural Light's) or from the sky,
+        /// it is the probe. Set as the game sets it by itself, one flat colour, the probe is NOT that colour: it is whatever
+        /// probe was last set, by anybody (measured 2026-11-10 with Natural Light off: the flat colour 0.24, the probe read back
+        /// 0.013, and a faint flash added to that made the pad 5 levels of 255 darker). So from the colours then, as light:
+        /// a probe's numbers are amounts of light, whichever way the game keeps its colours, and the colours are as shown (the
+        /// flat colour put in as it stands made the pad 13 levels brighter than the game's own flat light does; put in as
+        /// light it matched the game's own flat light within 0.04 of a level, filmed). The three-colour way is not one the
+        /// game or any mod of ours sets: its branch is a near guess, never tried.
+        /// (Rain and Snow read the even light through this too, since 2026-11-10: with Natural Light off from the game's
+        /// start the probe read back black, and the rain, the falling snow and the dust were lit by nothing, the lying snow
+        /// by no sky.)
+        /// </summary>
+        internal static SphericalHarmonicsL2 EvenNow(AmbientMode mode)
+        {
+            if (mode == AmbientMode.Custom || mode == AmbientMode.Skybox) return RenderSettings.ambientProbe;
+            var p = new SphericalHarmonicsL2();
+            if (mode == AmbientMode.Trilight)
+            {
+                // (three colours, for faces turned up, sideways and down: near enough the middle one from all round, and what
+                // the other two differ from it by from straight above and below)
+                Color sky = RenderSettings.ambientSkyColor, mid = RenderSettings.ambientEquatorColor, ground = RenderSettings.ambientGroundColor;
+                sky = sky.linear; mid = mid.linear; ground = ground.linear;
+                p.AddAmbientLight(mid);
+                p.AddDirectionalLight(Vector3.up, sky - mid, 1f);
+                p.AddDirectionalLight(Vector3.down, ground - mid, 1f);
+            }
+            else
+            {
+                p.AddAmbientLight(RenderSettings.ambientLight.linear);
+            }
+            return p;
+        }
+
+        void Unlit(Camera cam)
+        {
+            if (!litSet) return;
+            litSet = false;
+            RenderSettings.ambientProbe = litWas;
+            if (RenderSettings.ambientMode != litMode) RenderSettings.ambientMode = litMode;
         }
 
         void OnDestroy()
         {
             Clouds.InFront -= InFront;
+            Camera.onPreRender -= Lit;
+            Camera.onPostRender -= Unlit;
+            Unlit(null);
             foreach (Bolt b in bolts) Drop(b);
             bolts.Clear();
             if (flashLight != null) Destroy(flashLight.gameObject);
@@ -105,7 +209,9 @@ namespace NaturalWeather
             CelestialBody body = WeatherDriver.Here();
             double ut = Planetarium.GetUniversalTime();
             bool on = Weather.On && cam != null && body != null && body.atmosphere && Model.Allowed(body);
-            if (on) Schedule(body, cam.transform.position, ut);
+            // (none of the weather's own storms' flashes under Blackrack's clouds, drawn in place of these: his storms are not
+            // where these storms are, and his own lightning flashes in his; a craft can still be struck in his, see Strikes)
+            if (on && !HisSky.On) Schedule(body, cam.transform.position, ut);
             else lastSlot = long.MinValue;
             // the flashes whose moment has come
             for (int i = pending.Count - 1; i >= 0; i--)
@@ -169,7 +275,7 @@ namespace NaturalWeather
 
         // ---------------------------------------------------------------- a flash
 
-        void Begin(WeatherFlash f, Camera cam, Vector3 strikeAt, bool onCraft)
+        void Begin(WeatherFlash f, Camera cam, Vector3 strikeAt, bool onCraft, bool onward = false)
         {
             Keystone.Weather.Flash(f);
             lately.Add(Time.realtimeSinceStartup);
@@ -183,9 +289,9 @@ namespace NaturalWeather
             var rng = new System.Random(f.Seed);
             float t = 0f;
             for (int k = 0; k < b.Strokes.Length; k++) { b.Strokes[k] = t; t += 0.035f + 0.06f * (float)rng.NextDouble(); }
-            Channel(b, rng, f.Top - f.Bottom, f.Ground, onCraft);
-            if (onCraft) b.Shift = strikeAt;
-            else b.Under = CloudUnder(f);
+            b.OnCraft = onCraft; b.Through = onCraft ? strikeAt : Vector3.zero;
+            Channel(b, rng, f.Top - f.Bottom, f.Ground, onCraft, strikeAt, onward);
+            if (!onCraft) b.Under = CloudUnder(f);
             bool draw = Weather.Flashes && core != null && (f.Ground || onCraft);
             if (draw)
             {
@@ -204,22 +310,39 @@ namespace NaturalWeather
             if (Weather.Thunder > 0.01f && TimeWarp.CurrentRate <= 1.01f) Thunder(b, cam.transform.position, foot);
         }
 
-        /// <summary>The channel: from the cloud down to the ground (or, for a flash within the cloud, across it), stepping crookedly, with side branches that stop in mid-air.</summary>
-        static void Channel(Bolt b, System.Random rng, float height, bool ground, bool onCraft)
+        /// <summary>
+        /// The channel: from the cloud down to the ground (or, for a flash within the cloud, across it), stepping crookedly,
+        /// with side branches that stop in mid-air. A strike on a craft comes down to the craft (strikeAt, from the foot), and,
+        /// if the craft is in the air (onward), goes on from it to the ground. Since 2026-11-10 the steps grow shorter toward
+        /// where the channel comes down (the ground, or the craft), down to two metres: until then every step was a fifty-fifth
+        /// of the channel's height, tens of metres, and a strike seen from 20 m was a ruler-straight bar (filmed).
+        /// </summary>
+        static void Channel(Bolt b, System.Random rng, float height, bool ground, bool onCraft, Vector3 strikeAt, bool onward)
         {
             height = Mathf.Max(300f, height);
             b.Points.Add(new Vector3(0f, 0f, height)); b.From.Add(-1); b.Weight.Add(1f);
-            Vector3 target = ground || onCraft ? Vector3.zero : new Vector3((float)(rng.NextDouble() - 0.5) * height * 2f, (float)(rng.NextDouble() - 0.5) * height * 2f, height * 0.7f);
-            Walk(b, rng, 0, target, height / 55f, 1f, 2);
+            float step = height / 55f;
+            if (onCraft)
+            {
+                Walk(b, rng, 0, strikeAt, step, 1f, 2, true, strikeAt);
+                if (onward && strikeAt.z > 4f) Walk(b, rng, b.Points.Count - 1, Vector3.zero, step, 1f, 1, true, strikeAt);
+                return;
+            }
+            Vector3 target = ground ? Vector3.zero : new Vector3((float)(rng.NextDouble() - 0.5) * height * 2f, (float)(rng.NextDouble() - 0.5) * height * 2f, height * 0.7f);
+            Walk(b, rng, 0, target, step, 1f, 2, ground, target);
         }
 
-        static void Walk(Bolt b, System.Random rng, int from, Vector3 target, float step, float weight, int depth)
+        /// <summary>(fine: the steps no longer than a fifth of the way to `about`, two metres at the least; its branches' too.)</summary>
+        static void Walk(Bolt b, System.Random rng, int from, Vector3 target, float step, float weight, int depth, bool fine = false, Vector3 about = default(Vector3))
         {
             Vector3 at = b.Points[from];
             int last = from;
             int guard = 0;
-            while ((target - at).magnitude > step && guard++ < 400)
+            float full = step;
+            while (guard++ < 400)
             {
+                if (fine) step = Mathf.Min(full, Mathf.Max(2f, (about - at).magnitude * 0.2f));
+                if ((target - at).magnitude <= step) break;
                 Vector3 toward = (target - at).normalized;
                 Vector3 kink = new Vector3((float)(rng.NextDouble() * 2 - 1), (float)(rng.NextDouble() * 2 - 1), (float)(rng.NextDouble() * 2 - 1) * 0.5f);
                 Vector3 dir = (toward + kink * 0.75f).normalized;
@@ -227,12 +350,13 @@ namespace NaturalWeather
                 at += dir * len;
                 b.Points.Add(at); b.From.Add(last); b.Weight.Add(weight);
                 last = b.Points.Count - 1;
-                if (depth > 0 && rng.NextDouble() < 0.07)
+                // (a branch as often by the metre whatever the step: a short step is so much the less likely to bear one)
+                if (depth > 0 && rng.NextDouble() < 0.07 * step / full)
                 {
                     // a branch: off to one side and down, for a stretch, and it stops
                     Vector3 side = new Vector3((float)(rng.NextDouble() * 2 - 1), (float)(rng.NextDouble() * 2 - 1), -0.6f - (float)rng.NextDouble()).normalized;
                     float run = (at.z) * (0.15f + 0.35f * (float)rng.NextDouble());
-                    Walk(b, rng, last, at + side * run, step * 0.8f, weight * 0.35f, depth - 1);
+                    Walk(b, rng, last, at + side * run, full * 0.8f, weight * 0.35f, depth - 1, fine, about);
                 }
             }
             b.Points.Add(target); b.From.Add(last); b.Weight.Add(weight);
@@ -271,10 +395,58 @@ namespace NaturalWeather
             return v * b.F.Brightness;
         }
 
+        /// <summary>
+        /// How much of a flash's light shows on the scene for the daylight there is: all of it by night, a seventeenth with
+        /// the sun up. A camera set for the day, and an eye used to it, takes in thousands of times less light than one set
+        /// for the night, and this game shows a night and a day at much the same levels on the screen: a flash that adds the
+        /// same light to both can be right for one of them only, and it was made for the night. Filmed 2026-11-10 with the sun
+        /// up under a storm, the lower half of the picture 50 of 255 before: a strike 3.5 km ahead raised it by 34, one 1 km
+        /// ahead by 84, and the whole field went pale for as long as the flash lasted. In film of real strikes by day the land
+        /// does not change at such distances: the channel is seen, and only a strike a few hundred metres off or nearer
+        /// brightens the picture, for a frame or two. Reckoned roughly (the light a stroke gives off, spread over a frame of a
+        /// film, against a few thousand lux under a storm cloud by day): a tenth more light at 1 km, as much again at 300 m.
+        /// A seventeenth is more than that, so that a near strike is still felt. Filmed after, the lower half 61 before: the
+        /// strike 3.5 km ahead raised it by 4, the one 1 km ahead by 13, one 0.3 km ahead by 14, one on the craft by 87.
+        /// The channel, and the clouds lit from within, are as they were.
+        /// </summary>
+        static float ByDay(Camera cam)
+        {
+            const float Share = 0.06f;
+            CelestialBody body = FlightGlobals.currentMainBody, sun = Planetarium.fetch != null ? Planetarium.fetch.Sun : null;
+            if (cam == null || body == null || sun == null || body == sun || lightAllDay) return dayShare = 1f;
+            Vector3d at = cam.transform.position;
+            float sunUp = (float)Vector3d.Dot((at - body.position).normalized, (sun.position - at).normalized);
+            // (from 8 degrees under the horizon, the dusk all but gone, to 4 above it)
+            return dayShare = Mathf.Pow(Share, Noise.Smooth(-0.14f, 0.07f, sunUp));
+        }
+
+        // ---- the flash's light said to whoever lights what the scene's cameras do not draw (Natural Light, a cockpit's inside
+        // through its windows: filmed 2026-11-10 from the cockpit at night, four strikes from 3.5 km to one on the craft itself
+        // changed no frame of the cabin by a twentieth of a level of 255). Through Keystone's Weather.FlashLight, which came
+        // after Keystone 0.10.0: kept in a method of its own and guarded, so that with an older Keystone there is nowhere to say
+        // it, the first try finds so, and nothing else stops.
+        static bool lightUnsaid;
+
+        void SayLight()
+        {
+            if (lightUnsaid) return;
+            try { SayLightToKeystone(); }
+            catch (Exception) { lightUnsaid = true; }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        void SayLightToKeystone()
+        {
+            Keystone.Weather.FlashLight = flashColour * litNow;
+            Keystone.Weather.FlashLightFrom = litFrom;
+            Keystone.Weather.FlashLightRound = lightRound;
+            Keystone.Weather.FlashLightFrame = Time.frameCount;
+        }
+
         void Animate(Camera cam)
         {
-            float lightNow = 0f, nearNow = 0f;
-            Vector3 lightFrom = Vector3.up;
+            float lightNow = 0f, nearNow = 0f, bothNow = 0f, bothEnv = 0f;
+            Vector3 lightFrom = Vector3.up, bothFrom = Vector3.up;
             Vector3 nearAt = Vector3.zero;
             for (int i = bolts.Count - 1; i >= 0; i--)
             {
@@ -296,26 +468,57 @@ namespace NaturalWeather
                 Vector3 mid = (Vector3)(foot + u * midUp);
                 float d = Mathf.Max(200f, (mid - camPos).magnitude);
                 float k = env * (b.F.Ground ? 1.6f : 0.9f) / (1f + (d / 4000f) * (d / 4000f));
-                if (k > lightNow) { lightNow = k; lightFrom = (mid - camPos).normalized; }
-                if (b.F.Ground && d < 3000f && env > nearNow) { nearNow = env; nearAt = (Vector3)foot + (Vector3)u * 30f; }
+                Vector3 from = (mid - camPos).normalized;
+                // (the lowest of a channel to the ground lights what is near it most; of a strike on a craft, where it meets the craft)
+                Vector3 low = b.OnCraft && b.Through.z > 30f ? (Vector3)(foot + e * b.Through.x + n * b.Through.y + u * b.Through.z) : (Vector3)foot + (Vector3)u * 30f;
+                if (k > lightNow) { lightNow = k; lightFrom = from; }
+                if (b.F.Ground && d < 3000f && env > nearNow) { nearNow = env; nearAt = low; }
+                if (b.F.Ground)
+                {
+                    // (A strike to the ground near by: the foot of its channel lights what is about the camera far more brightly
+                    // than its middle does, and from low down.)
+                    float r = (low - camPos).magnitude;
+                    float kn = env * 6f / (1f + 25f * r * r / (2500f * 2500f));
+                    from = (from * k + (low - camPos).normalized * kn).normalized;
+                    k += kn;
+                }
+                if (k > bothNow) { bothNow = k; bothFrom = from; bothEnv = env; }
                 // (seen from under the cloud it comes out of, the channel is drawn by the clouds after themselves, as far up as their
                 // base: drawn before them, as everything see-through is, it was hidden wherever there was cloud behind it, since the
                 // clouds are laid on over all of that. Inside the cloud it is the cloud that lights up. From above the base it is
                 // drawn as before, and a cloud in front of it hides it.)
-                b.Front = Clouds.Drawing && b.Shift == Vector3.zero && (!Clouds.Split || b.Distance > 450f)
+                b.Front = Clouds.Drawing && (!Clouds.Split || b.Distance > 450f)
                           && (b.Under >= 1e6f || b.Body.GetAltitude(camPos) < b.F.Bottom + b.Under);
                 if (b.Drawn) Draw(b, cam, foot, e, n, u, seen);
             }
+            // (The even light is reckoned as amounts of light and shown through the screen's curve, where this game keeps its
+            // colours as shown: an eighth as much light shows as two fifths as bright. So that the glow between a flash's
+            // strokes shows as the eighth of a stroke it is meant to be, and each stroke dies away as fast as it is meant to,
+            // how bright the flash is at this moment goes in by that curve turned about. Without that, measured 2026-11-10: the
+            // glow 26 levels of 255 on the lit pad where a stroke was 66, and as slow again to die.)
+            float lit = bothEnv > 0f ? Mathf.Min(8f, bothNow / bothEnv) * (QualitySettings.activeColorSpace == ColorSpace.Linear ? bothEnv : Mathf.Pow(bothEnv, 2.2f)) : 0f;
+            litNow = lightAs == 3 && !lightDark && bothNow > 0.01f && Weather.Flashes ? lit * Weather.Times(Weather.BoltBright) * lightGain * ByDay(cam) : 0f;
+            litFrom = bothFrom;
+            SayLight();
             if (flashLight != null)
             {
-                flashLight.enabled = lightNow > 0.01f && Weather.Flashes;
-                flashLight.intensity = Mathf.Min(2.5f, lightNow);
+                flashLight.enabled = lightAs != 3 && lightNow > 0.01f && Weather.Flashes;
+                flashLight.intensity = (lightDark ? 0f : 1f) * Mathf.Min(2.5f, lightNow) * Weather.Times(Weather.BoltBright);
                 if (flashLight.enabled) flashLight.transform.rotation = Quaternion.LookRotation(-lightFrom);
+                // (Only in the development build, for films of how it was, see Lit. From 2026-11-09 to 2026-11-10 the flash's light
+                // was this light folded into the light Unity gives each thing as a whole (its spherical harmonics, as for any
+                // light marked not important): "vertex". Before that Unity chose, and drew it per pixel: "unity". Drawn per pixel,
+                // a flash however faint changed how the launch pad's floodlights are drawn at night (Natural Light's, marked not
+                // important, with no other light from a direction in the scene to draw per pixel): the lamp-lit concrete went a
+                // sixth darker for as long as the flash lasted, a flash 30 km off as much as one 8 km off, and the pad flickered
+                // between the two with each stroke of a flash of several.)
+                LightRenderMode mode = lightAs == 0 ? LightRenderMode.Auto : lightAs == 2 ? LightRenderMode.ForcePixel : LightRenderMode.ForceVertex;
+                if (flashLight.renderMode != mode) flashLight.renderMode = mode;
             }
             if (nearLight != null)
             {
-                nearLight.enabled = nearNow > 0.01f && Weather.Flashes;
-                nearLight.intensity = 6f * nearNow;
+                nearLight.enabled = lightAs != 3 && nearNow > 0.01f && Weather.Flashes;
+                nearLight.intensity = 6f * nearNow * Weather.Times(Weather.BoltBright);
                 nearLight.transform.position = nearAt;
             }
         }
@@ -343,7 +546,7 @@ namespace NaturalWeather
             {
                 int j = b.From[i];
                 if (j < 0) continue;
-                Vector3 a0 = b.Points[j] + b.Shift, a1 = b.Points[i] + b.Shift;
+                Vector3 a0 = b.Points[j], a1 = b.Points[i];
                 float fade = 1f;
                 if (top < float.MaxValue)
                 {
@@ -377,7 +580,7 @@ namespace NaturalWeather
             // in a picture that holds nothing brighter (the far camera's), and in one that does (the near camera's) it blooms.
             // Until 0.2.2 the core was just white at its very middle, two thirds of a pixel wide: a quarter-grey hair once the
             // game had smoothed it, measured on film.)
-            float c = Mathf.Clamp(env, 0f, 4f);
+            float c = Mathf.Clamp(env, 0f, 4f) * Weather.Times(Weather.BoltBright);
             core.SetColor("_TintColor", new Color(2.3f * c, 2.4f * c, 2.6f * c, 0.5f));
             glow.SetColor("_TintColor", new Color(0.33f * c, 0.37f * c, 0.54f * c, 0.5f));
         }
@@ -447,6 +650,7 @@ namespace NaturalWeather
         /// </summary>
         void Thunder(Bolt b, Vector3 ear, Vector3d foot)
         {
+            if (Hush.Paused) return;     // (docs/sound-rules.md, B1: nothing started or changed while the game is paused)
             Provider.Axes(b.Body, foot, out Vector3d e, out Vector3d n, out Vector3d u);
             int count = b.Points.Count;
             var dist = new float[count];
@@ -457,7 +661,7 @@ namespace NaturalWeather
             {
                 int j = b.From[i];
                 if (j < 0) continue;
-                Vector3 p = b.Points[i] + b.Shift, q = b.Points[j] + b.Shift;
+                Vector3 p = b.Points[i], q = b.Points[j];
                 Vector3 mid = (Vector3)(foot + e * ((p.x + q.x) * 0.5) + n * ((p.y + q.y) * 0.5) + u * ((p.z + q.z) * 0.5));
                 dist[i] = Mathf.Max(30f, (mid - ear).magnitude);
                 len[i] = (p - q).magnitude;
@@ -509,6 +713,7 @@ namespace NaturalWeather
             DontDestroyOnLoad(go);
             AudioSource s = go.AddComponent<AudioSource>();
             s.spatialBlend = 0f; s.playOnAwake = false; s.loop = false; s.dopplerLevel = 0f;
+            Hush.Add(s);
             voices.Add(s);
             return s;
         }
@@ -589,14 +794,18 @@ namespace NaturalWeather
             double lat = v.latitude, lon = v.longitude, alt = v.altitude;
             WeatherHere here = Model.Here(w, lat, lon, ut);
             float risk = 0f;
-            foreach (WeatherCell c in Model.RegionCells(w, lat, lon, ut))
-            {
-                if (!c.Thunder || c.Strength < 0.3f || alt > c.Top) continue;
-                double d = Model.Distance(w, lat, lon, c.Latitude, c.Longitude);
-                if (d > c.Radius) continue;
-                float inside = 1f - (float)(d / c.Radius);
-                risk = Mathf.Max(risk, 0.003f * c.Strength * c.Strength * (0.4f + inside));
-            }
+            // (under Blackrack's clouds, drawn in place of these, his storms, as the weather here has them from his clouds: the
+            // weather's own storms are not where his are; as strong as in the middle of one of these)
+            if (HisSky.On) { if (here.Storm >= 0.3f && alt < Math.Max(here.Low.Top, here.Middle.Top)) risk = 0.0042f * here.Storm * here.Storm; }
+            else
+                foreach (WeatherCell c in Model.RegionCells(w, lat, lon, ut))
+                {
+                    if (!c.Thunder || c.Strength < 0.3f || alt > c.Top) continue;
+                    double d = Model.Distance(w, lat, lon, c.Latitude, c.Longitude);
+                    if (d > c.Radius) continue;
+                    float inside = 1f - (float)(d / c.Radius);
+                    risk = Mathf.Max(risk, 0.003f * c.Strength * c.Strength * (0.4f + inside));
+                }
             // lightning the rocket sets off itself: climbing fast through cold cloud with its engines burning (a long hot plume)
             bool inCloud = here.Low.Cover > 0.3f && alt > here.Low.Base && alt < here.Low.Top || here.Middle.Cover > 0.5f && alt > here.Middle.Base && alt < here.Middle.Top;
             bool cold = Model.ColumnAt(w, lat, lon, ut).B.Freeze < Math.Max(here.Low.Top, here.Middle.Top);
@@ -615,8 +824,18 @@ namespace NaturalWeather
 
         void Strike(Vessel v, WeatherHere here)
         {
-            Part struck = v.parts[UnityEngine.Random.Range(0, v.parts.Count)];
+            // (The part struck: the highest of the craft, as lightning takes the highest point; until 2026-11-10 any part by
+            // chance, and the channel came down to the ground under the craft's middle, past the craft wherever its last step
+            // took it: filmed on the pad, 12 m to one side of the rocket.)
             CelestialBody body = v.mainBody;
+            Part struck = v.parts[0];
+            double highest = double.MinValue;
+            foreach (Part p in v.parts)
+            {
+                if (p == null || p.transform == null) continue;
+                double a = body.GetAltitude(p.transform.position);
+                if (a > highest) { highest = a; struck = p; }
+            }
             float groundH = (float)Math.Max(0.0, v.terrainAltitude);
             float cloudBase = here.Low.Cover > 0.05f ? here.Low.Base : (float)v.altitude + 1500f;
             var f = new WeatherFlash
@@ -626,7 +845,10 @@ namespace NaturalWeather
                 Brightness = 1.6f, Strokes = 3, Seed = UnityEngine.Random.Range(1, int.MaxValue),
             };
             Camera cam = FlightCamera.fetch != null ? FlightCamera.fetch.mainCamera : null;
-            Begin(f, cam, Vector3.zero, true);
+            Vector3d foot = body.GetWorldSurfacePosition(f.Latitude, f.Longitude, f.Bottom);
+            Provider.Axes(body, foot, out Vector3d e, out Vector3d n, out Vector3d u);
+            Vector3d to = (Vector3d)struck.transform.position - foot;
+            Begin(f, cam, new Vector3((float)Vector3d.Dot(to, e), (float)Vector3d.Dot(to, n), Mathf.Max(0f, (float)Vector3d.Dot(to, u))), true, !v.LandedOrSplashed);
             // what it does: a jolt to the craft's electronics (its stability assist drops out for a moment) and a hot spot where it struck
             ScreenMessages.PostScreenMessage("Struck by lightning!", 4f, ScreenMessageStyle.UPPER_CENTER);
             try { struck.skinTemperature = Math.Min(struck.skinMaxTemp * 0.9, struck.skinTemperature + 180.0); } catch (Exception) { }
@@ -666,6 +888,65 @@ namespace NaturalWeather
             else if (arg.Length > 0) heldFor = float.Parse(arg, System.Globalization.CultureInfo.InvariantCulture);
             return heldFrames > 0 ? "flashes held for " + heldFrames + " frames" : heldFor > 0f ? "flashes held for " + heldFor + " s" : "flashes as they are";
         }
+        /// <summary>(For the development build: how a flash lights the scene. "probe": in each camera's even light (as built);
+        /// or as a light of Unity's with a lamp at a near strike's foot, as before 2026-11-10: "vertex", folded into the light
+        /// each thing is given as a whole (as built from 2026-11-09), "unity", as Unity chooses (as before that), "pixel",
+        /// always per pixel. "dark" with any of them: no light thrown. "gain=2": the even light's share so many times as
+        /// strong. "round=0.125": how much of it comes from all round as well (an eighth as built). "allday": as strong with
+        /// the sun up as by night, as before 2026-11-10 (see ByDay). Nothing: as built.)</summary>
+        public static string LightAs(string arg)
+        {
+            int mode = 3; bool dark = false, allDay = false; float gain = 1f, round = 0.125f;
+            foreach (string w in (arg ?? "").Trim().ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (w == "unity") mode = 0;
+                else if (w == "vertex") mode = 1;
+                else if (w == "pixel") mode = 2;
+                else if (w == "probe") mode = 3;
+                else if (w == "dark") dark = true;
+                else if (w == "allday") allDay = true;
+                else if (w.StartsWith("gain=")) gain = float.Parse(w.Substring(5), System.Globalization.CultureInfo.InvariantCulture);
+                else if (w.StartsWith("round=")) round = float.Parse(w.Substring(6), System.Globalization.CultureInfo.InvariantCulture);
+                else return "probe, unity, vertex or pixel, and dark, allday, gain=2 or round=0.125 if wanted";
+            }
+            lightAs = mode; lightDark = dark; lightGain = gain; lightRound = round; lightAllDay = allDay;
+            return "a flash's light " + new[] { "as Unity chooses", "folded into each thing's light as a whole", "always per pixel", "in each camera's even light" }[mode]
+                   + (dark ? ", throwing none" : "") + (gain != 1f ? ", " + gain.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " times as strong" : "")
+                   + (round != 0.125f ? ", " + round.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture) + " of it from all round" : "")
+                   + (allDay ? ", as strong by day as by night" : ", " + dayShare.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " of it showing for the daylight at the last flash");
+        }
+
+        /// <summary>(For the development build: the craft struck by lightning now, whatever the weather: StrikeNow.)</summary>
+        public static string StrikeCraft(string arg)
+        {
+            Lightning me = FindObjectOfType<Lightning>();
+            return me == null ? "not running" : me.StrikeNow();
+        }
+
+        /// <summary>
+        /// (For the development build: the even light as it is now, and what RenderSettings.ambientProbe gives back when the
+        /// game's own flat light is on, which is where Lit starts from when no mod has set a probe of its own: the mode and
+        /// the flat colour, then the probe read back looking up, sideways and down, as it is and with the mode set to flat for
+        /// the reading.)
+        /// </summary>
+        public static string Even(string arg)
+        {
+            AmbientMode was = RenderSettings.ambientMode;
+            string o = "mode " + was + ", flat colour " + RenderSettings.ambientLight + " x " + RenderSettings.ambientIntensity.ToString("F2") + "; read back: " + Read(RenderSettings.ambientProbe);
+            RenderSettings.ambientMode = AmbientMode.Flat;
+            o += "; as flat: " + Read(RenderSettings.ambientProbe) + "; made from the flat colour: " + Read(EvenNow(AmbientMode.Flat));
+            RenderSettings.ambientMode = was;
+            return o + "; " + (QualitySettings.activeColorSpace == ColorSpace.Linear ? "linear colours" : "gamma colours");
+        }
+
+        static string Read(SphericalHarmonicsL2 p)
+        {
+            var ways = new[] { Vector3.up, Vector3.right, Vector3.down };
+            var seen = new Color[3];
+            p.Evaluate(ways, seen);
+            return "up " + seen[0] + ", sideways " + seen[1] + ", down " + seen[2];
+        }
+
         /// <summary>(For the development build: what the last channel drawn was, and whether the clouds drew it after themselves.)</summary>
         public static string Last() => Drew + " | " + DrewInFront + " | flashes the storms have made since this build began: " + madeToGround + " to the ground, " + madeInCloud + " within cloud";
         static int madeToGround, madeInCloud;
@@ -678,7 +959,14 @@ namespace NaturalWeather
             CelestialBody body = WeatherDriver.Here();
             if (me == null || cam == null || body == null) return "not running";
             float km = string.IsNullOrEmpty(arg) ? 3f : float.Parse(arg);
-            Vector3 ahead = cam.transform.forward; Vector3d at = (Vector3d)cam.transform.position + (Vector3d)ahead * km * 1000.0;
+            // (ahead on the level: from a cockpit on the pad the camera looks straight up at the instruments, and a flash so many
+            // km "ahead" along that came down on the craft itself, whatever the km, filmed 2026-11-10; looking up or down so,
+            // the way the top of the picture points)
+            Vector3 up = ((Vector3)((Vector3d)cam.transform.position - body.position)).normalized;
+            Vector3 ahead = Vector3.ProjectOnPlane(cam.transform.forward, up);
+            if (ahead.magnitude < 0.3f) ahead = Vector3.ProjectOnPlane(cam.transform.up, up);
+            ahead.Normalize();
+            Vector3d at = (Vector3d)cam.transform.position + (Vector3d)ahead * km * 1000.0;
             double lat = body.GetLatitude(at), lon = body.GetLongitude(at);
             World w = World.Of(body);
             var f = new WeatherFlash { Id = 1, Body = body, Latitude = lat, Longitude = lon, Bottom = Math.Max(0f, w.Ground(lat, lon)), Top = 4500f, Ground = true, Time = Planetarium.GetUniversalTime(), Brightness = 1.2f, Strokes = 4, Seed = UnityEngine.Random.Range(1, 1 << 30) };

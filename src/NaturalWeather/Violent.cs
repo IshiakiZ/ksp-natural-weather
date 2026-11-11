@@ -67,6 +67,7 @@ namespace NaturalWeather
         public float MoveE, MoveN;     // how it moves, m/s (across itself)
         public float Length;      // m
         public float Now;         // how strong, 0 to 1
+        public float Peak;        // how strong at its strongest, 0 to 1 (its storms' tops, the same all their lives)
         public float Base;        // its clouds' base, m above sea level
     }
 
@@ -499,13 +500,14 @@ namespace NaturalWeather
                     double lat = lat0 + moveN * age / w.Radius / Deg;
                     double lon = Wrap(lon0 + moveE * age / (w.Radius * Math.Max(0.2, Math.Cos(lat0 * Deg))) / Deg);
                     float through = (float)(age / life);
-                    float now = Noise.Smooth(0f, 0.15f, through) * (1f - Noise.Smooth(0.75f, 1f, through)) * (0.6f + 0.4f * Noise.Unit(Noise.Hash(h ^ 0x7u)));
+                    float peak = 0.6f + 0.4f * Noise.Unit(Noise.Hash(h ^ 0x7u));
+                    float now = Noise.Smooth(0f, 0.15f, through) * (1f - Noise.Smooth(0.75f, 1f, through)) * peak;
                     if (now < 0.05f) continue;
                     list.Add(new Squall
                     {
                         Id = (int)(h & 0x7fffffff), Lat = lat, Lon = lon,
                         AlongE = -(float)Math.Sin(slant), AlongN = (float)Math.Cos(slant), MoveE = moveE, MoveN = moveN,
-                        Length = 70000f + 80000f * Noise.Unit(Noise.Hash(h ^ 0x8u)), Now = now, Base = 900f + 500f * Noise.Unit(Noise.Hash(h ^ 0x9u)),
+                        Length = 70000f + 80000f * Noise.Unit(Noise.Hash(h ^ 0x8u)), Now = now, Peak = peak, Base = 900f + 500f * Noise.Unit(Noise.Hash(h ^ 0x9u)),
                     });
                 }
             if (held)
@@ -521,7 +523,7 @@ namespace NaturalWeather
                 {
                     Id = 9, Lat = CentreLat, Lon = CentreLon + east / (w.Radius * Math.Cos(CentreLat * Deg)) / Deg,
                     AlongE = 0f, AlongN = 1f, MoveE = -17f, MoveN = 0f, Length = 90000f,
-                    Now = Model.ChosenWeight * now, Base = 1000f,
+                    Now = Model.ChosenWeight * now, Peak = Model.ChosenWeight, Base = 1000f,
                 });
             }
             return list.Count > 0 ? list : noSqualls;
@@ -581,7 +583,9 @@ namespace NaturalWeather
                     into.Add(new WeatherCell
                     {
                         Id = (int)(own & 0x7fffffff), Latitude = cLat, Longitude = cLon, Radius = r, Base = q.Base,
-                        Top = q.Base + 1500f + strength * Math.Max(0f, w.Climate.Tops - q.Base - 1500f), Life = life, Strength = strength,
+                        // (its top by the line's strength at its strongest, not by its own now: by that its anvil sank kilometres
+                        // as it died away (the clouds' second review of 2026-10-27))
+                        Top = q.Base + 1500f + q.Peak * ends * (0.7f + 0.3f * Noise.Unit(Noise.Hash(own ^ 0x1u))) * Math.Max(0f, w.Climate.Tops - q.Base - 1500f), Life = life, Strength = strength,
                         Rain = Noise.Clamp01((float)Math.Pow(strength, 1.1) * w.Climate.Water), Thunder = strength > 0.3f && w.Climate.Lightning > 0f,
                         Drift = new Vector3d(q.MoveE, q.MoveN, 0.0),
                     });

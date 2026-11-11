@@ -14,7 +14,7 @@ packed into the bundles the mods look for when the game runs on Direct3D:
     src/Keystone/Shaders/lens-windows.bundle                   Keystone's lens
     src/Keystone/Shaders/farmotion-windows.bundle              Keystone's motion beyond the near camera
     src/NaturalLight/Shaders/light-windows.bundle             Natural Light's three: Shafts, Clean, Veil
-    src/NaturalWeather/Shaders/clouds-windows.bundle          Natural Weather's: Clouds, CloudsOver, CloudShade, Wet, Drops, Snow
+    src/NaturalWeather/Shaders/clouds-windows.bundle          Natural Weather's: Clouds (and its storm and calm copies), CloudsKeep, CloudsOver, CloudShade, Wet, Drops, Snow
     src/NaturalOcean/Shaders/ocean-windows.bundle (and oceanfoam-, oceanweed-, oceanunder-)   Natural Ocean's four, one each
     src/SmoothRunning/Shaders/blend-windows.bundle            Smooth Running's frame blending
     src/CineCamera/Shaders/grade-windows.bundle               Cinema Camera's look (log curve, LUT, white balance, the cameras' tools)
@@ -55,13 +55,15 @@ from unityfile import Asset, Bundle, Writer, lz4_store  # noqa: E402
 BUNDLES = [
     # (and what stands between the smoke and the sun, Addon.LoadSunDepth: added on the PC 2026-10-18, the shader having come from
     # the Mac on 2026-10-17. Keystone's dnfill is not here: it is for OpenGL alone, TufxFilm's GroundFacing.)
-    ("src/VolumetricExplosions/Shaders/shaders-windows.bundle", ["volume", "volumerelease", "enlarge", "layers", "mark", "shock", "shadow", "motion", "carry", "sundepth"]),
+    ("src/VolumetricExplosions/Shaders/shaders-windows.bundle", ["volume", "volumerelease", "enlarge", "layers", "mark", "shock", "shadow", "motion", "carry", "sundepth", "sprite"]),
     ("src/Keystone/Shaders/lens-windows.bundle", ["lens"]),
     ("src/Keystone/Shaders/farmotion-windows.bundle", ["farmotion"]),
     ("src/NaturalLight/Shaders/light-windows.bundle", ["shafts", "clean", "veil"]),
     # (and the rain's on the glass and the ground, and the drops' own picture of the water on the glass: Wet.LoadShader, 2026-10-13;
     # and the lying snow, which Snow.cs looks for in this bundle by the name NaturalWeather/Snow off OpenGL: 2026-10-19)
-    ("src/NaturalWeather/Shaders/clouds-windows.bundle", ["clouds", "cloudsstorm", "cloudscalm", "cloudsover", "cloudshade", "wet", "drops", "snow"]),
+    # (and the second form's three copies, clouds2*, which Clouds.LoadShaders looks for by NaturalWeather/Clouds2 and its storm and
+    # calm names: a development trial, 2026-10-27, drawn only when asked for)
+    ("src/NaturalWeather/Shaders/clouds-windows.bundle", ["clouds", "cloudsstorm", "cloudscalm", "clouds2", "clouds2storm", "clouds2calm", "cloudskeep", "cloudsover", "cloudshade", "wet", "drops", "snow"]),
     # (Natural Ocean looks for one bundle a shader, Sea.Load: listed 2026-10-11, compiled and seen in the game that evening.
     # What Direct3D wanted of them that no rule could see is in port.py's SPECIAL and OWN.)
     ("src/NaturalOcean/Shaders/ocean-windows.bundle", ["ocean"]),
@@ -103,6 +105,7 @@ HEAVY = {("clouds", "ps"): [("5_0", D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_PR
 # (the clouds' copies without the rarer features: compiled the same way, and smaller)
 HEAVY[("cloudsstorm", "ps")] = HEAVY[("clouds", "ps")]
 HEAVY[("cloudscalm", "ps")] = HEAVY[("clouds", "ps")]
+HEAVY[("clouds2", "ps")] = HEAVY[("clouds2storm", "ps")] = HEAVY[("clouds2calm", "ps")] = HEAVY[("clouds", "ps")]
 # (minutes=N after the shaders' names: each try of a heavy program given that long instead, from its first try or from=K. For a
 # run of its own in the background when the usual limits give up before the optimising is done: what it makes is kept, and taken
 # from then on, as compiled() says. "windows.py C:/KSP-test clouds minutes=150 from=2": the second try, optimising level 1.)
@@ -211,14 +214,18 @@ class Direct3D:
         if result: return "refused (0x%08X)" % (result & 0xFFFFFFFF)
         method(made.value, 2, ctypes.c_ulong)(made.value)
         if stage == "vs":
-            # (the mod's meshes give positions alone, three numbers each: the layout Unity will make for them)
+            # (the layout Unity will make for the mod's meshes: positions, three numbers each; and for a particle's, as the program
+            # asks, its colour, four bytes, and its uv, two numbers: DXGI_FORMAT_R32G32B32_FLOAT, R8G8B8A8_UNORM, R32G32_FLOAT,
+            # each after the last)
             class Element(ctypes.Structure):
                 _fields_ = [("name", ctypes.c_char_p), ("index", ctypes.c_uint), ("format", ctypes.c_int), ("slot", ctypes.c_uint), ("offset", ctypes.c_uint),
                             ("kind", ctypes.c_int), ("step", ctypes.c_uint)]
-            position = Element(b"POSITION", 0, 6, 0, 0, 0, 0)                 # DXGI_FORMAT_R32G32B32_FLOAT, per vertex
+            formats = {"POSITION": 6, "COLOR": 28, "TEXCOORD": 16}
+            wanted = [(name, index) for name, index, _, _ in d3d11.signature(dict(d3d11.chunks(dxbc))["ISGN"]) if name in formats]
+            elements = (Element * len(wanted))(*[Element(name.encode(), index, formats[name], 0, 0xFFFFFFFF, 0, 0) for name, index in wanted])
             layout = ctypes.c_void_p()
             result = method(self.device.value, 11, ctypes.c_long, ctypes.POINTER(Element), ctypes.c_uint, ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p))(
-                self.device.value, ctypes.byref(position), 1, dxbc, len(dxbc), ctypes.byref(layout))
+                self.device.value, elements, len(wanted), dxbc, len(dxbc), ctypes.byref(layout))
             if result: return "its input refused (0x%08X)" % (result & 0xFFFFFFFF)
             method(layout.value, 2, ctypes.c_ulong)(layout.value)
         return None
@@ -415,6 +422,10 @@ def packed_shader(which, programs, pattern, number_base):
     state["culling"]["val"] = spec.get("cull", 1.0)
     state["gpuProgramID"] = spec["program"] + number_base
 
+    # (the mesh's channels the vertex program reads: the position, and any colour or uv, make_bundle's VERTEX_INPUTS)
+    code = make_bundle.source_of(spec)
+    channels = [(0, 0)] + [(channel, component) for _, channel, component, _ in make_bundle.vertex_inputs(code)]
+    source_map = make_bundle.source_map(code)
     entries = []
     for blob_index, (stage, key) in enumerate((("vs", "progVertex"), ("ps", "progFragment"))):
         dxbc, model = programs[stage]
@@ -423,7 +434,7 @@ def packed_shader(which, programs, pattern, number_base):
         sub = copy.deepcopy([s for s in one[key]["m_SubPrograms"] if s["m_GpuProgramType"] in (15, 17)][0])
         sub["m_BlobIndex"] = blob_index
         sub["m_GpuProgramType"] = kind
-        sub["m_Channels"] = {"m_Channels": [{"source": 0, "target": 0}], "m_SourceMap": 1} if stage == "vs" else {"m_Channels": [], "m_SourceMap": 0}
+        sub["m_Channels"] = {"m_Channels": [{"source": a, "target": b} for a, b in channels], "m_SourceMap": source_map} if stage == "vs" else {"m_Channels": [], "m_SourceMap": 0}
         sub["m_VectorParams"], sub["m_MatrixParams"], sub["m_BufferParams"], sub["m_UAVParams"], sub["m_Samplers"] = [], [], [], [], []
         sub["m_TextureParams"] = [{"m_NameIndex": number[t["name"]], "m_Index": t["slot"], "m_SamplerIndex": t["sampler"], "m_MultiSampled": False, "m_Dim": t["shape"]} for t in textures]
         sub["m_ConstantBuffers"] = [{"m_NameIndex": number[g["name"]],
@@ -435,8 +446,8 @@ def packed_shader(which, programs, pattern, number_base):
 
         bindings = [{"name": t["name"], "type": 0, "index": t["slot"], "extra": t["sampler"], "texture": t["shape"] << 1} for t in textures]
         bindings += [{"name": g["name"], "type": 1, "index": g["slot"], "extra": 0} for g in groups]
-        entry = {"version": glprogram.VERSION, "type": kind, "stats": stats(dxbc), "source_map": 1 if stage == "vs" else 0,
-                 "channels": [(0, 0)] if stage == "vs" else [],
+        entry = {"version": glprogram.VERSION, "type": kind, "stats": stats(dxbc), "source_map": source_map if stage == "vs" else 0,
+                 "channels": channels if stage == "vs" else [],
                  "groups": [{"name": "", "size": 0, "params": []}] + [{"name": g["name"], "size": g["size"], "params": g["params"]} for g in groups],
                  "bindings": bindings}
         stripped = d3d11.strip(dxbc)

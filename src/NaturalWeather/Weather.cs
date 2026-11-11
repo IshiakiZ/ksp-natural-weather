@@ -5,7 +5,7 @@ using UnityEngine;
 
 #if !DEV
 [assembly: KSPAssembly("NaturalWeather", 0, 2)]
-[assembly: KSPAssemblyDependency("Keystone", 0, 10)]
+[assembly: KSPAssemblyDependency("Keystone", 0, 11)]
 #endif
 
 namespace NaturalWeather
@@ -26,7 +26,7 @@ namespace NaturalWeather
     /// </summary>
     static class Weather
     {
-        public const string Version = "0.6.0";
+        public const string Version = "0.7.0";
 
         public static Mod Page;
         public static Toggle On, Push, Tip, Strike, HailBreaks, Icing, Light, Smoke, Rain, Drops, WetGround, LyingSnow, Flashes, Fog, Dust, Devils, UseCity, Doppler, Booms;
@@ -34,7 +34,15 @@ namespace NaturalWeather
         public static Choice Chosen;
         public static Hotkey CentreKey;
         public static Slider Often, Pace, Wind, Gusts, Thunder, Patter, Whoosh;
+        // (the fine details, on the page in Keystone's Advanced view: each slider 1 as installed, a multiple of what the mod does)
+        public static Slider GlassGather, GlassSize, GlassDry, GlassBlow, GlassRun, WetLook, StandingWater, GroundDries, RainCount, StreakLength, RainBright, SnowCount, FlakeSize, BoltBright;
+        public static Toggle Splashes, Rainbows;
         static readonly Provider provider = new Provider();
+
+        /// <summary>A fine detail's multiple: 1 before the page is made.</summary>
+        public static float Times(Slider slider) => slider != null ? (float)slider : 1f;
+        /// <summary>A fine detail's switch: on before the page is made.</summary>
+        public static bool Shown(Toggle toggle) => toggle == null || (bool)toggle;
 
         /// <summary>
         /// Whether there is a flight to draw the weather in: the game's FlightGlobals.ready, and also the frame or so it has that false
@@ -82,10 +90,34 @@ namespace NaturalWeather
             Light = Page.Toggle("light", "Cloud light", true, "Cloud dims the sun and greys the sky (through Natural Light).");
             Smoke = Page.Toggle("smoke", "Smoke in the wind", true, "Smoke and explosions (Volumetric Explosions) drift in the weather's wind.");
             Rain = Page.Toggle("rain", "Rain, snow, hail", true, "What falls, drawn round the camera: rain, snow, ice pellets and hail.");
+            Fine(true);
+            RainCount = Page.Slider("raincount", "How many raindrops fall", 1f, 0.2f, 3f, "x", 2, "How many drops are drawn falling past the camera, against as many as the rain has: a downpour is some thousands in view at once.");
+            StreakLength = Page.Slider("streaks", "How long their streaks are", 1f, 0.25f, 3f, "x", 2, "How far each falling drop is smeared along its way: 1 as a film camera smears it at 24 frames a second (over a 48th of a second), more as a slower shutter.");
+            RainBright = Page.Slider("rainbright", "How bright the rain is", 1f, 0.25f, 3f, "x", 2, "How much of the light about it each falling drop bends towards the eye: more shows the rain against a bright sky, less keeps it faint against the dark.");
+            SnowCount = Page.Slider("snowcount", "How many flakes fall", 1f, 0.2f, 3f, "x", 2, "How many snowflakes are drawn falling past the camera, against as many as the snow has.");
+            FlakeSize = Page.Slider("flakesize", "How big the flakes are", 1f, 0.5f, 2.5f, "x", 2, "How large each snowflake is drawn.");
+            Splashes = Page.Toggle("splashes", "Splashes", true, "Raindrops splash where they strike the ground, the pad, the buildings or a craft near the camera: two or three tiny droplets jump up and fall back. (None while the camera goes fast.)");
+            Rainbows = Page.Toggle("rainbows", "Rainbows", true, "A rainbow in sunshine with rain about, opposite the sun.");
+            Fine(false);
             Drops = Page.Toggle("drops", "Drops on the camera", true, "Rain leaves drops on the camera's glass: they sit, run and dry. Off: the glass stays clear.");
+            Fine(true);
+            GlassGather = Page.Slider("glassgather", "How much rain gathers on the glass", 1f, 0f, 4f, "x", 2, "How many drops land on the camera's glass, against the rain that comes at its face: 0 none land, 2 twice as many.");
+            GlassSize = Page.Slider("glasssize", "How big the drops on it are", 1f, 0.5f, 2f, "x", 2, "How large each drop that lands on the glass is, against the rain's own sizes (most under a millimetre across).");
+            GlassDry = Page.Slider("glassdry", "How fast the glass dries", 1f, 0.2f, 5f, "x", 2, "How quickly the drops dry from their edges, and the wet tracks they leave fade: a minute or two for a millimetre drop out of the rain, as installed.");
+            GlassBlow = Page.Slider("glassblow", "How the air moves them", 1f, 0f, 3f, "x", 2, "How hard the air streaming past the glass pushes the drops along it: 0, they run only downhill.");
+            GlassRun = Page.Slider("glassrun", "How readily they run down", 1f, 0f, 3f, "x", 2, "How hard their weight pulls the drops down the glass: more, and smaller drops run; 0, none runs by its weight.");
+            Fine(false);
             WetGround = Page.Toggle("wetground", "Wet ground", true, "Where rain has fallen the ground is darker and shines, and water stands on level ground until it dries.");
+            Fine(true);
+            WetLook = Page.Slider("wetlook", "How wet the ground looks", 1f, 0f, 2f, "x", 2, "How dark and glossy rain makes the ground, against how much has fallen.");
+            StandingWater = Page.Slider("puddles", "Standing water", 1f, 0f, 2f, "x", 2, "How much water stands on level ground in heavy rain: puddles, then sheets of it.");
+            GroundDries = Page.Slider("grounddries", "How fast the ground dries", 1f, 0.2f, 5f, "x", 2, "How quickly the ground dries once the rain stops: as installed, its wetness falls by two thirds in a quarter of an hour, the standing water's in ten minutes.");
+            Fine(false);
             LyingSnow = Page.Toggle("snowground", "Lying snow", true, "Where snow has fallen in the last days and it has stayed cold enough, the ground is white: in patches while it is thin, and from a line on the hills, deeper higher up, until it thaws; in a wind, its fine snow drifts along the ground in streamers. Seen from the ground and the air, not from orbit. The white ground on the Mac for now (its shader for Windows is still to be built); the drifting everywhere.");
             Flashes = Page.Toggle("lightning", "Lightning", true);
+            Fine(true);
+            BoltBright = Page.Slider("boltbright", "How bright lightning is", 1f, 0.25f, 3f, "x", 2, "How bright the bolts are, and the light they throw on the clouds and the ground.");
+            Fine(false);
             Thunder = Page.Slider("thunder", "Thunder", 0.8f, 0f, 1f, "", 2, "How loud the thunder is.");
             Patter = Page.Slider("patter", "Rain's sound", 0.6f, 0f, 1f, "", 2, "How loud the rain is.");
             Whoosh = Page.Slider("whoosh", "Wind's sound", 0.4f, 0f, 1f, "", 2, "How loud the wind is, near the ground, in gusts; and the air rushing past a craft in flight, as hard as it presses on it.");
@@ -104,6 +136,14 @@ namespace NaturalWeather
 
         public static string Status = "";
 
+        /// <summary>
+        /// The settings added after Fine(true) are fine details: on the page only in Keystone's Advanced view, until Fine(false).
+        /// (Keystone 0.11.0 has the two views; an older one has neither call, and shows the fine details with the rest.)
+        /// </summary>
+        static void Fine(bool fine) { try { if (fine) Advanced(Page); else Simple(Page); } catch (Exception) { } }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)] static void Advanced(Mod page) => page.Advanced();
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)] static void Simple(Mod page) => page.Simple();
+
         public static void Log(string text) => Kit.Log("Natural Weather", text);
 
         /// <summary>The settings, into the model; and the weather handed to Keystone or taken back.</summary>
@@ -111,6 +151,11 @@ namespace NaturalWeather
         {
             Model.Often = Often; Model.Pace = Pace; Model.WindStrength = Wind; Model.GustStrength = Gusts;
             Model.Chosen = Chosen;
+#if DEV
+            // (a test's held weather kept through a change of the settings: switching the clouds off and on let it go, and the sky
+            // filmed after was another weather's, 2026-11-03)
+            if (Probe.Hold >= 0) Model.Chosen = Probe.Hold;
+#endif
             Model.FogOn = Fog; Model.DustOn = Dust;
             Model.Allowed = Allowed;
             Overrides.UseCity = UseCity;
@@ -171,6 +216,7 @@ namespace NaturalWeather
         void OnDestroy()
         {
             Feed.Stop();
+            HisSky.PutBack();
             Model.WarpRate = 1f;
             if (Instance == this) Instance = null;
             if (Weather.Page != null && Weather.Page.Panel == (Action)Panel.Draw) Weather.Page.Panel = null;
@@ -204,6 +250,7 @@ namespace NaturalWeather
             Launch.Tick();
             City.Tick();
             Centre.Tick();
+            HisSky.Look();
             if (Time.realtimeSinceStartup > statusAt) { statusAt = Time.realtimeSinceStartup + 0.5f; Weather.Status = Describe(); }
         }
 

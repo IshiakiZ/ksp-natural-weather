@@ -5,11 +5,15 @@
 #
 # Needs the .NET SDK (on a Mac: brew install dotnet). On Windows, run the build scripts in Git Bash.
 if [ -z "${KSP_DIR:-}" ]; then
+  # (On Windows the game is not looked for: on the PC this workspace is built on, the Steam copy is the owner's own, kept as it
+  # came, and the builds go into a test copy, KSP_DIR=/c/KSP-test. Until 2026-10-25 the Steam copy was found here, and a build
+  # run there without KSP_DIR put twenty mods into it. A Steam copy can still be built into by naming it.)
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo "error: on Windows, say which copy of the game to build into: KSP_DIR=/c/KSP-test ./build.sh ..." >&2; exit 1 ;;
+  esac
   for candidate in "$HOME/Library/Application Support/Steam/steamapps/common/Kerbal Space Program" \
                    "$HOME/.steam/steam/steamapps/common/Kerbal Space Program" \
-                   "$HOME/.local/share/Steam/steamapps/common/Kerbal Space Program" \
-                   "/c/Program Files (x86)/Steam/steamapps/common/Kerbal Space Program" \
-                   "/mnt/c/Program Files (x86)/Steam/steamapps/common/Kerbal Space Program"; do
+                   "$HOME/.local/share/Steam/steamapps/common/Kerbal Space Program"; do
     [ -d "$candidate" ] && KSP_DIR="$candidate" && break
   done
 fi

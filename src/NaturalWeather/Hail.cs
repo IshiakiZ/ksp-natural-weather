@@ -176,6 +176,7 @@ namespace NaturalWeather
         /// (Since 0.5.0: from the cockpit, the stones on its shell, louder and duller through its walls.)</summary>
         void Sound(float amount, float size)
         {
+            if (Hush.Paused) return;     // (docs/sound-rules.md, B1: nothing started or changed while the game is paused)
             bool inside = CameraManager.Instance != null && CameraManager.Instance.currentCameraMode == CameraManager.CameraMode.IVA;
             float want = Weather.Patter * GameSettings.AMBIENCE_VOLUME * Mathf.Pow(Mathf.Clamp01(amount), 0.6f) * (inside ? 1.5f : 1f) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
             if (want < 0.005f) { if (clatter != null && clatter.isPlaying) { clatter.volume = Mathf.MoveTowards(clatter.volume, 0f, Time.unscaledDeltaTime * 0.5f); if (clatter.volume <= 0f) clatter.Stop(); } return; }
@@ -186,6 +187,7 @@ namespace NaturalWeather
                 clatter.spatialBlend = 0f; clatter.loop = true; clatter.playOnAwake = false; clatter.volume = 0f;
                 clatterClip = MakeClatter();
                 clatter.clip = clatterClip;
+                Hush.Add(clatter);
                 clatterMuffle = go.AddComponent<AudioLowPassFilter>();
             }
             if (clatterMuffle != null) clatterMuffle.cutoffFrequency = inside ? 3000f : 22000f;

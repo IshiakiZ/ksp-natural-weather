@@ -50,7 +50,7 @@ namespace NaturalWeather
             Camera cam = FlightCamera.fetch != null ? FlightCamera.fetch.mainCamera : null;
             CelestialBody body = FlightGlobals.currentMainBody;
             CelestialBody sun = Planetarium.fetch != null ? Planetarium.fetch.Sun : null;
-            if (cam == null || body == null || sun == null || !body.atmosphere || !Weather.On || !Weather.Rain || !Model.Allowed(body) || MapView.MapIsEnabled)
+            if (cam == null || body == null || sun == null || !body.atmosphere || !Weather.On || !Weather.Rain || !Weather.Shown(Weather.Rainbows) || !Model.Allowed(body) || MapView.MapIsEnabled)
             {
                 strength = 0f; bow.SetActive(false); return;
             }

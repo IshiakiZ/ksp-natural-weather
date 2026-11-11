@@ -385,7 +385,7 @@ namespace NaturalWeather
             float high = Vector3.Dot(toSun, (Vector3)up);
             Color sunLight = sun != null && sun.isActiveAndEnabled ? sun.color * sun.intensity * Mathf.Clamp01(high * 12f + 0.3f) : Color.black;
             looks[0] = (Vector3)up;
-            RenderSettings.ambientProbe.Evaluate(looks, seen);
+            Lightning.EvenNow(RenderSettings.ambientMode).Evaluate(looks, seen);
             Color sky = Shown(Positive(seen[0])), sunShown = Shown(sunLight);
             m.SetVector("_SnowSun", new Vector4(toSun.x, toSun.y, toSun.z, Mathf.Clamp01(high * 12f + 0.3f) * Mathf.Clamp01(Clouds.SunThrough)));
             m.SetVector("_SnowSunLight", new Vector4(sunShown.r, sunShown.g, sunShown.b, 0f));

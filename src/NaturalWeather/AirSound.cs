@@ -46,6 +46,7 @@ namespace NaturalWeather
 
         void LateUpdate()
         {
+            if (Hush.Paused) return;     // (docs/sound-rules.md, B1: nothing started or changed while the game is paused)
             float dt = Time.deltaTime;
             Camera cam = FlightCamera.fetch != null ? FlightCamera.fetch.mainCamera : null;
             if (cam == null || dt <= 0f || !HighLogic.LoadedSceneIsFlight) return;
@@ -342,6 +343,7 @@ namespace NaturalWeather
             a.playOnAwake = false; a.dopplerLevel = 0f; a.spatialBlend = 0.6f; a.spread = 120f;
             a.rolloffMode = AudioRolloffMode.Custom; a.maxDistance = 50000f;
             a.SetCustomCurve(AudioSourceCurveType.CustomRolloff, AnimationCurve.Constant(0f, 1f, 1f));
+            Hush.Add(a);
             voices.Add(a);
             return a;
         }

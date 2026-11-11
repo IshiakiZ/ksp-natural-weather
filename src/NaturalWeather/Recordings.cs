@@ -68,14 +68,28 @@ namespace NaturalWeather
     /// <summary>
     /// Recorded loops heard together, each as loud as it is wanted, the change eased: for the rain, light, medium and hard
     /// crossfaded by how hard it rains, and the wind, gusty, strong and a hurricane's, by how hard it blows. Heard as the camera
-    /// hears what is all round it (not from a place). Each source is made when its loop is first wanted and stopped when it
-    /// has faded out.
+    /// hears what is all round it (not from a place). Each source is made when its loop is first wanted; when it has faded
+    /// out it is paused and kept, and goes on from there when the loop is wanted again; one unheard for a minute is let go.
+    /// (Since 2026-11-10. Before, a faded source was destroyed and a new one made and started the next time: the loops are
+    /// streamed recordings, and starting one holds the whole game up for 15 to 70 ms. In a wind of 9 to 10 m/s the strong
+    /// wind's loop came and went with every gust, a new start every second or three: of 121 looks at what the game was
+    /// doing in its long frames, in 300 s at rest in rain at the pad, 108 were in that start.)
     /// </summary>
     sealed class Loops
     {
+        /// <summary>How long a faded loop is kept paused before its source is let go, seconds.</summary>
+        const float Keep = 60f;
+
+        /// <summary>(For the tests.) How many sources have been made and started, woken from their pause, and let go, since the mod began.</summary>
+        internal static int Starts, Wakes, Ends;
+        /// <summary>(For the tests.) The frames, by Unity's count, in which the last sources were woken: to set beside the long frames.</summary>
+        internal static readonly List<int> WokenIn = new List<int>();
+
         readonly string name;
         GameObject holder;
         readonly Dictionary<string, AudioSource> playing = new Dictionary<string, AudioSource>();
+        // (the loops faded out and paused: since when, by the clock that does not stop)
+        readonly Dictionary<string, float> resting = new Dictionary<string, float>();
         readonly Dictionary<string, float> wanted = new Dictionary<string, float>();
         readonly List<string> ended = new List<string>();
 
@@ -87,9 +101,15 @@ namespace NaturalWeather
         /// <summary>(Each frame, after the Wants.) Each loop brought towards its volume at so much a second; muffled above cutoff (Hz); pitch.</summary>
         public void Step(float rate, float cutoff = 22000f, float pitch = 1f)
         {
+            if (Hush.Paused) return;     // (docs/sound-rules.md, B1: nothing started or changed while the game is paused)
             foreach (KeyValuePair<string, float> w in wanted)
             {
-                if (playing.ContainsKey(w.Key) || w.Value < 0.002f) continue;
+                if (w.Value < 0.002f) continue;
+                if (playing.TryGetValue(w.Key, out AudioSource had))
+                {
+                    if (had != null && resting.Remove(w.Key)) { had.UnPause(); Wakes++; if (WokenIn.Count >= 200) WokenIn.RemoveAt(0); WokenIn.Add(Time.frameCount); }
+                    continue;
+                }
                 AudioClip clip = Recordings.Clip(w.Key);
                 if (clip == null) continue;
                 if (holder == null) holder = new GameObject(name);
@@ -101,6 +121,8 @@ namespace NaturalWeather
                 // (begun at a place of its own in the loop: two of them begun together are not heard in step)
                 s.time = UnityEngine.Random.Range(0f, Mathf.Max(0f, clip.length - 0.1f));
                 s.Play();
+                Starts++;
+                Hush.Add(s);
                 playing[w.Key] = s;
             }
             ended.Clear();
@@ -108,15 +130,30 @@ namespace NaturalWeather
             {
                 AudioSource s = p.Value;
                 if (s == null) { ended.Add(p.Key); continue; }
+                if (resting.TryGetValue(p.Key, out float since))
+                {
+                    if (Time.unscaledTime - since > Keep) { UnityEngine.Object.Destroy(s.gameObject); ended.Add(p.Key); Ends++; }
+                    continue;
+                }
                 float to = wanted.TryGetValue(p.Key, out float v) ? v : 0f;
                 s.volume = Mathf.MoveTowards(s.volume, to, Time.unscaledDeltaTime * rate);
                 s.pitch = pitch;
                 AudioLowPassFilter f = s.GetComponent<AudioLowPassFilter>();
                 if (f != null) f.cutoffFrequency = cutoff;
-                if (to < 0.002f && s.volume <= 0f) { UnityEngine.Object.Destroy(s.gameObject); ended.Add(p.Key); }
+                if (to < 0.002f && s.volume <= 0f) { s.Pause(); resting[p.Key] = Time.unscaledTime; }
             }
-            foreach (string e in ended) playing.Remove(e);
+            foreach (string e in ended) { playing.Remove(e); resting.Remove(e); }
             wanted.Clear();
+        }
+
+        /// <summary>(For the tests.) Each loop it holds: its volume, and whether it plays or rests.</summary>
+        public string Says()
+        {
+            var b = new System.Text.StringBuilder(name).Append(":");
+            foreach (KeyValuePair<string, AudioSource> p in playing)
+                if (p.Value != null)
+                    b.Append(" ").Append(p.Key).Append(" ").Append(p.Value.volume.ToString("F3")).Append(resting.ContainsKey(p.Key) ? " resting" : p.Value.isPlaying ? " playing" : " not playing");
+            return b.ToString();
         }
 
         /// <summary>Whether any of them is heard just now.</summary>
@@ -129,7 +166,7 @@ namespace NaturalWeather
         {
             if (holder != null) UnityEngine.Object.Destroy(holder);
             holder = null;
-            playing.Clear(); wanted.Clear();
+            playing.Clear(); wanted.Clear(); resting.Clear();
         }
     }
 }

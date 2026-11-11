@@ -3,6 +3,8 @@ Shader "NaturalWeather/Wet"
 {
     Properties
     {
+        _WetLast ("WetLast", 2D) = "" {}
+        _WetLastFar ("WetLastFar", 2D) = "" {}
         _WetDrops ("WetDrops", 2D) = "" {}
     }
     SubShader
@@ -62,14 +64,25 @@ Shader "NaturalWeather/Wet"
             float4 _WetUp;     // xyz: the camera's up, times the tangent of half its height of view; w: the clock (s)
             float4 _WetAhead;     // xyz: the way the camera looks; w: 1 if depths run backwards (nearest is 1)
             float4 _WetCam;     // xyz: the camera, from the planet's centre (m, the scene's axes); w: the planet's radius (m)
-            float4 _WetHere;     // xy: where the camera is over the ground, in metres along two level ways fixed to the ground (kept small: the puddles' pattern is read by it); w: 1 if the world has a sea
-            float4 _WetAcross;     // xyz: the first of those level ways (the scene's axes, a unit)
+            float4 _WetHere;     // z: 1 where only how far off each pixel is is written (kept beside the finished picture for the next frame's pools, Wet.cs); w: 1 if the world has a sea
+            float4 _WetAcross;     // xyz: the first of two level ways fixed to the ground, along which the rings in the puddles are read (the scene's axes, a unit)
             float4 _WetAlong;     // xyz: the second
+            float4 _WetPlanetX;     // xyz: the first of the planet's own three ways, turning with it (the scene's axes, a unit), along which the hollows are read
+            float4 _WetPlanetY;     // xyz: the second
+            float4 _WetPlanetZ;     // xyz: the third
+            float4 _WetPattern;     // xyz: where the camera stands in the large hollows' cells, along the planet's three ways (cells, under 10000: Wet.cs)
+            float4 _WetPatternSmall;     // xyz: and in the small hollows'
+            float4 _WetRipples;     // xy: where the camera stands in the cells of the first size of ring a drop makes in a pool, along the two level ways (cells, under 10000); zw: of the second
             float4 _WetGround;     // x: how wet the ground is (0 to 1); y: how much of level ground stands under water (0 to 1); z: how hard it rains now (0 to 1: rings in the puddles); w: how far off the wet is still drawn (m)
             float4 _WetSky;     // rgb: the sky's light as a mirror shows it where nothing better is known; w: how bright a drop's glint is
             float4 _WetSun;     // xy: which way the brightest light lies on the glass (towards the sun, or straight up under an overcast or at night; a unit); z: how strong it is (0 to 1)
             float4 _WetGlass;     // x: how much of the glass has drops on it (0 to 1); y: the picture's width over its height; zw: which way is down on the glass (a unit; nothing: the camera looks straight up or down, and no drop runs)
             float4 _WetDropsSize;     // the picture of the water on the glass (Drops.cs, drops.glsl): xy one of its points, as a part of the picture; z millimetres of glass to one of its points; w 1 if it is there
+            float4 _WetLastRight;     // xyz: the camera's right as _WetRight, the frame before; w: 1 if the sky, the clouds and the haze are not yet in the picture when the ground's pass runs (one camera draws everything: Direct3D)
+            float4 _WetLastUp;     // xyz: its up as _WetUp, the frame before
+            float4 _WetLastAhead;     // xyz: the way it looked, the frame before; w: 1 if that frame's finished picture is kept (_WetLast)
+            Texture2D _WetLast; SamplerState sampler_WetLast;     // the frame before's finished picture (one camera only)
+            Texture2D _WetLastFar; SamplerState sampler_WetLastFar;     // and how far off each of its pixels was (m, along the way the camera looked; point by point)
             Texture2D _WetDrops; SamplerState sampler_WetDrops;     // how high the water stands on the glass (mm), point by point
             Texture2D _WetScene; SamplerState sampler_WetScene;     // the picture so far
             Texture2D _CameraDepthTexture; SamplerState sampler_CameraDepthTexture;
@@ -111,15 +124,20 @@ Shader "NaturalWeather/Wet"
             // the water stands (drops.glsl). Here: the line of sight bent through that water.
             // Laid over the finished picture (before the lens's own effects), only while there is something to draw.
 
-            float chance(float2 p) { float3 q = frac(((float3)(p.xyx)) * float3(0.1031, 0.1030, 0.0973)); q += dot(q, q.yzx + 33.33); return frac((q.x + q.y) * q.z); }
+            float chance3(float3 p) { float3 q = frac(p * float3(0.1031, 0.1030, 0.0973)); q += dot(q, q.yzx + 33.33); return frac((q.x + q.y) * q.z); }
             float3 chances(float2 p) { float3 q = frac(((float3)(p.xyx)) * float3(0.1031, 0.1030, 0.0973)); q += dot(q, q.yxz + 33.33); return frac((q.xxy + q.yzz) * q.zyx); }
 
-            // Smooth noise over the ground, 0 to 1.
-            float ground2(float2 p)
+            // Smooth noise through the planet, 0 to 1, repeating every ten thousand cells each way (where Wet.cs keeps the camera's place
+            // in them); read where the ground cuts through it.
+            float ground3(float3 p)
             {
-                float2 i = floor(p), f = p - i;
+                float3 i = floor(p), f = p - i;
                 f = f * f * (3.0 - 2.0 * f);
-                return lerp(lerp(chance(i), chance(i + float2(1.0, 0.0)), f.x), lerp(chance(i + float2(0.0, 1.0)), chance(i + float2(1.0, 1.0)), f.x), f.y);
+                float a = lerp(chance3(Mod(i, 10000.0)), chance3(Mod(i + float3(1.0, 0.0, 0.0), 10000.0)), f.x);
+                float b = lerp(chance3(Mod(i + float3(0.0, 1.0, 0.0), 10000.0)), chance3(Mod(i + float3(1.0, 1.0, 0.0), 10000.0)), f.x);
+                float c = lerp(chance3(Mod(i + float3(0.0, 0.0, 1.0), 10000.0)), chance3(Mod(i + float3(1.0, 0.0, 1.0), 10000.0)), f.x);
+                float d = lerp(chance3(Mod(i + float3(0.0, 1.0, 1.0), 10000.0)), chance3(Mod(i + float3(1.0, 1.0, 1.0), 10000.0)), f.x);
+                return lerp(lerp(a, b, f.y), lerp(c, d, f.y), f.z);
             }
 
             // ---------------------------------------------------------------- the glass
@@ -199,13 +217,23 @@ Shader "NaturalWeather/Wet"
                     if (level < 0.35) break;
                     float far = 1.0 - smoothstep(0.55, 1.0, t / max(_WetGround.w, 1.0));
                     // ---- where the water stands: the hollows of level ground, more of them the more it has rained; the same hollows
-                    // every time (the pattern is fixed to the ground)
-                    float2 over = _WetHere.xy + float2(dot(near, _WetAcross.xyz), dot(near, _WetAlong.xyz));
+                    // every time at the same place (the pattern is fixed to the planet)
+                    // (how far the point lies from the camera along the planet's three ways, m: added to where the camera stands in
+                    // each size of cell, kept small and as fine as it is anywhere. The pattern is read through the planet, where the
+                    // ground cuts it, so a place has the same pools however the camera came to it. Laid out flat from a place near
+                    // the camera, as until 2026-10-28, a flat pattern fits a sphere only piece by piece: coming back after a jump
+                    // with the craft in another tenth of a degree of the planet's grid laid other pools there.)
+                    float3 through = float3(dot(near, _WetPlanetX.xyz), dot(near, _WetPlanetY.xyz), dot(near, _WetPlanetZ.xyz));
                     // (Hollows eight metres and two across, and at the most a quarter of level ground under water. How level the
                     // ground is, is known only roughly here, from one pixel to the next: with the pools cut off sharply by it, and
                     // with hollows a foot across among them, every pool's edge was a staircase of the picture's own dots, and with
-                    // half the ground under water a lawn was a camouflage net.)
-                    float hollow = 0.6 * ground2(over * 0.12) + 0.4 * ground2(over * 0.47 + 17.0);
+                    // half the ground under water a lawn was a camouflage net. A cut through noise in three dimensions spreads less
+                    // than noise laid out in two, eight corners to a point against four: stretched by 1.14 about its middle, it puts
+                    // as much of the ground under water at each wetness as the flat pattern did, to within a twentieth.)
+                    float hollow = 0.5 + 1.14 * (0.6 * ground3(_WetPattern.xyz + through * 0.12) + 0.4 * ground3(_WetPatternSmall.xyz + through * 0.47) - 0.5);
+                    // (the rings' place along the two level ways fixed to the ground near the camera, as hollows' was: a ring lasts
+                    // a second, so where they fall after a jump does not matter, only that they stay where they fell)
+                    float2 away = float2(dot(near, _WetAcross.xyz), dot(near, _WetAlong.xyz));
                     float reach = lerp(0.84, 0.60, _WetGround.y);
                     float pool = smoothstep(reach - 0.035, reach + 0.035, hollow) * smoothstep(0.86, 0.96, level) * smoothstep(0.02, 0.1, _WetGround.y);
                     // (and not on grass, which this knows only by its colour: water among the blades of a lawn is no mirror, and a
@@ -220,13 +248,13 @@ Shader "NaturalWeather/Wet"
                         float2 lean = ((float2)(0.0));
                         { [loop] for (int k = 0; k < 2; k++)
                         {
-                            float2 at = over * (k == 0 ? 2.6 : 4.3) + float(k) * 11.7, id = floor(at);
+                            float2 at = k == 0 ? _WetRipples.xy + away * 2.6 : _WetRipples.zw + away * 4.3, cell = floor(at), id = Mod(cell, 10000.0);
                             float3 own = chances(id + float(k) * 3.3);
                             float turn = _WetUp.w * (0.9 + 0.5 * own.z) + own.x * 5.0;
                             float phase = frac(turn);
                             float3 now = chances(id + floor(turn) * 1.7 + float(k));
                             if (now.z > _WetGround.z * 1.4) continue;
-                            float2 d = at - id - (0.25 + 0.5 * now.xy);
+                            float2 d = at - cell - (0.25 + 0.5 * now.xy);
                             float out_ = length(d), ring = phase * 0.45;
                             lean += (out_ > 1e-4 ? d / out_ : ((float2)(0.0))) * sin((out_ - ring) * 55.0) * exp(-(out_ - ring) * (out_ - ring) * 260.0) * (1.0 - phase);
                         } }
@@ -234,7 +262,13 @@ Shader "NaturalWeather/Wet"
                     } }
                     // ---- what the water shows: the picture itself in the mirrored direction, where that is on the picture and what
                     // is drawn there is far off (the sky, clouds, a far shore: near things would be shown in the wrong place); else
-                    // the sky's light as given
+                    // the sky's light as given. (Where the mirrored line leaves the picture at a side, and the picture's side there is
+                    // sky, that side at the same height, up to a fifth of the picture past it: the sky changes slowly across, and with
+                    // the camera level the same height is above the horizon as the mirrored line is. The sky's light as given, a grey,
+                    // faded in near the frame's sides, showed there as smears, judged beside Blackrack's on 2026-10-28. Past the top or
+                    // the bottom the grey as before: read from the top row, the pools of a camera looking down took the far shore or the
+                    // sea there (no depth is drawn for the sea, so it passed for sky), and the sky where the row met it, with a seam
+                    // between; the stills of that day.)
                     float look = clamp(dot(face, -dir), 0.0, 1.0);
                     float mirrors = 0.02 + 0.98 * pow(1.0 - look, 5.0);
                     float3 back = reflect(dir, face);
@@ -243,14 +277,43 @@ Shader "NaturalWeather/Wet"
                     { [loop] for (int seen = ahead > 0.05 ? 0 : 1; seen < 1; seen++)
                     {
                         float2 there = 0.5 + 0.5 * float2(dot(back, _WetRight.xyz) / dot(_WetRight.xyz, _WetRight.xyz), dot(back, _WetUp.xyz) / dot(_WetUp.xyz, _WetUp.xyz)) / ahead;
-                        float2 edge = min(there, 1.0 - there);
-                        float inside = smoothstep(0.0, 0.06, min(edge.x, edge.y));
-                        if (inside <= 0.0) break;
+                        float2 beyond = max(max(-there, there - 1.0), ((float2)(0.0))), edge = min(there, 1.0 - there);
+                        float within = smoothstep(0.0, 0.06, min(edge.x, edge.y));
+                        float past = beyond.y > 0.0 ? within : (1.0 - smoothstep(0.2, 0.5, beyond.x)) * smoothstep(0.0, 0.06, edge.y);
+                        if (past <= 0.0) break;
+                        there = clamp(there, ((float2)(0.002)), ((float2)(0.998)));
                         float zt = SampleLod(_CameraDepthTexture, there, 0.0).r;
                         bool sky = _WetAhead.w > 0.5 ? zt <= 0.000001 : zt >= 0.999999;
+                        float inside = sky ? past : within;
                         float tt = sky ? 1e9 : 1.0 / (_ZBufferParams.z * zt + _ZBufferParams.w);
                         float farOff = smoothstep(2.5 * t, 5.0 * t, tt);
-                        shows = lerp(shows, min(SampleLod(_WetScene, there, 0.0).rgb, ((float3)(24.0))), inside * farOff);
+                        float3 got = min(SampleLod(_WetScene, there, 0.0).rgb, ((float3)(24.0)));
+                        // (One camera drawing everything (Direct3D) draws the sky, the clouds and the haze over the far ground after this:
+                        // what lies far off is read from the frame before's finished picture, the line of sight found on it as the camera
+                        // looked then. Where that is not there, the sky's light as given for the sky, and the picture so far for the
+                        // ground. Read from the picture so far, the pools mirrored black space, the far ground under a black band with the
+                        // hills' tops showing through it, unhazed: the owner's comparison with Blackrack's of 2026-10-28.)
+                        { [loop] for (int one = _WetLastRight.w > 0.5 ? 0 : 1; one < 1; one++)
+                        {
+                            float aheadLast = dot(back, _WetLastAhead.xyz);
+                            float2 thereLast = 0.5 + 0.5 * float2(dot(back, _WetLastRight.xyz) / max(dot(_WetLastRight.xyz, _WetLastRight.xyz), 1e-8), dot(back, _WetLastUp.xyz) / max(dot(_WetLastUp.xyz, _WetLastUp.xyz), 1e-8)) / max(aheadLast, 0.05);
+                            float2 beyondLast = max(max(-thereLast, thereLast - 1.0), ((float2)(0.0))), edgeLast = min(thereLast, 1.0 - thereLast);
+                            float withinLast = smoothstep(0.0, 0.06, min(edgeLast.x, edgeLast.y));
+                            float pastLast = beyondLast.y > 0.0 ? withinLast : (1.0 - smoothstep(0.2, 0.5, beyondLast.x)) * smoothstep(0.0, 0.06, edgeLast.y);
+                            float insideLast = _WetLastAhead.w > 0.5 && aheadLast > 0.05 ? (sky ? pastLast : withinLast) : 0.0;
+                            // (and only where what was there then was far off too: a near thing that had moved across the picture since,
+                            // as the camera goes round a craft, was mirrored from where it had been, a band in its colour trailing it while
+                            // the camera moved; the review of 2026-10-28)
+                            float2 atLast = clamp(thereLast, ((float2)(0.002)), ((float2)(0.998)));
+                            float farLast = smoothstep(2.5 * t, 5.0 * t, SampleLod(_WetLastFar, atLast, 0.0).r);
+                            // (as much of the frame before's picture as there is of it against this one's: the fade toward the picture's
+                            // edges is laid on once, below, as on OpenGL. Laid on here as well, it went as its square: a third of the
+                            // picture past a side, a pool showed a quarter of the sky there where OpenGL's showed half; the review of
+                            // 2026-10-28)
+                            float takes = min(insideLast / max(inside, 1e-4), 1.0);
+                            got = lerp(sky ? _WetSky.rgb : got, min(SampleLod(_WetLast, atLast, 0.0).rgb, ((float3)(24.0))), takes * farLast);
+                        } }
+                        shows = lerp(shows, got, inside * farOff);
                     } }
                     // (a pool is a mirror; damp ground a poor one, and blurred: a fifth of it, of the sky's light alone)
                     float glassy = pool + (1.0 - pool) * film * 0.2;
@@ -314,6 +377,8 @@ Shader "NaturalWeather/Wet"
                 // (nothing that is not a number goes into the picture)
                 if (!(colour.r + colour.g + colour.b < 1e20)) colour = scene.rgb;
                 result = float4(colour, scene.a);
+                // (or, where asked, only how far off the pixel is, as the pools' mirror reads it: kept beside the finished picture)
+                if (_WetHere.z > 0.5) result = ((float4)(nothing ? 60000.0 : min(1.0 / (_ZBufferParams.z * z + _ZBufferParams.w), 60000.0)));
                 return result;
             }
             ENDCG

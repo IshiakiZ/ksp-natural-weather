@@ -51,6 +51,7 @@ namespace NaturalWeather
         public float UE, UN;              // the wind at 10 m, m/s
         public float Alpha, Hbl;          // how it grows with height near the ground, and the boundary layer's depth (m above the ground)
         public float JE, JN, JetH;        // the wind high up, and its height (m above sea level)
+        public float AE, AN;              // the wind high up without the storms' own outflow near the ground (what carries their anvils)
         public float ShearE, ShearN, ShearH; // a sharp change of wind across a thin layer aloft, and its height (none: 0)
         public float Veer;                // how far it turns between the ground and the top of the boundary layer (radians)
         public float SigGround;           // the gusts' size near the ground (m/s)
@@ -398,13 +399,50 @@ namespace NaturalWeather
         /// <summary>Whether a weather with storms in it is held (a storm, a hailstorm): then even a world that has none of its own has them.</summary>
         static bool StormsHeld => Chosen == 6 || Chosen == 13 || Chosen == HeldBurst || Chosen == HeldTornado || Chosen == HeldSquall;
 
+        /// <summary>
+        /// (Development build, for pictures: Probe.Cell.) One storm held where it was put, as strong and as far through its life
+        /// as asked, grown there as a storm of the lattice would be (its base where heaps would start there, its top by the world's
+        /// tops), and still: added to the storms found near a place, over the whole world and in the atlas. In a release build
+        /// there is none.
+        /// </summary>
+        static int HeldCells(World w, double lat, double lon, double radius, double ut, List<WeatherCell> into)
+        {
+#if DEV
+            if (!CellHeld || w.Name != CellWorld) return 0;
+            Base cb = Sample(w, CellLat, CellLon, ut);
+            float most = CellStrength;
+            float radiusM = 3000f + 8000f * most;
+            if (Distance(w, lat, lon, CellLat, CellLon) > radius + radiusM) return 0;
+            float baseH = cb.Ground + CumulusBase(cb);
+            float top = baseH + 1500f + most * Math.Max(0f, w.Climate.Tops - baseH - 1500f);
+            float strength = most * Noise.Smooth(0f, 0.3f, CellLife) * (1f - Noise.Smooth(0.65f, 1f, CellLife));
+            into.Add(new WeatherCell
+            {
+                Id = 0x5e1d, Latitude = CellLat, Longitude = CellLon, Radius = radiusM, Base = baseH, Top = top, Life = CellLife,
+                Strength = strength, Rain = Noise.Clamp01((float)Math.Pow(strength, 1.2) * w.Climate.Water), Thunder = w.Climate.Lightning > 0f && most > 0.6f,
+                Drift = Vector3d.zero,
+            });
+            return 1;
+#else
+            return 0;
+#endif
+        }
+#if DEV
+        public static volatile bool CellHeld;
+        public static string CellWorld = "";
+        public static double CellLat, CellLon;
+        public static float CellStrength = 0.9f, CellLife = 0.5f;
+#endif
+
         const double CellBox = 22000.0;       // the spacing of the places storms can be born
         const double CellCycle = 6000.0;      // each place has one chance a cycle (two lattices, half a cycle apart)
+        /// <summary>How long a storm lives, about (s): its share of a cycle, 0.5 to 0.6 (Born), at the weather's pace.</summary>
+        public static double CellSpan => 0.55 * CellCycle / (Pace <= 0.05f ? 0.05f : Pace);
 
         /// <summary>The storms and showers within `radius` metres of a place.</summary>
         public static int Cells(World w, double lat, double lon, double radius, double ut, List<WeatherCell> into)
         {
-            if (w.Climate.Storms <= 0f && !StormsHeld) return 0;
+            if (w.Climate.Storms <= 0f && !StormsHeld) return HeldCells(w, lat, lon, radius, ut, into);
             int found = 0;
             double cycle = CellCycle / (Pace <= 0.05f ? 0.05f : Pace);
             for (int lattice = 0; lattice < 2; lattice++)
@@ -432,7 +470,8 @@ namespace NaturalWeather
                             found++;
                         }
             }
-            return found + Violent.SquallCells(w, lat, lon, radius, ut, into);
+            found += Violent.SquallCells(w, lat, lon, radius, ut, into);
+            return found + HeldCells(w, lat, lon, radius, ut, into);
         }
 
         /// <summary>
@@ -442,7 +481,7 @@ namespace NaturalWeather
         /// </summary>
         public static int AllCells(World w, double ut, List<WeatherCell> into)
         {
-            if (w.Climate.Storms <= 0f && !StormsHeld) return 0;
+            if (w.Climate.Storms <= 0f && !StormsHeld) return HeldCells(w, 0.0, 0.0, Math.PI * w.Radius, ut, into);
             int found = 0;
             double cycle = CellCycle / (Pace <= 0.05f ? 0.05f : Pace);
             double rr = w.Radius / CellBox;
@@ -460,7 +499,8 @@ namespace NaturalWeather
                             found++;
                         }
             }
-            return found + Violent.SquallCells(w, 0.0, 0.0, Math.PI * w.Radius, ut, into);
+            found += Violent.SquallCells(w, 0.0, 0.0, Math.PI * w.Radius, ut, into);
+            return found + HeldCells(w, 0.0, 0.0, Math.PI * w.Radius, ut, into);
         }
 
         /// <summary>One of the two lattices storms are born on, at a moment: how long its cycle has run, and the cycle's own number in its seed.</summary>
@@ -511,13 +551,18 @@ namespace NaturalWeather
             if (strength <= 0.02f) return false;
             // (a storm's cloud 3 to 17 km in radius as it is strong: until 2026-10-18 at most 8, its anvil and the heaps round it left out)
             float radiusM = (float)(3000.0 + 8000.0 * most * (0.6f + 0.8f * Noise.Unit(Noise.Hash(h ^ 0xabcu))));
-            bool thunder = w.Climate.Lightning > 0f && potential > 0.5f && Noise.Unit(Noise.Hash(h ^ 0x777u)) < 0.85f;
+            bool canThunder = w.Climate.Lightning > 0f && Noise.Unit(Noise.Hash(h ^ 0x777u)) < 0.85f;
+            bool thunder = canThunder && potential > 0.5f;
+            // (how tall and how wet a thunderstorm is over a shower, taken over through the potential either side of where it
+            // becomes one: by the flag, a storm's top dropped 2 km between two asks a second apart, its anvil, tower and dome with
+            // it, where the weather round it cooled with the hour (the clouds' second review of 2026-10-27))
+            float tall = canThunder ? Noise.Smooth(0.45f, 0.55f, potential) : 0f;
             float baseH = cb.Ground + CumulusBase(cb);
-            float top = baseH + 1500f + (thunder ? 1f : 0.55f) * most * Math.Max(0f, w.Climate.Tops - baseH - 1500f);
+            float top = baseH + 1500f + (0.55f + 0.45f * tall) * most * Math.Max(0f, w.Climate.Tops - baseH - 1500f);
             cell = new WeatherCell
             {
                 Id = (int)(h & 0x7fffffff), Latitude = cLat, Longitude = cLon, Radius = radiusM, Base = baseH, Top = top, Life = through,
-                Strength = strength, Rain = Noise.Clamp01((float)Math.Pow(strength, 1.2) * (thunder ? 1f : 0.65f) * w.Climate.Water),
+                Strength = strength, Rain = Noise.Clamp01((float)Math.Pow(strength, 1.2) * (0.65f + 0.35f * tall) * w.Climate.Water),
                 Thunder = thunder, Drift = new Vector3d(cDrift, 0.0, 0.0),
             };
             return true;
@@ -579,6 +624,7 @@ namespace NaturalWeather
                 // (and the storms of the squall lines, after the others, as Cells has them)
                 var inRows = new List<WeatherCell>();
                 Violent.SquallCells(w, 0.0, 0.0, 1e9, ut, inRows);
+                HeldCells(w, 0.0, 0.0, Math.PI * w.Radius, ut, inRows);
                 for (int i = 0; i < inRows.Count; i++)
                 {
                     int at = Row(inRows[i].Latitude) * columns + Column(inRows[i].Longitude);
@@ -694,12 +740,26 @@ namespace NaturalWeather
         /// <summary>How high above the ground heaped cloud has its base: lower in moist air, higher in the afternoon.</summary>
         static float CumulusBase(Base b) => 350f + (1f - b.M) * 1500f + 500f * b.Inst;
 
+        /// <summary>Duna's dust storms are its strong winds: a wind under `want` m/s made up to it along its own way (from a calm,
+        /// eastward).</summary>
+        static void Dusty(ref float e, ref float n, float want)
+        {
+            float l = Noise.Sqrt(e * e + n * n);
+            if (l < want) { float f = l > 0.3f ? want / l : 0f; if (f > 0f) { e *= f; n *= f; } else e += want; }
+        }
+
         /// <summary>(For the weather centre: the height air from the ground would be lifted to before its water condenses, m above the ground: the dew point from it.)</summary>
         internal static float LiftedBase(Base b) => CumulusBase(b);
 
         // ---------------------------------------------------------------- the weather at a place
 
-        public static WeatherHere Here(World w, double lat, double lon, double ut) => ColumnAt(w, lat, lon, ut).Here;
+        public static WeatherHere Here(World w, double lat, double lon, double ut)
+        {
+            WeatherHere h = ColumnAt(w, lat, lon, ut).Here;
+            // (near the camera, Blackrack's clouds' where they are drawn in place of these)
+            HisSky.Over(w, lat, lon, ref h);
+            return h;
+        }
 
         /// <summary>
         /// The clouds and what falls at a place, without the wind: cheaper than Here (no wind worked out, and the storms taken
@@ -1229,7 +1289,7 @@ namespace NaturalWeather
                 }
             }
             // ---- storms blow out from under them: the gust front
-            float sigStorm = 0f;
+            float sigStorm = 0f, outE = 0f, outN = 0f;
             foreach (WeatherCell cell in col.Cells)
             {
                 double d = Distance(w, lat, lon, cell.Latitude, cell.Longitude);
@@ -1238,7 +1298,7 @@ namespace NaturalWeather
                 if (out1 > 0.05f)
                 {
                     Toward(cell.Latitude, cell.Longitude, lat, lon, out float te, out float tn);
-                    ue += out1 * te; un += out1 * tn;
+                    ue += out1 * te; un += out1 * tn; outE += out1 * te; outN += out1 * tn;
                 }
                 sigStorm = Math.Max(sigStorm, cell.Strength * (cell.Thunder ? 3.2f : 1.6f) * Noise.Clamp01(2.2f - x * 0.8f));
             }
@@ -1252,13 +1312,18 @@ namespace NaturalWeather
                 ue += ce; un += cn; cyclone = Math.Max(cyclone, share);
             }
             List<Squall> squalls = Violent.Squalls(w, ut);
+            float beforeE = ue, beforeN = un;
             for (int i = 0; i < squalls.Count; i++) Violent.SquallWind(w, squalls[i], lat, lon, ref ue, ref un, ref sigStorm);
+            outE += ue - beforeE; outN += un - beforeN;
+            // (and the wind without them, for the wind aloft that carries a storm's anvil (AE, AN, below), made over by the dust as
+            // it finds it: taken off after the dust, the dust's own share of the gust front was left in, and the anvils turned with
+            // the camera's side of the storm wherever there was dust (the clouds' second review))
+            float qe = ue - outE, qn = un - outN;
             // Duna's dust storms are its strong winds
             if (b.Dust > 0.05f)
             {
-                float l = Noise.Sqrt(ue * ue + un * un);
                 float want = 4f + 20f * b.Dust;
-                if (l < want) { float f = l > 0.3f ? want / l : 0f; if (f > 0f) { ue *= f; un *= f; } else ue += want; }
+                Dusty(ref ue, ref un, want); Dusty(ref qe, ref qn, want);
             }
             float scale = b.WindScale;
             col.UE = ue * scale; col.UN = un * scale;
@@ -1279,6 +1344,9 @@ namespace NaturalWeather
             float aloft = 1.2f - 0.85f * cyclone, jets = 1f - cyclone;
             col.JE = ((jetLat + c.Jet * 0.55f * meander) * jets + ue * aloft) * scale;
             col.JN = (c.Jet * 0.35f * meander2 * jets + un * aloft) * scale;
+            // (and without what the storms and squalls blow out from under them near the ground: the wind that carries a storm's
+            // anvil is the large-scale one up there, not the camera's side of the nearest storm's gust front)
+            col.AE = col.JE + (qe - ue) * aloft * scale; col.AN = col.JN + (qn - un) * aloft * scale;
             col.JetH = c.JetHeight;
             // (and now and then a thin layer aloft where the wind turns and strengthens sharply: what scrubs real launches for shear)
             float layer = Noise.Smooth(0.72f, 0.95f, 0.5f + Drifting(w, lat, lon, ut, 700000.0, 6.0 * 3600.0, 59u, 2, b.DriftE));

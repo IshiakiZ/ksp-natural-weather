@@ -72,9 +72,15 @@ namespace NaturalWeather
         /// must be drawn after them, in front of the cloud behind it (lightning's channel seen from under its cloud).</summary>
         public static event Action<CommandBuffer, Camera> InFront;
 
-        static Shader walkShader, overShader, shadeShader;
+        static Shader walkShader, keepShader, overShader, shadeShader;
         // (the walk's copies without the weather's rarer features, and the one this frame's sky allows: see Frame, "which copy")
         static Shader walkStorm, walkCalm;
+        // (the second form's three copies (clouds2*.bundle; 2026-10-27, a development trial), drawn with while FormTwo)
+        static Shader walk2, walkStorm2, walkCalm2;
+        /// <summary>The whole walk of the form being drawn: the shadow's map, the light field and the other goes are drawn with it.</summary>
+        static Shader WalkWhole => Two ? walk2 : walkShader;
+        /// <summary>Whether the second form is drawn: asked for, and its shaders there.</summary>
+        static bool Two => FormTwo && walk2 != null;
         Shader walkNow;
         static bool warmed;
 #if DEV
@@ -126,7 +132,7 @@ namespace NaturalWeather
             try
             {
                 pixel = RenderTexture.GetTemporary(1, 1, 0, RenderTextureFormat.ARGBHalf);
-                foreach (Shader one in new[] { walkShader, walkStorm, walkCalm, overShader, shadeShader })
+                foreach (Shader one in new[] { walkShader, walkStorm, walkCalm, keepShader, overShader, shadeShader })
                 {
                     if (one == null) continue;
                     var m = new Material(one);
@@ -146,6 +152,20 @@ namespace NaturalWeather
         // shader in place of heaps carved from the noise. None (the file missing, or the setting off): the noise's heaps, as before 0.3.0.
         static Texture3D field, noField;
         static bool fieldTried;
+        // The second form's billows (made on the graphics card at load: see MakeBillow) and its pattern of where clouds stand
+        // (PluginData/cover.pattern: see LoadPattern), made and read only once the second form is asked for; and the pattern's
+        // stand-in where there is none (NoPattern).
+        static RenderTexture billow;
+        static Texture2D pattern, noPattern;
+        static bool patternTried;
+#if DEV
+        // (the pattern as until 2026-11-06, its small heaps 330 m to 8 km across, for SpecOld's 128: PluginData/cover-2026-11-05.pattern,
+        // which no download carries; tools/clouds/pattern.py's `old` makes it again, written into the test copy's own PluginData
+        // (or git, as of 9796b5d8). Only in the development build, read the first time it is asked for.)
+        static Texture2D patternOld;
+        static bool patternOldTried;
+#endif
+        static string patternWhy = "not read yet";
         static float fieldSide = 6400f, fieldFar = 240f;
         static readonly float[] fieldLevels = new float[16];
         static string fieldWhy = "";
@@ -167,6 +187,181 @@ namespace NaturalWeather
         /// (the rework of 2026-10-12, see the shader: formAt); 0: as before it (heaps made beforehand, sheets carved from noise).
         /// </summary>
         public static float Form = 1f;
+        /// <summary>
+        /// The clouds' second form (2026-10-27, a development trial): the low and middle clouds shaped as Blackrack's are, by a pattern
+        /// saying how much of the sky over a place is cloud and billows eating into that (clouds.glsl, fieldAt; his method learned from
+        /// his files, research/clouds-r5/blackrack-source.md), drawn with the walk's copies of their own (clouds2*.bundle) where they are
+        /// there. Off: the first form (formAt), as released.
+        /// </summary>
+        public static bool FormTwo;
+#if DEV
+        /// <summary>(Development build: "two" draws the clouds' second form, anything else the first.)</summary>
+        public static string Shapes(string which)
+        {
+            bool was = FormTwo;
+            FormTwo = (which ?? "").Trim() == "two";
+            if (was != FormTwo && instance != null) instance.map.Forget();
+            if (!tried) LoadShaders();
+            return "the clouds' shapes: " + (!FormTwo ? "the first form" : walk2 != null ? "the second form (billows " + (billow != null ? "made" : "not made yet") + ", pattern " + (pattern != null ? "read" : patternWhy) + ")" : "the second form asked for, but its shaders are not there: the first");
+        }
+#endif
+        /// <summary>
+        /// The second form's light (the shader's _CloudLight2): how bright the sun's light is in its clouds, his lobes' own weights
+        /// times this; and its sky's and its ground's light, as many times as made. (The gain fitted on his frame at the pad,
+        /// 2026-10-27, the cumulus held there: the cloud's middle brightness on the screen 190 of 255 at 1.1 against his 188, 185 at
+        /// 0.9, 177 at 0.7 and 163 at 0.5; its brightest tenth no higher than 208 at any of them, against his 215, held down by the
+        /// shoulder the clouds are laid on with (cloudsover.glsl). The sky's seven times, fitted on the same frame once the light
+        /// towards the sun read the billows as coarsely as his and the sky had the air's own colour (the evening of 2026-10-27): the
+        /// darkest tenth 146, the middle 187 and the colour 180 182 189 against his 142, 188 and 180 184 191; at once, 157, 188 and
+        /// 184 184 185, neutral where his are blue; at ten, 155, 192 and 186 187 192. The sky five times since 2026-11-08: with a
+        /// sheet's top lit at its lumps (clouds.glsl, deckTop), at seven the deck_above view's deck sat so near white that its lumps
+        /// were lost, at five they show; and on the light as it is now five brings the cloud's darkest tenth nearer his at the pad
+        /// and over the cumulus field, its middle and brightest tenth within one to five of his as at seven (OpenGL, recordings/
+        /// 2026-11-08-pc/sky-pad-gl and sky-cumulus_field-gl, the darkest tenth, middle and brightest tenth): at the pad 184, 202,
+        /// 211 against his 174, 201, 215 (seven 187, 205, 212; three and a half 180, 199, 209); over the cumulus field 187, 206,
+        /// 216 against his 187, 208, 221 (seven 190, 208, 216; three and a half 184, 204, 216).)
+        /// </summary>
+        public static float LightGain = 1f, LightSky = 5f, LightGround = 1f;
+        /// <summary>The second form's sun above the air, as a colour (the shader's _CloudSunTint): its red, green and blue; the air's
+        /// own table colours it further on the way down. White, as until 2026-11-08: made warmer (its green and blue 0.97 and 0.93
+        /// of its red, down to 0.93 and 0.84) it moved the clouds' brightest tenth by at most 1 of 255. (Development builds:
+        /// Clouds.Light2 "sung=0.97 sunb=0.92", its green and blue against its red.)</summary>
+        public static Vector3 SunTint2 = new Vector3(1f, 1f, 1f);
+        /// <summary>The second form's shoulder rolled over by a colour's brightest channel, the others in proportion, so that its hue
+        /// is kept, where the colour is little tinged (a sunlit top, cream), and by each channel by itself as before where it is
+        /// strongly tinged (the far bands near the horizon, which kept would be salmon) (cloudsover.glsl; _CloudOver.w's 8), since
+        /// 2026-11-08: each channel by itself, a sunlit top's warmth was lost near white, the clouds' brightest tenth all but grey
+        /// where Blackrack's are cream (red less blue +1 to +3 of 255 against his +5 to +15 in the five views with clouds; now +4
+        /// to +7 on Direct3D). False sets it back (Light2 "hue=0").</summary>
+        public static bool HueKept = true;
+        /// <summary>How much of the sky's own colour the second form's air keeps in its glow between the camera and a cloud (the
+        /// shader's _CloudSky.w; the rest a grey as bright; the first form's all of it). A half since 2026-11-09 (TODO item 16): all of
+        /// it, the far bands near the horizon were pink and lilac where Blackrack's are cream, the share of the clouds' bright
+        /// pixels pink 9 to 24 % in four of the five views with clouds where his are 0 to 4 %; at a half 0.03 to 3.5 %, cream
+        /// (OpenGL and Direct3D alike; TODO.md); at a quarter and less the bands go yellow. (Development builds: Clouds.Light2
+        /// "hazet=1" as before.)</summary>
+        public static float HazeTint2 = 0.5f;
+        /// <summary>The second form's air between the camera and a cloud (clouds.glsl's _CloudHaze): x how many times one scattering's
+        /// light the air adds, y how strongly it dims and veils the cloud behind it (1 the air as it is, 0 none).</summary>
+        public static Vector2 HazeAir2 = new Vector2(1f, 1f);
+        /// <summary>How much of the sky's own colour the second form's sky light on its clouds keeps, the rest a white as strong as
+        /// it (the shader's _CloudAirHigh.w): 0.7, his tint (his skylightTintMultiplier). (Development builds: Clouds.Light2
+        /// "skyt=0.7".)</summary>
+        public static float SkyTint2 = 0.7f;
+        /// <summary>How deep the second form draws a low deck of stratus or stratocumulus at the least (m): from the weather's own
+        /// base up, kept 300 m under a middle layer over it (CloudsMap; the shell walked through with it). 1700 since 2026-11-09
+        /// (TODO item 16), Blackrack's: at the deck_above view our weather has stratus over 998-1487 m, his 1750-3450 m, and
+        /// the shader's deck (its domes, its billows' depth, its light) was fitted on his heights. The weather itself keeps its
+        /// decks 300 to 600 m deep, as real stratus mostly is, and its base, where rain falls from and a pilot comes out under
+        /// it, is the weather's: the first form draws them so. 0: as the weather has them. (Development builds: Clouds.Light2
+        /// "deckd=0".)</summary>
+        public static float DeckDeep2 = 1700f;
+        /// <summary>How the second form's light scattered many times falls off into a low deck's top, where the creases between its
+        /// lumps lie deeper in the cover than their crowns (clouds.glsl, the second form's light over a sheet's top; the shader's
+        /// _CloudDeck2): x, one less the depth inside to this power; y, never under this share of it. 1.25 and nothing kept since
+        /// 2026-11-09 (TODO item 16), with DeckRelief2 at 2: at the square, as first written (2026-11-08), Blackrack's deck at
+        /// the deck_above view (CloudsStandIn's st=0.63,1750,3450) was drawn with puffy domes and deep creases, dark and lilac:
+        /// its shading (creases.py: luma less its blur over the cloud alone, far / middle distance / nearer) 9.0 / 10.1 / 13.1
+        /// against his 10.2 / 9.5 / 8.0, its nearer creases' red less blue -14 against his -2. Now 7.5 / 8.5 / 10.8 and -2,
+        /// softer and grey as his (Direct3D, recordings/2026-11-09-pc/crease-d3d3). Lower, at 1, the nearer band his (7.8) but
+        /// the deck flatter than his further off (6.4 / 6.6); a floor kept (0.25) flattened it all. (Development builds:
+        /// Clouds.Light2 "creasep=2 creasef=0" as first written.)</summary>
+        public static Vector2 DeckCrease2 = new Vector2(1.25f, 0f);
+        /// <summary>How much more the second form's billows eat into a low deck's upper part than below (clouds.glsl, fieldAt; the
+        /// shader's _CloudDeck2.z): its billows' depth there times one and this. 1, twice as deep, as first written (2026-11-08);
+        /// 2, three times, since 2026-11-09 with DeckCrease2's softer creases, which alone flattened the deck in the middle
+        /// distance (6.9 at 1.5, 8.5 at 2, 8.9 at 3, his 9.5). (Development builds: Clouds.Light2 "relief=1" as first
+        /// written.)</summary>
+        public static float DeckRelief2 = 2f;
+        /// <summary>The second form's billows read this many times finer than made (a development knob for fitting their size on his
+        /// frames; 1 as made). A half since 2026-11-06: the low heaps' cube 4.5 km across, its largest cells 2.25 km, as Blackrack's
+        /// 2300 m (research/clouds-r5/his-code-2026-11-05.md), now the heaps stand on columns as deep as his and his low, flat cover
+        /// (clouds.glsl, coverCurve). At 1, filmed beside his that day (D:\ksp-ai-bridge-films\2026-11-06-pc-billow-*.jpg), every
+        /// crown was ragged with spikes and loose puffs where his are round and full; at a half they are round, and a tower one
+        /// rounded mass.</summary>
+        public static float BillowFiner = 0.5f;
+        /// <summary>
+        /// How fast the second form's billows rise through its clouds, metres a second, the clouds themselves standing (after the
+        /// owner's spec of Blackrack's clouds, 2026-11-04: his noise climbs at 5 m/s through a cover that stays put, the only life his
+        /// clouds have; ours were carved statues sliding with the wind). Under time warp no faster than twice that.
+        /// </summary>
+        public static float RiseSpeed = 5f;
+        /// <summary>For setting one against the other: true lays the clouds' smaller picture on with its four dots taken alike whatever
+        /// stood in front of each, as until 2026-11-04 (a band of the clouds behind a craft cut away round its outline: cloudsover.glsl).</summary>
+        public static bool EdgesAsBefore;
+        /// <summary>For setting one against the other: true rolls the second form's brightest over from 0.7 as the first form's, as until
+        /// 2026-11-05 (from 0.82 after the owner's spec: brighter tops; cloudsover.glsl, the shoulder).</summary>
+        public static bool TopsAsBefore;
+        /// <summary>For setting one against the other (the shader's _CloudSpec.w): 1 the billows read as coarsely as a pixel, 2 a heap's
+        /// water thickening over its lowest 1.5 km, as until 2026-11-04; 4 no towers among the heaps, every heap of a layer over one
+        /// column, as until 2026-11-05 (clouds.glsl, towerOf); 8 the sky's light on a place dimmed by its own column alone, not by
+        /// every cloud over it (the light field's sky part), as until 2026-11-05; 16 a storm's anvil the lens drawn round a hull, as
+        /// until 2026-11-05 (clouds.glsl, cellTwo); 32 the anvil as dense by its tower as along its trail (AnvilCore), as until
+        /// 2026-11-05; 64 a heap's cover as a sheet's, the power 1.6, not Blackrack's low flat cover, as until 2026-11-06 (clouds.glsl,
+        /// coverCurve); 128 the small heaps of the pattern 330 m to 8 km across and faded out over a heap's lowest 900 m, as until
+        /// 2026-11-06 (clouds.glsl, smallOf; the pattern's old file, patternOld, in the development build alone); 256 a low deck's top,
+        /// 512 its light and 1024 its billows as until 2026-11-07 (clouds.glsl, formDeck, deckLight, deckFine); 2048 a sheet's top
+        /// lit with the dark edge, as until 2026-11-08 (clouds.glsl, deckTop); 4096 a sheet's billows as deep over its upper
+        /// part as below, and 8192 a deep deck's billows twice as fine as a shallow one's, as until 2026-11-08 (clouds.glsl,
+        /// deckDeep, deckWide); added. 0: after the spec.</summary>
+        public static int SpecOld;
+        /// <summary>The second form's anvil (clouds.glsl, cellTwo, its anvil his way; the shader's _CloudAnvil): x, how far in from its
+        /// rim its cover is whole, as a share of its last disc's half-width; y, how much of its cover is left where it has been carried
+        /// furthest; z, its density, times his; w, where its edge's band begins, as a share of the storm's column. Chosen by eye from
+        /// the storm seen from outside, 2026-11-05 (D:\ksp-ai-bridge-films\2026-11-05-pc\anvil-tune2.jpg): whole from 0.15 in, so
+        /// that it is thick over the tower and the tower runs up into it; under half left far off, so that its trail thins.</summary>
+        public static Vector4 AnvilKnobs = new Vector4(0.15f, 0.45f, 1f, 0.38f);
+        /// <summary>How many times denser the anvil is by its tower than out along its trail (clouds.glsl, cellTwo; sent in
+        /// _CloudAnvil.z's hundreds, in tenths). Seen from under it, 2026-11-05, an anvil of his density all through was a bright
+        /// white sheet overhead, lit nearly as its top is: some three e-folds of cloud between its underside and the sun, where a
+        /// real anvil near its storm holds tens and its underside is grey. Three times by the tower, falling to his own density
+        /// along the trail, which keeps the trail as it was chosen from outside. SpecOld's 32 sets it back.</summary>
+        public static float AnvilCore = 3f;
+        Vector3d rise;
+        Vector4 specNow;
+        double riseAt = double.NaN;
+#if DEV
+        /// <summary>The second form's light, set while the game runs ("gain=0.35 sky=1 ground=1", any of them; Light2 by the bridge),
+        /// and its billows' size ("billow=1.4": that many times finer); what they are now.</summary>
+        public static string Light2(string how)
+        {
+            foreach (string part in (how ?? "").Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] kv = part.Split('=');
+                if (kv.Length != 2 || !float.TryParse(kv[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v)) return "not understood: " + part;
+                switch (kv[0].Trim().ToLowerInvariant())
+                {
+                    case "gain": LightGain = v; break;
+                    case "sky": LightSky = v; break;
+                    case "ground": LightGround = v; break;
+                    case "billow": BillowFiner = Mathf.Clamp(v, 0.25f, 4f); break;
+                    case "rise": RiseSpeed = Mathf.Clamp(v, 0f, 50f); break;
+                    case "old": SpecOld = Mathf.Clamp((int)v, 0, 16383); break;
+                    case "edges": EdgesAsBefore = v > 0.5f; break;
+                    case "tops": TopsAsBefore = v > 0.5f; break;
+                    case "acover": AnvilKnobs.x = Mathf.Clamp(v, 0.05f, 2f); break;
+                    case "afar": AnvilKnobs.y = Mathf.Clamp01(v); break;
+                    case "adense": AnvilKnobs.z = Mathf.Clamp(v, 0f, 5f); break;
+                    case "alow": AnvilKnobs.w = Mathf.Clamp(v, 0.1f, 0.6f); break;
+                    case "acore": AnvilCore = Mathf.Clamp(v, 1f, 9f); break;
+                    case "sung": SunTint2.y = Mathf.Clamp(v, 0.5f, 1.2f); break;
+                    case "sunb": SunTint2.z = Mathf.Clamp(v, 0.5f, 1.2f); break;
+                    case "hue": HueKept = v > 0.5f; break;
+                    case "hazet": HazeTint2 = Mathf.Clamp01(v); break;
+                    case "try": Trial = v; break;
+                    case "hazez": HazeAir2.x = Mathf.Clamp(v, 0f, 4f); break;
+                    case "hazew": HazeAir2.y = Mathf.Clamp(v, 0f, 4f); break;
+                    case "skyt": SkyTint2 = Mathf.Clamp01(v); break;
+                    case "deckd": DeckDeep2 = Mathf.Clamp(v, 0f, 4000f); if (instance != null) instance.map.Forget(); break;
+                    case "creasep": DeckCrease2.x = Mathf.Clamp(v, 0.1f, 4f); break;
+                    case "creasef": DeckCrease2.y = Mathf.Clamp01(v); break;
+                    case "relief": DeckRelief2 = Mathf.Clamp(v, 0.05f, 4f); break;
+                    default: return "not understood: " + part;
+                }
+            }
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture, "the second form's light: gain {0}, sky {1}, ground {2}; billows {3} times finer, rising {4} m/s; old ways {5}; the anvil's cover whole {6} in, {7} of it far off, density {8} ({10} times that by the tower), from {9} of the column; the sun above the air {11}, {12}, {13}; the tops' hue {14}; the air's glow {15} of the sky's colour, the sky's light on the clouds {16}; low decks at least {17} m deep, their creases to the power {18}, kept at least {19}, their billows {20} more over their upper part", LightGain, LightSky, LightGround, BillowFiner, RiseSpeed, SpecOld, AnvilKnobs.x, AnvilKnobs.y, AnvilKnobs.z, AnvilKnobs.w, AnvilCore, SunTint2.x, SunTint2.y, SunTint2.z, HueKept ? "kept" : "rolled out by channel", HazeTint2, SkyTint2, DeckDeep2, DeckCrease2.x, DeckCrease2.y, DeckRelief2);
+        }
+#endif
         /// <summary>How long a heap lives, from a puff at the base to gone, in seconds.</summary>
         public static float HeapLife = 1500f;
         /// <summary>
@@ -266,9 +461,9 @@ namespace NaturalWeather
             public CommandBuffer Early;
             /// <summary>After everything see-through: what is drawn in front of the clouds (the lightning), and the clouds' picture taken back from the other mods.</summary>
             public CommandBuffer After;
-            public RenderTexture Now, NowD, HistA, HistDA, HistB, HistDB;
+            public RenderTexture Now, NowD, HistA, HistDA, HistB, HistDB, Shown, ShownD;
             public bool Flip;
-            public Material Walk, Together, Over, Shadow;
+            public Material Walk, Together, Lay, Over, Shadow;
             public bool AskedDepth, On;
             /// <summary>When in the camera's drawing the clouds are laid on (see Setup, "first").</summary>
             public CameraEvent When = CameraEvent.BeforeForwardAlpha;
@@ -276,11 +471,17 @@ namespace NaturalWeather
             public CameraEvent EarlyWhen = CameraEvent.AfterDepthTexture;
             // where the camera was last frame (the planet's axes), and how it looked
             public Vector3d PrevAt;
+            public double PrevUt;
             public Vector3 PrevRight, PrevUp, PrevAhead;
             public bool HavePrev;
             /// <summary>Frames since the camera last jumped (or first looked): see where the frames are taken together.</summary>
             public int SinceCut;
             public string PrevBody = "";
+            /// <summary>What the far camera's kept picture is held to (the planet's axes: right and up over the tangents of half its width
+            /// and height of view, and ahead), the field of view it was held at, and whether it is held to anything yet (Setup).</summary>
+            public Vector3 HeldRight, HeldUp, HeldAhead;
+            public float HeldFov;
+            public bool HeldOk;
         }
 
         readonly Pass far = new Pass { Name = "far" }, near = new Pass { Name = "near" };
@@ -300,18 +501,57 @@ namespace NaturalWeather
 #if DEV
         /// <summary>(Development build, for timing the field against walking to the sun: "off" walks, anything else uses the field.)</summary>
         public static string Field(string on) { LightField = on == null || on.Trim() != "off"; return "light field " + (LightField ? "on" : "off"); }
+        /// <summary>(Development build) the light field as read now, level by level: the sun's part (its four stretches' light let
+        /// through, the mean and the least) and the sky's (how much of the sky's light comes down past the clouds over a cell).</summary>
+        public static string FieldSays()
+        {
+            Clouds c = instance;
+            if (c == null || c.lightRead == null) return "no light field";
+            var was = RenderTexture.active;
+            var t = new Texture2D(c.lightRead.width, c.lightRead.height, TextureFormat.RGBAHalf, false, true);
+            try
+            {
+                RenderTexture.active = c.lightRead;
+                t.ReadPixels(new Rect(0, 0, t.width, t.height), 0, 0, false);
+                t.Apply(false);
+            }
+            finally { RenderTexture.active = was; }
+            Color[] px = t.GetPixels();
+            Destroy(t);
+            int w = c.lightRead.width, perLevel = LightHeights / 4 * LightCells, half = perLevel * LightLevels;
+            var b = new System.Text.StringBuilder("ready " + c.lightReady + ", " + w + " x " + c.lightRead.height + ":");
+            for (int level = 0; level < LightLevels; level++)
+            {
+                double sunSum = 0, skySum = 0; float sunLeast = 1f, skyLeast = 1f, skyMost = 0f; int n = 0, under = 0;
+                for (int y = level * perLevel; y < (level + 1) * perLevel; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        Color s = px[y * w + x], k = px[(y + half) * w + x];
+                        float sun = s.r * s.g * s.b * s.a;
+                        sunSum += sun; sunLeast = Mathf.Min(sunLeast, sun);
+                        skySum += k.r; skyLeast = Mathf.Min(skyLeast, k.r); skyMost = Mathf.Max(skyMost, k.r);
+                        if (k.r < 0.9f) under++;
+                        n++;
+                    }
+                b.Append("\n  level " + level + ": the sun's light let through " + (sunSum / n).ToString("F3") + " (least " + sunLeast.ToString("F3") + "); the sky's " + (skySum / n).ToString("F3") + " (" + skyLeast.ToString("F3") + " to " + skyMost.ToString("F3") + "), under 0.9 in " + (100.0 * under / n).ToString("F1") + " %");
+            }
+            return b.ToString();
+        }
         /// <summary>
         /// (Development build, for setting the rendering chat's lab up as the game had it: the far camera's walk's values as last set,
         /// by name, "a,b,c"; with none named, the sun's, the eye's and twist's, the camera's and the shell's.)
         /// </summary>
         public static string Uniforms(string names)
         {
-            Material m = instance != null ? instance.far.Walk : null;
+            // ("keep:" first: the far camera's keeping's values, which the walk does not have (_CloudPrevAt, _CloudKeep, _CloudHeld...))
+            bool keep = names != null && names.StartsWith("keep:");
+            if (keep) names = names.Substring(5);
+            Material m = instance != null ? (keep ? instance.far.Together : instance.far.Walk) : null;
             if (m == null) return "no far walk yet";
             string[] want = string.IsNullOrEmpty(names) || names.Trim().Length == 0
                 ? new[] { "_CloudSun", "_CloudSunTint", "_CloudSunFixed", "_CloudEyeA", "_CloudEyeB", "_CloudEyeC", "_CloudEyeD", "_CloudTwistA", "_CloudTwistB", "_CloudCam", "_CloudHigh", "_CloudShell", "_CloudShellEased", "_CloudForm", "_CloudGround", "_CloudAir", "_CloudAirHigh", "_CloudLightF", "_CloudLightG", "_CloudJitter" }
                 : names.Split(',');
-            var b = new System.Text.StringBuilder("the far walk (" + (m.shader != null ? m.shader.name : "?") + "):");
+            var b = new System.Text.StringBuilder((keep ? "the far keeping (" : "the far walk (") + (m.shader != null ? m.shader.name : "?") + "):");
             foreach (string one in want)
             {
                 string n = one.Trim();
@@ -355,7 +595,9 @@ namespace NaturalWeather
 
         static RenderTexture MakeLight(string what)
         {
-            var t = new RenderTexture(4 * LightCells, LightHeights / 4 * LightCells * LightLevels, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear)
+            // (twice as tall as its levels: the sun's half, then the sky's (how much of the sky's light comes down past the clouds over
+            // each cell, 2026-11-05), the same cells in the same places)
+            var t = new RenderTexture(4 * LightCells, 2 * (LightHeights / 4 * LightCells * LightLevels), 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear)
             { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp, name = "Natural Weather: the light field (" + what + ")" };
             t.Create();
             return t;
@@ -409,6 +651,21 @@ namespace NaturalWeather
         Vector3d drift;                 // how far the wind has carried the clouds (m, the planet's axes; kept within 207 lengths of the noise)
         double driftAt = double.NaN;
         string driftBody = "";
+        // (a jump of the camera, decided once a frame in Frame for both cameras' clouds (Setup): where the camera was last frame and
+        // the game's time then, the step it took as last learned and the game's time that step took, and whether last frame was one)
+        Vector3d jumpWas, jumpStep;
+        double jumpUt = double.NaN, jumpDut;
+        string jumpBody = "";
+        bool jumped, jumpedLast;
+        // (a craft switched to, or Cut (development builds): the next frame is a jump, wherever the camera went)
+        static bool cutAsked;
+        // the wind at the camera (m/s, the planet's axes; nought held still) and the game's time it was taken at: what carried the
+        // clouds since each pass's last frame (Setup; a pass's own time, so a frame it missed is carried too)
+        Vector3d windNow;
+        double windUt;
+        // (the far camera's keeping, as multiples of the release's (Keep, development builds); and held to the screen, for comparing)
+        static Vector4 keepSaid = Vector4.one;
+        static bool heldToScreen;
         // the wind's way as the streets and the high cloud's fibres take it: changed only when the wind has turned well round
         // (the camera's place in the noise is hundreds of lengths from its start, and patterns read along the wind there
         // would swing about with every small turn of it)
@@ -444,7 +701,7 @@ namespace NaturalWeather
             idRight = Shader.PropertyToID("_CloudRight"), idUp = Shader.PropertyToID("_CloudUp"), idAhead = Shader.PropertyToID("_CloudAhead"),
             idFixedX = Shader.PropertyToID("_CloudFixedX"), idFixedY = Shader.PropertyToID("_CloudFixedY"), idFixedZ = Shader.PropertyToID("_CloudFixedZ"),
             idNoise = Shader.PropertyToID("_CloudNoise"), idDrift = Shader.PropertyToID("_CloudDrift"), idShell = Shader.PropertyToID("_CloudShell"),
-            idLook = Shader.PropertyToID("_CloudLook"), idSun = Shader.PropertyToID("_CloudSun"), idSunTint = Shader.PropertyToID("_CloudSunTint"), idMoon = Shader.PropertyToID("_CloudMoon"),
+            idLook = Shader.PropertyToID("_CloudLook"), idLight2 = Shader.PropertyToID("_CloudLight2"), idDeck2 = Shader.PropertyToID("_CloudDeck2"), idSpec = Shader.PropertyToID("_CloudSpec"), idAnvil = Shader.PropertyToID("_CloudAnvil"), idSun = Shader.PropertyToID("_CloudSun"), idSunTint = Shader.PropertyToID("_CloudSunTint"), idMoon = Shader.PropertyToID("_CloudMoon"),
             idSky = Shader.PropertyToID("_CloudSky"), idGround = Shader.PropertyToID("_CloudGround"), idAir = Shader.PropertyToID("_CloudAir"), idAirHigh = Shader.PropertyToID("_CloudAirHigh"),
             idHaze = Shader.PropertyToID("_CloudHaze"), idFlashA = Shader.PropertyToID("_CloudFlashA"), idFlashB = Shader.PropertyToID("_CloudFlashB"), idHoleA = Shader.PropertyToID("_CloudHoleA"), idHoleB = Shader.PropertyToID("_CloudHoleB"), idHoleC = Shader.PropertyToID("_CloudHoleC"),
             idField = Shader.PropertyToID("_CloudField"), idFieldA = Shader.PropertyToID("_CloudFieldA"), idFieldB = Shader.PropertyToID("_CloudFieldB"),
@@ -452,7 +709,7 @@ namespace NaturalWeather
             idFlashTint = Shader.PropertyToID("_CloudFlashTint"), idPrevAt = Shader.PropertyToID("_CloudPrevAt"), idPrevRight = Shader.PropertyToID("_CloudPrevRight"),
             idPrevUp = Shader.PropertyToID("_CloudPrevUp"), idPrevAhead = Shader.PropertyToID("_CloudPrevAhead"), idShadowAt = Shader.PropertyToID("_CloudShadowAt"),
             idShadowX = Shader.PropertyToID("_CloudShadowX"), idShadowY = Shader.PropertyToID("_CloudShadowY"), idSunFixed = Shader.PropertyToID("_CloudSunFixed"),
-            idSheet = Shader.PropertyToID("_CloudSheet"), idOver = Shader.PropertyToID("_CloudOver"), idShadeAt = Shader.PropertyToID("_CloudShadeAt"),
+            idSheet = Shader.PropertyToID("_CloudSheet"), idOver = Shader.PropertyToID("_CloudOver"), idVeilUp = Shader.PropertyToID("_CloudVeilUp"), idShadeAt = Shader.PropertyToID("_CloudShadeAt"),
             idShadeX = Shader.PropertyToID("_CloudShadeX"), idShadeY = Shader.PropertyToID("_CloudShadeY"), idShade = Shader.PropertyToID("_CloudShade"),
             idShadeSun = Shader.PropertyToID("_CloudShadeSun"), idShadeTint = Shader.PropertyToID("_CloudShadeTint"), idStreets = Shader.PropertyToID("_CloudStreets"), idAlong = Shader.PropertyToID("_CloudAlong"),
             idShape = Shader.PropertyToID("_CloudShape"), idDetail = Shader.PropertyToID("_CloudDetail"), idMap = Shader.PropertyToID("_CloudMap"),
@@ -464,8 +721,14 @@ namespace NaturalWeather
             idWeatherShadowSun = Shader.PropertyToID("_WeatherShadowSun"),
             idOthers = Shader.PropertyToID("_WeatherClouds"), idOthersPic = Shader.PropertyToID("_WeatherCloudsPic"), idOthersDist = Shader.PropertyToID("_WeatherCloudsDist"),
             idFlareCloud = Shader.PropertyToID("scattererReconstructedCloud");
+        static readonly int idKeep = Shader.PropertyToID("_CloudKeep");
+        static readonly int idAim = Shader.PropertyToID("_CloudAim");
+        static readonly int idBlue = Shader.PropertyToID("_CloudBlue");
+        static readonly int idHeld = Shader.PropertyToID("_CloudHeld"), idHeldRight = Shader.PropertyToID("_CloudHeldRight"), idHeldUp = Shader.PropertyToID("_CloudHeldUp"),
+            idHeldAhead = Shader.PropertyToID("_CloudHeldAhead"), idSeeRight = Shader.PropertyToID("_CloudSeeRight"), idSeeUp = Shader.PropertyToID("_CloudSeeUp"), idSeeAhead = Shader.PropertyToID("_CloudSeeAhead");
         static readonly int[] idCellA = { Shader.PropertyToID("_CloudCellA0"), Shader.PropertyToID("_CloudCellA1"), Shader.PropertyToID("_CloudCellA2"), Shader.PropertyToID("_CloudCellA3"), Shader.PropertyToID("_CloudCellA4"), Shader.PropertyToID("_CloudCellA5") };
         static readonly int[] idCellB = { Shader.PropertyToID("_CloudCellB0"), Shader.PropertyToID("_CloudCellB1"), Shader.PropertyToID("_CloudCellB2"), Shader.PropertyToID("_CloudCellB3"), Shader.PropertyToID("_CloudCellB4"), Shader.PropertyToID("_CloudCellB5") };
+        static readonly int[] idCellC = { Shader.PropertyToID("_CloudCellC0"), Shader.PropertyToID("_CloudCellC1"), Shader.PropertyToID("_CloudCellC2"), Shader.PropertyToID("_CloudCellC3"), Shader.PropertyToID("_CloudCellC4"), Shader.PropertyToID("_CloudCellC5") };
 
         // ---------------------------------------------------------------- loading
 
@@ -498,9 +761,12 @@ namespace NaturalWeather
                     // (OpenGL: the shaders packed by hand from tools/shaderpack/*.glsl, one to a file)
                     walkShader = Pick(Load("clouds.bundle"), "NaturalWeather/Clouds");
                     walkStorm = Pick(Load("cloudsstorm.bundle"), "NaturalWeather/CloudsStorm"); walkCalm = Pick(Load("cloudscalm.bundle"), "NaturalWeather/CloudsCalm");
+                    walk2 = Pick(Load("clouds2.bundle"), "NaturalWeather/Clouds2");
+                    walkStorm2 = Pick(Load("clouds2storm.bundle"), "NaturalWeather/Clouds2Storm"); walkCalm2 = Pick(Load("clouds2calm.bundle"), "NaturalWeather/Clouds2Calm");
                     overShader = Pick(Load("cloudsover.bundle"), "NaturalWeather/CloudsOver");
                     shadeShader = Pick(Load("cloudshade.bundle"), "NaturalWeather/CloudShade");
-                    if (walkShader == null || overShader == null || shadeShader == null) why = "the clouds' shaders (GameData/NaturalWeather/PluginData/clouds*.bundle) are missing or this graphics card cannot run them";
+                    keepShader = Pick(Load("cloudskeep.bundle"), "NaturalWeather/CloudsKeep");
+                    if (walkShader == null || overShader == null || shadeShader == null || keepShader == null) why = "the clouds' shaders (GameData/NaturalWeather/PluginData/clouds*.bundle) are missing or this graphics card cannot run them";
                 }
                 else
                 {
@@ -510,12 +776,14 @@ namespace NaturalWeather
                     Shader[] built = Load("clouds-" + system + ".bundle");
                     walkShader = Pick(built, "NaturalWeather/Clouds"); overShader = Pick(built, "NaturalWeather/CloudsOver"); shadeShader = Pick(built, "NaturalWeather/CloudShade");
                     walkStorm = Pick(built, "NaturalWeather/CloudsStorm"); walkCalm = Pick(built, "NaturalWeather/CloudsCalm");
-                    if (walkShader == null || overShader == null || shadeShader == null)
+                    walk2 = Pick(built, "NaturalWeather/Clouds2"); walkStorm2 = Pick(built, "NaturalWeather/Clouds2Storm"); walkCalm2 = Pick(built, "NaturalWeather/Clouds2Calm");
+                    keepShader = Pick(built, "NaturalWeather/CloudsKeep");
+                    if (walkShader == null || overShader == null || shadeShader == null || keepShader == null)
                         why = built == null ? "there is no cloud shader for " + SystemInfo.graphicsDeviceType + " yet (only for OpenGL, on Macs and Linux)" : "the clouds' shaders for " + SystemInfo.graphicsDeviceType + " did not load";
                 }
-                if (walkShader == null || overShader == null || shadeShader == null) { walkShader = overShader = shadeShader = null; walkStorm = walkCalm = null; }
+                if (walkShader == null || overShader == null || shadeShader == null || keepShader == null) { walkShader = keepShader = overShader = shadeShader = null; walkStorm = walkCalm = walk2 = walkStorm2 = walkCalm2 = null; }
             }
-            catch (Exception ex) { walkShader = overShader = shadeShader = null; walkStorm = walkCalm = null; why = "the clouds' shader did not load (" + ex.Message + ")"; }
+            catch (Exception ex) { walkShader = keepShader = overShader = shadeShader = null; walkStorm = walkCalm = walk2 = walkStorm2 = walkCalm2 = null; why = "the clouds' shader did not load (" + ex.Message + ")"; }
             Debug.Log("[Natural Weather] " + (walkShader != null ? "clouds: shaders loaded" : "no clouds: " + why));
             if (sheet == null)
             {
@@ -577,6 +845,33 @@ namespace NaturalWeather
             finally { if (field == null) Debug.Log("[Natural Weather] clouds: heaps carved from the noise, as before 0.3.0: " + fieldWhy); }
         }
 
+        /// <summary>
+        /// The spatiotemporal blue noise the far camera's walk takes its steps' places from (clouds.glsl, blueAt; made by
+        /// tools/clouds/stbn.py: 64 squares of 64 by 64 places, eight across and eight up, a byte a place), from PluginData/blue.stbn.
+        /// Without the file, each place's own hashed number moved on by the golden ratio from square to square, as the steps were
+        /// placed until 2026-10-26, and a word in the log. Once a game.
+        /// </summary>
+        static Texture2D blueTable;
+        static void LoadBlue()
+        {
+            var bytes = new byte[512 * 512];
+            string path = Folder + "blue.stbn";
+            bool fromFile = false;
+            try { if (File.Exists(path)) { byte[] b = File.ReadAllBytes(path); if (b.Length == bytes.Length) { bytes = b; fromFile = true; } } } catch (Exception) { }
+            if (!fromFile)
+                for (int t = 0; t < 64; t++)
+                    for (int y = 0; y < 64; y++)
+                        for (int x = 0; x < 64; x++)
+                        {
+                            double v = unchecked(MixBits((uint)x + MixBits((uint)y + 7919u)) & 65535u) / 65536.0 + 0.61803399 * t;
+                            bytes[((t >> 3) * 64 + y) * 512 + (t & 7) * 64 + x] = (byte)(256.0 * (v - Math.Floor(v)));
+                        }
+            blueTable = new Texture2D(512, 512, TextureFormat.R8, false, true) { name = "Natural Weather: blue noise", filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Repeat };
+            blueTable.LoadRawTextureData(bytes);
+            blueTable.Apply(false, true);
+            Debug.Log("[Natural Weather] clouds: the walk's steps placed by " + (fromFile ? "blue.stbn" : "hashed numbers (no " + path + ")"));
+        }
+
         /// <summary>The two cubes of noise the clouds are carved from, made on the graphics card slice by slice (once).</summary>
         static void MakeNoise()
         {
@@ -618,12 +913,179 @@ namespace NaturalWeather
             Debug.Log("[Natural Weather] clouds: noise made (" + shape.width + " and " + detail.width + " cells each way" + (noiseHasMips ? ", with smaller copies" : "") + ")");
         }
 
+        /// <summary>
+        /// The second form's billows (2026-10-27): one cube of noise, a byte a place, 256 places each way over half a length of the
+        /// large noise (4.5 km), made on the graphics card slice by slice (the shader's go 7, billowMake), with its coarser copies.
+        /// Once, when the second form is first drawn.
+        /// </summary>
+        static void MakeBillow()
+        {
+            if (billow != null && billow.IsCreated()) return;
+            // (drawn by the second form's own copy: go 7 is only in shaders packed from text that has it, and the first form's
+            // bundle may be an older one put back by a build)
+            var maker = new Material(walk2 ?? walkShader) { name = "Natural Weather: billow maker" };
+            maker.SetVector(idSheet, new Vector4(1f, 1f, 0.5f, 1f));
+            var commands = new CommandBuffer { name = "Natural Weather: the second form's billows" };
+            if (billow != null) billow.Release();
+            // (one number a place; where the card cannot draw into such a cube, four)
+            RenderTextureFormat one = SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.R8) ? RenderTextureFormat.R8 : RenderTextureFormat.ARGB32;
+            billow = new RenderTexture(256, 256, 0, one, RenderTextureReadWrite.Linear)
+            {
+                dimension = TextureDimension.Tex3D, volumeDepth = 256, useMipMap = true, autoGenerateMips = false,
+                wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Trilinear, name = "Natural Weather: billows"
+            };
+            billow.Create();
+            for (int z = 0; z < 256; z++)
+            {
+                var block = new MaterialPropertyBlock();
+                block.SetVector(idStage, new Vector4(7f, z, 0f, 0f));
+                commands.SetRenderTarget(billow, 0, CubemapFace.Unknown, z);
+                commands.DrawMesh(sheet, Matrix4x4.identity, maker, 0, 0, block);
+            }
+            Graphics.ExecuteCommandBuffer(commands);
+            commands.Release();
+            Destroy(maker);
+            bool mips = false;
+            try { billow.GenerateMips(); mips = true; }
+            catch (Exception ex) { Debug.Log("[Natural Weather] the second form's billows have no smaller copies: " + ex.Message); }
+            Debug.Log("[Natural Weather] clouds: the second form's billows made (256 cells each way, " + one + (mips ? ", with smaller copies)" : ")"));
+        }
+
+        /// <summary>
+        /// The second form's pattern of where its clouds stand (tools/clouds/pattern.py, PluginData/cover.pattern): a square of 1024 that
+        /// repeats, four bell-spread numbers a dot, with every coarser copy as the file has it (the shader divides each copy's reading by
+        /// how much that copy has narrowed the spread, measured from the file's own). Once.
+        /// </summary>
+        static void LoadPattern()
+        {
+            patternTried = true;
+            pattern = ReadPattern("cover.pattern", out patternWhy);
+            if (pattern != null) Debug.Log("[Natural Weather] clouds: the second form's pattern, " + pattern.width + " by " + pattern.width);
+            else Debug.Log("[Natural Weather] clouds: the second form has no pattern: " + patternWhy);
+        }
+
+        /// <summary>One pattern file of PluginData (see LoadPattern) as the shader's texture, or null and why not.</summary>
+        static Texture2D ReadPattern(string file, out string why)
+        {
+            string path = Folder + file;
+            try
+            {
+                if (!File.Exists(path)) { why = "there is no " + path; return null; }
+                byte[] all = File.ReadAllBytes(path);
+                const int head = 16;
+                if (all.Length < head || all[0] != 'N' || all[1] != 'W' || all[2] != 'P' || all[3] != '1') { why = file + " is not a pattern this version can read"; return null; }
+                int n = BitConverter.ToInt32(all, 4), levels = BitConverter.ToInt32(all, 12);
+                if (n < 1 || n > 4096 || (n & (n - 1)) != 0) { why = file + " has no sensible size"; return null; }
+                var t = new Texture2D(n, n, TextureFormat.RGBA32, true, true)
+                {
+                    wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Trilinear, anisoLevel = 0, name = "Natural Weather: where the second form's clouds stand (" + file + ")"
+                };
+                long want = 0;
+                for (int level = 0, m = n; level < t.mipmapCount; level++, m = Math.Max(1, m / 2)) want += 4L * m * m;
+                if (levels != t.mipmapCount || all.Length - head != want) { Destroy(t); why = file + " is not the size it says"; return null; }
+                var data = new byte[want];
+                Buffer.BlockCopy(all, head, data, 0, (int)want);
+                MostOfPattern(data, n, t.mipmapCount);
+                t.LoadRawTextureData(data);
+                t.Apply(false, true);
+                why = "read";
+                return t;
+            }
+            catch (Exception ex) { why = file + " did not load (" + ex.Message + ")"; return null; }
+        }
+
+        /// <summary>The pattern the shader is given: the old one for SpecOld's 128 where the development build has it, else the pattern,
+        /// else the grey dot (NoPattern).</summary>
+        static Texture PatternNow()
+        {
+#if DEV
+            if ((SpecOld & 128) != 0)
+            {
+                if (!patternOldTried)
+                {
+                    patternOldTried = true;
+                    patternOld = ReadPattern("cover-2026-11-05.pattern", out string why);
+                    Debug.Log("[Natural Weather] clouds: the pattern as until 2026-11-06: " + why);
+                }
+                if (patternOld != null) return patternOld;
+            }
+#endif
+            return pattern != null ? (Texture)pattern : NoPattern();
+        }
+
+        /// <summary>
+        /// The pattern's b and a, as the shader reads them: for each of its copies but the finest, the most of r and of g within a
+        /// dot of each dot (its own and its eight neighbours', the copy's dot itself the most of the four finer ones it covers), for
+        /// the walk's strides (clouds.glsl, clearFor: there is no cloud within a stride where even the most the pattern reads within
+        /// its reach is too little for the column to stand so high). The finest copy's are its own r and g, not spread: the shader
+        /// reads the second copy at the finest (patternMost), and spreading the finest, as at first, was three quarters of the work
+        /// for what nothing read (the review of the evening of 2026-10-27). In the file b and a are the same two again, apart, for
+        /// the pattern's changing with time, which nothing reads yet.
+        /// </summary>
+        static void MostOfPattern(byte[] data, int n, int levels)
+        {
+            int at = 0, m = n;
+            byte[] r = null, g = null;
+            for (int level = 0; level < levels; level++)
+            {
+                var r2 = new byte[m * m];
+                var g2 = new byte[m * m];
+                for (int y = 0; y < m; y++)
+                    for (int x = 0; x < m; x++)
+                    {
+                        int i = y * m + x;
+                        if (level == 0) { r2[i] = data[4 * i + 2] = data[4 * i]; g2[i] = data[4 * i + 3] = data[4 * i + 1]; continue; }
+                        int f = 2 * m, a = 2 * y * f + 2 * x;
+                        r2[i] = Math.Max(Math.Max(r[a], r[a + 1]), Math.Max(r[a + f], r[a + f + 1]));
+                        g2[i] = Math.Max(Math.Max(g[a], g[a + 1]), Math.Max(g[a + f], g[a + f + 1]));
+                    }
+                // (each dot's most within a dot of it, in every copy but the finest: see above)
+                for (int y = 0; level > 0 && y < m; y++)
+                    for (int x = 0; x < m; x++)
+                    {
+                        byte rm = 0, gm = 0;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                int j = (y + dy + m) % m * m + (x + dx + m) % m;
+                                if (r2[j] > rm) rm = r2[j];
+                                if (g2[j] > gm) gm = g2[j];
+                            }
+                        data[at + 4 * (y * m + x) + 2] = rm;
+                        data[at + 4 * (y * m + x) + 3] = gm;
+                    }
+                r = r2; g = g2;
+                at += 4 * m * m;
+                m = Math.Max(1, m / 2);
+            }
+        }
+
+        /// <summary>
+        /// What the shader reads for the pattern where there is none (cover.pattern missing, or not read): one dot of grey, the
+        /// pattern's middle, its b and a as MostOfPattern would make them, the same grey. The walk's strides read a copy of the
+        /// pattern no coarser than its coarsest (clouds.glsl, patternMost), here the dot itself, and find there just what coverOf
+        /// reads everywhere. (Unity's grey square, bound as first written, may have no coarser copies, and a stride reading a copy
+        /// that is not there reads nought on Direct3D, and anything on OpenGL: the bound nothing, and the stride through the even
+        /// deck the grey makes (the review of the evening of 2026-10-27).)
+        /// </summary>
+        static Texture2D NoPattern()
+        {
+            if (noPattern == null)
+            {
+                noPattern = new Texture2D(1, 1, TextureFormat.RGBA32, false, true) { name = "Natural Weather: no pattern" };
+                noPattern.SetPixels32(new[] { new Color32(128, 128, 128, 128) });
+                noPattern.Apply(false, true);
+            }
+            return noPattern;
+        }
+
         // ---------------------------------------------------------------- the addon
 
         void Awake()
         {
             CloudsPage.Page();
             Keystone.Weather.Flashed += OnFlash;
+            GameEvents.onVesselChange.Add(OnVesselChange);
             Camera.onPreCull += BeforeCamera;
             Camera.onPostRender += AfterCamera;
         }
@@ -631,6 +1093,7 @@ namespace NaturalWeather
         void OnDestroy()
         {
             Keystone.Weather.Flashed -= OnFlash;
+            GameEvents.onVesselChange.Remove(OnVesselChange);
             Camera.onPreCull -= BeforeCamera;
             Camera.onPostRender -= AfterCamera;
             Undim();
@@ -654,14 +1117,20 @@ namespace NaturalWeather
             if (mapFine != null) { mapFine.Release(); Destroy(mapFine); mapFine = null; }
             if (mapFineWalk != null) Destroy(mapFineWalk);
             if (shadowRead != null) { shadowRead.Free(); shadowRead = null; }
+            if (meterRead != null) { meterRead.Free(); meterRead = null; }
+            if (meterPic != null) { meterPic.Release(); Destroy(meterPic); meterPic = null; }
+            deckAt = -1e9f;
+            SayDeck();
             map.Release();
-            CloudsEve.Show();
+            CloudsEve.Release();
             Shader.SetGlobalTexture(idFlareCloud, Texture2D.whiteTexture);
             Drawing = false; SunThrough = 1f;
             Report = "";
         }
 
         void OnFlash(WeatherFlash flash) => CloudFlashes.Add(flash);
+        // (a craft switched to: nothing kept from frame to frame is used, wherever the camera went)
+        void OnVesselChange(Vessel v) => cutAsked = true;
 
         static void Detach(Pass p)
         {
@@ -688,10 +1157,10 @@ namespace NaturalWeather
 
         static void Free(Pass p)
         {
-            foreach (RenderTexture t in new[] { p.Now, p.NowD, p.HistA, p.HistDA, p.HistB, p.HistDB }) if (t != null) { t.Release(); Destroy(t); }
-            p.Now = p.NowD = p.HistA = p.HistDA = p.HistB = p.HistDB = null;
-            foreach (Material m in new[] { p.Walk, p.Together, p.Over, p.Shadow }) if (m != null) Destroy(m);
-            p.Walk = p.Together = p.Over = p.Shadow = null;
+            foreach (RenderTexture t in new[] { p.Now, p.NowD, p.HistA, p.HistDA, p.HistB, p.HistDB, p.Shown, p.ShownD }) if (t != null) { t.Release(); Destroy(t); }
+            p.Now = p.NowD = p.HistA = p.HistDA = p.HistB = p.HistDB = p.Shown = p.ShownD = null;
+            foreach (Material m in new[] { p.Walk, p.Together, p.Lay, p.Over, p.Shadow }) if (m != null) Destroy(m);
+            p.Walk = p.Together = p.Lay = p.Over = p.Shadow = null;
             if (p.Draw != null) p.Draw.Release();
             if (p.Shade != null) p.Shade.Release();
             if (p.After != null) p.After.Release();
@@ -707,6 +1176,7 @@ namespace NaturalWeather
 
         void Off(string said, bool eveBack = true)
         {
+            jumpUt = double.NaN;        // (the camera's step forgotten: the first frame back is a jump)
             if (far.On || near.On) { Detach(far); Detach(near); }
             ShadowAloneOff();
             // (EVE's clouds back only where these will not be drawn for a while: switched off, hiding EVE's switched off, no shader,
@@ -792,6 +1262,7 @@ namespace NaturalWeather
         public static string Kept(string folder)
         {
             if (instance == null || instance.far.HistA == null || instance.far.HistB == null || instance.far.Now == null) return "nothing kept";
+            // (histA and histB: what is kept, held to the sky with a margin (since 2026-10-26's step 8); shown: it laid on the screen)
             System.IO.Directory.CreateDirectory(folder);
             void Save(RenderTexture rt, string name)
             {
@@ -805,6 +1276,7 @@ namespace NaturalWeather
                 Destroy(t);
             }
             Save(instance.far.HistA, "histA"); Save(instance.far.HistB, "histB"); Save(instance.far.Now, "now");
+            if (instance.far.Shown != null) Save(instance.far.Shown, "shown");
             return "written to " + folder + "; the next frame writes " + (instance.far.Flip ? "A" : "B");
         }
         /// <summary>(Development build: how finely the weather's map is made: "1" or "2" (one dot in so many each way), "took" (by how long the last one took, as until 2026-10-19), anything else as released; the next map made at once.)</summary>
@@ -863,7 +1335,7 @@ namespace NaturalWeather
             if (traceOff.Length > 0 || trace.Length < 40) { trace.Append(" | drawn"); traceOff = ""; }
             if (map.Made != traceMade) { trace.Append(" | map ").Append(map.Made).Append(" one dot in ").Append(map.Stride).Append(", took ").Append(map.Took.ToString("F2")).Append(" s"); traceMade = map.Made; }
             if (traceSwap) { trace.Append(" | light field swapped in, centred ").Append(((readMid - camFixed.normalized).magnitude * R).ToString("F0")).Append(" m from the camera, which was reckoned at ").Append(lightGoes.magnitude.ToString("F0")).Append(" m/s"); traceSwap = false; }
-            string copy = walkNow == walkShader ? "whole" : walkNow == walkStorm ? "storm" : "calm";
+            string copy = (walkNow != null && (walkNow == walk2 || walkNow == walkStorm2 || walkNow == walkCalm2) ? "form 2 " : "") + (walkNow == walkShader || walkNow == walk2 ? "whole" : walkNow == walkStorm || walkNow == walkStorm2 ? "storm" : "calm");
             if (copy != traceCopy) { trace.Append(" | copy ").Append(copy); traceCopy = copy; }
             if (near.On != traceNear) { trace.Append(" | near ").Append(near.On ? "on" : "off"); traceNear = near.On; }
             if (cells.Count != traceCells) { trace.Append(" | storms ").Append(cells.Count); traceCells = cells.Count; }
@@ -936,6 +1408,7 @@ namespace NaturalWeather
         void Update()
         {
             Undim();
+            if (Drawing) Meter();
             if (!Drawing || shadowMap == null || !shadowMap.IsCreated()) return;
             Vessel v = FlightGlobals.ActiveVessel;
             CelestialBody body = FlightGlobals.currentMainBody;
@@ -987,6 +1460,135 @@ namespace NaturalWeather
         }
         Readback shadowRead;
         bool byCamera;          // the shade read under the camera, far from the craft (see Update)
+
+        // The clouds' own light over the sky, as they are drawn, for what lights the air under them (Keystone.Weather.CloudLight:
+        // Natural Light's veil, whose own light under an overcast was the light from all round as Natural Light works it out,
+        // four to seven times the deck drawn over it, so that rain and haze washed the deck out to a flat pale grey and the far
+        // hills stood white against it; 2026-10-25). The far camera's clouds as they were taken together, made small (32 by 18)
+        // and read back through Keystone's Readback: of the dots whose line of sight is between six and thirty-five degrees
+        // above level, how much of what is behind them they hide, and their light by as much as they hide. (The same stretch of
+        // sky whichever way the camera looks: taken over all the sky in sight, the haze's light followed the camera, half as
+        // bright again looking level as looking up. And not the last few degrees over the horizon, where the far clouds are
+        // drawn into the clear air's own blue whatever covers it, half as bright again as the deck.) While none of it is in
+        // sight the last answer stands, by as much as the light on the clouds and the weather here have changed since (see
+        // Measured). Every eighth frame where the answer comes back later; every two seconds where it is read at once, which
+        // waits for the card.
+        const int MeterW = 32, MeterH = 18;
+        float coverHere;
+        RenderTexture meterPic;
+        Readback meterRead;
+        Vector3 meterRight, meterUp, meterAhead, meterSky;
+        int meterMade = -1000;
+        float meterAskedAt = -1e9f, meterAnswerAt = -1e9f;
+        sealed class MeterView { public Vector3 Right, Up, Ahead, Sky; public int Made; }
+        readonly MeterView[] meterViews = { new MeterView(), new MeterView(), new MeterView(), new MeterView(), new MeterView(), new MeterView(), new MeterView(), new MeterView() };
+        int meterNext;
+#if DEV
+        string meterSaid = "not read yet";
+#endif
+
+        void Meter()
+        {
+            if (meterPic == null || !meterPic.IsCreated() || frame - meterMade > 2) return;
+            if (meterRead == null) meterRead = new Readback(MeterW, MeterH, true);
+            if (meterRead.Take(out object tag) && tag is MeterView seen) Measured(seen);
+            if ((frame & 7) != 0 || (!meterRead.Later && Time.unscaledTime - meterAskedAt < 2f)) return;
+            // (what the small picture made in the last frame looked at: handed back with the answer, some frames later)
+            MeterView v = meterViews[meterNext];
+            meterNext = (meterNext + 1) % meterViews.Length;
+            v.Right = meterRight; v.Up = meterUp; v.Ahead = meterAhead; v.Sky = meterSky; v.Made = meterMade;
+            meterRead.Ask(meterPic, 0, 0, MeterW, MeterH, v);
+            meterAskedAt = Time.unscaledTime;
+            if (!meterRead.Later && meterRead.Take(out tag) && tag is MeterView now) Measured(now);
+        }
+
+        void Measured(MeterView v)
+        {
+            float r = 0f, g = 0f, b = 0f, hides = 0f;
+            int n = 0;
+#if DEV
+            float lowHides = 0f, highHides = 0f; int lowN = 0, highN = 0;
+#endif
+            for (int j = 0; j < MeterH; j++)
+                for (int i = 0; i < MeterW; i++)
+                {
+                    // (the first row is the picture's bottom, as the clouds' own shaders read it)
+                    Vector3 d = v.Ahead + v.Right * ((i + 0.5f) / MeterW * 2f - 1f) + v.Up * ((j + 0.5f) / MeterH * 2f - 1f);
+                    Color c = meterRead.Pixel(j * MeterW + i);
+                    if (float.IsNaN(c.r) || float.IsNaN(c.g) || float.IsNaN(c.b) || float.IsNaN(c.a)) continue;
+                    float hide = Mathf.Clamp01(1f - c.a);
+#if DEV
+                    if (j < 3) { lowHides += hide; lowN++; } else if (j >= MeterH - 3) { highHides += hide; highN++; }
+#endif
+                    float rise = Vector3.Dot(d, v.Sky) / d.magnitude;
+                    if (rise < 0.105f || rise > 0.574f) continue;
+                    r += Mathf.Max(c.r, 0f); g += Mathf.Max(c.g, 0f); b += Mathf.Max(c.b, 0f); hides += hide; n++;
+                }
+#if DEV
+            meterSaid = n + " dots of low sky; the bottom three rows hide " + (lowN > 0 ? lowHides / lowN : 0f).ToString("F2") + ", the top three " + (highN > 0 ? highHides / highN : 0f).ToString("F2");
+#endif
+            float dt = Mathf.Clamp(Time.unscaledTime - meterAnswerAt, 0f, 10f);
+            meterAnswerAt = Time.unscaledTime;
+            bool fresh = LightFresh();
+            float ease = fresh ? 1f - Mathf.Exp(-dt / 1.5f) : 1f;
+            // (Too little of that sky in sight to say, the camera looking down or straight up: the last light read stands, by as
+            // much as the light falling on the clouds has changed since (the sun going down), and its cover by as much as the
+            // weather's here has. Held as it was, it was the afternoon's deck all through a night warped through looking down at a
+            // rover, a pale grey veil over a dark ground; and eased towards the weather's cover, which counts a thin veil of ice as
+            // a whole sky's, the veil's light moved with nothing but the camera's pitch: both found by review, 2026-10-25. Nothing
+            // is said where no light has been read, nor where the clouds have four times the light they were read in.)
+            if (n < 16)
+            {
+                if (!fresh || deckLit <= 0f) return;
+                float since = litNow / deckLit;
+                if (since > 4f) return;
+                deckSaid = deckLight * since;
+                deckCover = Mathf.Lerp(deckCover, Mathf.Clamp01(coverRead + coverHere - coverHereRead), 1f - Mathf.Exp(-dt / 6f));
+                deckAt = Time.unscaledTime;
+                SayDeck();
+                return;
+            }
+            float cover = hides / n;
+            if (hides > 0.5f)
+            {
+                Color light = new Color(r / hides, g / hides, b / hides);
+                // (the first light read is taken as it is, not eased up from black)
+                bool first = deckLight.maxColorComponent <= 0f || deckLit <= 0f;
+                deckLight = first ? light : Color.Lerp(deckLight, light, ease);
+                deckLit = first ? litNow : Mathf.Lerp(deckLit, litNow, ease);
+            }
+            deckCover = Mathf.Lerp(deckCover, cover, ease);
+            coverRead = deckCover; coverHereRead = coverHere;
+            deckSaid = deckLight;
+            deckAt = Time.unscaledTime;
+            SayDeck();
+        }
+
+        static bool LightFresh() => Time.unscaledTime - deckAt < 10f;
+
+        // (what was last read, said through Keystone's Weather.CloudLight, which came after Keystone 0.10.0: kept in a method of its
+        // own and guarded, so that with an older Keystone there is nowhere to say it, the first try finds so, and nothing else stops)
+        static Color deckLight, deckSaid;
+        static float deckCover, deckAt = -1e9f;
+        // (and for while none of that sky is in sight: the light falling on the clouds when the deck's was read, and now; the
+        // cover read, and the weather's here then)
+        static float deckLit, litNow, coverRead, coverHereRead;
+        static bool deckUnsaid;
+
+        static void SayDeck()
+        {
+            if (deckUnsaid) return;
+            try { SayDeckToKeystone(); }
+            catch (Exception) { deckUnsaid = true; }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static void SayDeckToKeystone()
+        {
+            Keystone.Weather.CloudLight = deckSaid;
+            Keystone.Weather.CloudLightCover = deckCover;
+            Keystone.Weather.CloudLightAt = deckAt;
+        }
 
         /// <summary>
         /// The planet's own axes as they stand in the scene now: towards latitude 0 longitude 0, towards longitude 90, the north
@@ -1083,8 +1685,10 @@ namespace NaturalWeather
             if (!CloudSource.Worth(body)) { Off(CloudSource.WhyNot(body)); return; }
             if (!tried) LoadShaders();
             if (!fieldTried) LoadField();
+            if (blueTable == null) LoadBlue();
             if (walkShader == null) { Off("No clouds: " + why + "."); return; }
             MakeNoise();
+            if (Two) { MakeBillow(); if (!patternTried) LoadPattern(); }
             CloudAir air = CloudAir.Of(body);
             Camera farCam = Find("Camera 01"), nearCam = Find("Camera 00");
             if (nearCam == null) { Off("", false); return; }
@@ -1123,7 +1727,7 @@ namespace NaturalWeather
                 if (!cellsWork.IsFaulted && cellsWorkBody == body.bodyName) Found(body, camRel, cellsFound, cellsFoundNext, cellsWorkUt0, cellsWorkUt1);
                 cellsWork = null;
             }
-            if (cellsBody != body.bodyName) { cells.Clear(); nextById.Clear(); cellsBody = body.bodyName; cellsAt = -100f; }
+            if (cellsBody != body.bodyName) { cells.Clear(); nextById.Clear(); heldSize.Clear(); cellsBody = body.bodyName; cellsAt = -100f; }
             if (cellsWork == null && (Time.realtimeSinceStartup - cellsAt > 1f || ut > cellsUt1))
             {
                 cellsAt = Time.realtimeSinceStartup;
@@ -1154,8 +1758,41 @@ namespace NaturalWeather
             Vector3d camFixed = new Vector3d(Vector3d.Dot(camRel, fx), Vector3d.Dot(camRel, fy), Vector3d.Dot(camRel, fz));
             Vector3 ToFixed(Vector3 v) => new Vector3((float)Vector3d.Dot(v, fx), (float)Vector3d.Dot(v, fy), (float)Vector3d.Dot(v, fz));
 
+            // ---- a jump: the camera further from where it was than its own motion explains. Foretold by the last step it took, for
+            // the game's time since, so that flying, an orbit, a change of warp and a pause are all explained; the test putting the
+            // camera down somewhere, a craft switched to, are not. Nothing kept from frame to frame is used after one (Setup).
+            // (Until 2026-10-26 only a move of 5 km or more was a cut: the test's camera put down 4 km off took the last picture over,
+            // and for two seconds the clouds filled in from it, white ticks along their edges, holes through heaps, shadows with no
+            // heap over them (research/clouds-r5/sidebyside-2026-10-25.md, A1).)
+            // (The step is learned again on every frame the game's clock moves, but not from the first frame of a jump: the frame
+            // after one is foretold by how the camera moved before it, so a second jump straight after is caught too; where the
+            // camera's motion itself changed at the jump (a craft switched to that flies otherwise), that frame is a jump as well,
+            // and its step is learned. By the game's time, not the frame's: on rails a change of warp changes the step a
+            // hundredfold with frames as long as before, and a step scaled by the frame's length was a jump on every frame after.)
+            {
+                Vector3d stepNow = camFixed - jumpWas;
+                double dut = ut - jumpUt;
+                bool jump = double.IsNaN(jumpUt) || jumpBody != body.bodyName || cutAsked || dut < 0.0;
+                if (!jump)
+                {
+                    Vector3d expected = jumpDut > 1e-6 ? jumpStep * (dut / jumpDut) : Vector3d.zero;
+                    // (150 m, a tenth of the step foretold, and a fiftieth of the height over the clouds' tops: from high over them a
+                    // miss of the same metres moves their picture less)
+                    double allowed = 150.0 + 0.1 * expected.magnitude + 0.02 * Math.Max(0.0, alt - shellTopNow);
+                    jump = (stepNow - expected).magnitude > allowed;
+                }
+                if (dut > 1e-6 && (!jump || jumpedLast)) { jumpStep = stepNow; jumpDut = dut; }
+                jumped = jump; jumpedLast = jump;
+#if DEV
+                if (jump) { JumpsSeen++; JumpLast = ut; }
+#endif
+                jumpWas = camFixed; jumpUt = ut; jumpBody = body.bodyName; cutAsked = false;
+            }
+
             // The wind carries the clouds (as the weather says the low clouds move here): how far, kept up from frame to frame.
             WeatherHere hereNow = CloudSource.At(body, camLat, camLon, ut);
+            // (how much of the sky the weather here covers, the layers one over another: for Meter, while no sky is in sight)
+            coverHere = 1f - (1f - LayerCover(hereNow.Low)) * (1f - LayerCover(hereNow.Middle)) * (1f - LayerCover(hereNow.High));
             Mark("weather here");
             Vector3d up = camRel.normalized;
             Vector3d east = Vector3d.Cross(up, fz).normalized;          // (Unity's axes are left-handed: up x pole is east)
@@ -1163,6 +1800,9 @@ namespace NaturalWeather
             Vector3d windScene = east * hereNow.Drift.x + north * hereNow.Drift.y;
             Vector2d heapsWind = new Vector2d(hereNow.Drift.x, hereNow.Drift.y);
             Vector3d windFixed = new Vector3d(Vector3d.Dot(windScene, fx), Vector3d.Dot(windScene, fy), Vector3d.Dot(windScene, fz));
+            // (and how far the wind carried the clouds since the last frame: where each pixel's cloud was in last frame's picture is
+            // that much further upwind (Setup))
+            windNow = windFixed; windUt = ut;
             if (double.IsNaN(driftAt) || driftBody != body.bodyName || Math.Abs(ut - driftAt) > 3600.0)
             {
                 drift = windFixed * (ut % 100000.0);
@@ -1174,7 +1814,7 @@ namespace NaturalWeather
             driftAt = ut;
             drift = new Vector3d(Wrap(drift.x, NoiseWrap), Wrap(drift.y, NoiseWrap), Wrap(drift.z, NoiseWrap));
 #if DEV
-            if (heldStill) { drift = Vector3d.zero; fieldDrift = Vector2d.zero; }
+            if (heldStill) { drift = Vector3d.zero; fieldDrift = Vector2d.zero; windNow = Vector3d.zero; }
             driftWas = drift; utWas = ut; windWas = windFixed;
             lonGame = camLon; lonOwn = Math.Atan2(camFixed.y, camFixed.x) * 180.0 / Math.PI; turnWas = body.directRotAngle;
 #endif
@@ -1185,6 +1825,16 @@ namespace NaturalWeather
             Mark("wake");
             var noise = new Vector4((float)(noiseAt.x / NoiseLength), (float)(noiseAt.y / NoiseLength), (float)(noiseAt.z / NoiseLength), (float)NoiseLength);
             Vector3 windDir = windFixed.magnitude > 0.01 ? (Vector3)(windFixed.normalized) : Vector3.zero;
+            // (the second form's lean of its heaps and storms: the low wind eased over some seconds, as long as its speed over 2 m/s
+            // and no longer than 1. By windDir, a unit way, it flipped in one frame where the model's drift crossed nought (at
+            // 29.525 degrees, between its column's rows), and every tower in sight moved its top two kilometres; and a drift of a
+            // hundredth of a metre a second leant them as far as a gale (the second review of 2026-10-27). Carried only between
+            // frames that follow on, as everything kept from frame to frame.)
+            Vector2 leanNow = new Vector2((float)hereNow.Drift.x, (float)hereNow.Drift.y);
+            leanEased = leanSet && !jumped ? Vector2.Lerp(leanEased, leanNow, 1f - Mathf.Exp(-Time.unscaledDeltaTime / 5f)) : leanNow;
+            leanSet = true;
+            Vector2 lean2 = leanEased * Mathf.Min(0.5f, 1f / Mathf.Max(leanEased.magnitude, 1e-4f));
+            Vector3 leanFixed = ToFixed((Vector3)(east * lean2.x + north * lean2.y));
             // Cloud streets: heaps in rows along a steady wind of some strength (the churning air's rolls lie along it), not in
             // light air; the rows' way kept until the wind has turned more than 25 degrees.
             Vector3 upFixed = (Vector3)camFixed.normalized;
@@ -1198,6 +1848,17 @@ namespace NaturalWeather
             float windSpeed = (float)windFixed.magnitude;
             float streetsStrength = streetsAlong.sqrMagnitude > 0.5f ? Mathf.Clamp01((windSpeed - 4f) / 8f) * 0.7f : 0f;
             float boil = (float)Wrap(ut * 0.0012, 1.0);
+            // (the billows rising through the clouds: see RiseSpeed. Along the up here, summed frame by frame so that going round the
+            // world does not swing what has risen already; each way wrapped at a length of the noise, a whole number of the billows'
+            // own repeats, so that the wrap is not seen.)
+            double riseStep = double.IsNaN(riseAt) || jumped ? 0.0 : Math.Max(0.0, Math.Min(ut - riseAt, 2.0 * Time.unscaledDeltaTime));
+            riseAt = ut;
+#if DEV
+            if (heldStill) riseStep = 0.0;
+#endif
+            rise += (Vector3d)upFixed * (riseStep * RiseSpeed);
+            rise = new Vector3d(Wrap(rise.x, NoiseLength), Wrap(rise.y, NoiseLength), Wrap(rise.z, NoiseLength));
+            specNow = new Vector4((float)(rise.x / NoiseLength), (float)(rise.y / NoiseLength), (float)(rise.z / NoiseLength), SpecOld);
 
             Mark("where");
             // ---- the sun and the light round about
@@ -1235,21 +1896,39 @@ namespace NaturalWeather
             Color sunAtClouds = air.Through(1500f, Mathf.Max(sunUp, -0.2f));
             // (under a deck of cloud the light from above is the cloud's grey, not the sky's blue)
             float overhead = Mathf.Max(CloudSource.Kind(hereNow.Low) >= 0f && hereNow.Low.Kind != CloudKind.Fog ? hereNow.Low.Cover : 0f, CloudSource.Kind(hereNow.Middle) >= 0f ? hereNow.Middle.Cover : 0f);
-            float greyed = overhead * overhead;
             float skyLum = 0.2126f * air.Sky.r + 0.7152f * air.Sky.g + 0.0722f * air.Sky.b;
-            Color skyLight = Color.Lerp(air.Sky, new Color(skyLum, skyLum, skyLum), greyed) * (0.32f * brightness);
+            Color skyGrey = Color.Lerp(air.Sky, new Color(skyLum, skyLum, skyLum), overhead * overhead) * (0.32f * brightness);
+            // (The clouds' own sky light: not greyed in the second form, whose clouds' own depth darkens what the sky lights inside them;
+            // greyed by the camera's own sky, every cloud in sight went grey as the sky overhead clouded over. The ground's shade (below)
+            // is still the greyed sky's in both: under a deck the light from above is grey there, as it is.)
+            // (And the second form's of the air's own colour (SkyOwn), not of the first's, which is a quarter of the way to white: the
+            // shader greys it three tenths as Blackrack's does his sky's light (his skylightTintMultiplier 0.7), and greyed twice the
+            // shaded sides of heaps were half as blue as his (B less R 19 against his 39 at sunset, 23 against 90 in the field).)
+            Color skyLight = Two ? air.SkyOwn * (0.32f * brightness) : skyGrey;
             // (the shade's colour, for the shadow's pass (cloudshade.glsl): what a shadow leaves is the sky's light, which is bluer than
             // the sun's; the sun's light over the sky's in each colour, against green's: about 1.36, 1, 0.57 for Kerbin's clear sky
             // with the sun high, more so with it low, nearly even under a grey sky)
             {
-                float overGreen = sunAtClouds.g / Mathf.Max(skyLight.g, 1e-5f);
+                float overGreen = sunAtClouds.g / Mathf.Max(skyGrey.g, 1e-5f);
                 shadeTint = overGreen > 1e-4f
-                    ? new Vector4(Mathf.Clamp(sunAtClouds.r / Mathf.Max(skyLight.r, 1e-5f) / overGreen, 0.25f, 4f), 1f, Mathf.Clamp(sunAtClouds.b / Mathf.Max(skyLight.b, 1e-5f) / overGreen, 0.25f, 4f), 1f)
+                    ? new Vector4(Mathf.Clamp(sunAtClouds.r / Mathf.Max(skyGrey.r, 1e-5f) / overGreen, 0.25f, 4f), 1f, Mathf.Clamp(sunAtClouds.b / Mathf.Max(skyGrey.b, 1e-5f) / overGreen, 0.25f, 4f), 1f)
                     : new Vector4(1f, 1f, 1f, 1f);
             }
             float groundLit = Mathf.Max(0f, sunUp);
-            Color groundLight = new Color(0.30f, 0.30f, 0.26f) * (0.4f * groundLit * brightness) * sunAtClouds;
+            // (and by the weather the ground lies under: a sunlit ground's light, as until 2026-10-25, lit the inside and the base of a
+            // thunderstorm from below as a fair day's ground does, the ground's warm colour the most of their light there, where the
+            // ground under the storm has a twentieth of a clear day's light: the inside of a storm was a bright beige)
+            float groundShare = GroundShare(hereNow, sunUp);
+#if DEV
+            if (groundAsBefore) groundShare = 1f;
+            GroundShareSaid = groundShare;
+#endif
+            Color groundLight = new Color(0.30f, 0.30f, 0.26f) * (0.4f * groundLit * groundShare * brightness) * sunAtClouds;
             float night = 0.0035f * brightness;
+            // (how much light falls on the clouds' tops, the sun's on them as they face it and the sky's, for the meter's light
+            // while it cannot be read: see Measured)
+            litNow = (0.2126f * sunAtClouds.r + 0.7152f * sunAtClouds.g + 0.0722f * sunAtClouds.b) * brightness * Mathf.Max(sunUp, 0f)
+                   + 0.2126f * skyGrey.r + 0.7152f * skyGrey.g + 0.0722f * skyGrey.b + night;
 
             Mark("light");
             // ---- how much cloud, how thick, how fine
@@ -1257,7 +1936,65 @@ namespace NaturalWeather
             if (fogFromOver) { lowestBase = Mathf.Min(lowestBase, map.FogBase); highestTop = Mathf.Max(highestTop, map.FogTop); }
             if (lowestBase > 99000f) lowestBase = map.LowestBase;
             float shellBottom = Mathf.Max(0f, lowestBase - 60f), shellTop = Mathf.Max(highestTop, shellBottom + 300f) + 150f;
-            foreach (WeatherCell c in cells) { shellBottom = Mathf.Min(shellBottom, Mathf.Max(0f, c.Base - 60f)); shellTop = Mathf.Max(shellTop, c.Top + 300f); }
+            // (the second form draws a layer of heaps over a column a third deeper than the weather's layer, and never under 2700 m:
+            // its heaps' tops stand under their column's (clouds.glsl, columnOf))
+            // (and a heap's tower among them over up to 2.1 times that (clouds.glsl, towerOf), unless set back with SpecOld's 4)
+            if (Two && map.AnyCloud)
+            {
+                float heapColumn = Mathf.Max(1.3f * Mathf.Max(highestTop - lowestBase, 0f), 2700f) * ((SpecOld & 4) == 0 ? 2.1f : 1f);
+                shellTop = Mathf.Max(shellTop, Mathf.Max(highestTop, lowestBase + heapColumn) + 150f);
+            }
+            // (for the second form's storms (cellTwo): the wind aloft at the camera, which carries every anvil in sight, and how
+            // unstable the air is there, which throws the strongest updraughts' tops up through the top. The model's own, from the
+            // place and the clock, whoever's weather the clouds are drawing; the same for the six storms near the camera. The wind
+            // without the storms' own outflow near the ground (Column.AE, AN: with it, every anvil in sight swung round with the
+            // camera's side of the nearest storm's gust front), and eased over some seconds, so that the steps the model's column
+            // is kept in (0.05 degrees, 2 s) do not jump the anvils, nor every dome in sight where the column steps over a coast.
+            // Carried only between frames that follow on with storms in sight: after a jump, a frame with none or with the clouds
+            // off, the anvils took the old place's wind and swung round for 5 to 15 s (the second review of 2026-10-27). Eased by
+            // the real time or the game's, whichever is longer: on rails the model's wind moves by the game's.)
+            float unstable = 0.5f;
+            if (Two && cells.Count > 0)
+            {
+                Column aloftAt = Model.ColumnAt(World.Of(body), camLat, camLon, ut);
+                var aloftNow = new Vector2(aloftAt.AE, aloftAt.AN);
+                bool carry = aloftEasedSet && !jumped;
+                float ease = 1f - Mathf.Exp(-Mathf.Max(Time.unscaledDeltaTime, carry ? (float)(ut - aloftUt) : 0f) / 5f);
+                aloftEased = carry ? Vector2.Lerp(aloftEased, aloftNow, ease) : aloftNow;
+                unstableEased = carry ? Mathf.Lerp(unstableEased, aloftAt.B.Inst, ease) : aloftAt.B.Inst;
+                aloftEasedSet = true; aloftUt = ut;
+                unstable = unstableEased;
+            }
+            else aloftEasedSet = false;
+            // (the dome over a storm's strongest updraught, from 0.3 to 0.6 of its life, 300 m to 1.5 km by how unstable the air is)
+            float OvershootOf(WeatherCell c) => (300f + 1200f * unstable) * Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.3f, 0.4f, c.Life)) * (1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.5f, 0.6f, c.Life))) * Mathf.Clamp01(c.Strength * 2f);
+            // (each storm as it is drawn this frame, once, for the shell, the nearest cloud and the shader alike: the shell and the
+            // nearest cloud were worked out from the storms as asked, up to a second of the game's clock (a thousand under warp)
+            // behind what the shader draws, and the dome stood through the shell's top, cut flat (the second review). In the
+            // second form, with the most its reach and its top have been: both come from the weather where it stands now, which
+            // follows the hour, so through its life its anvil narrowed, thinned and sank 7 km, and dropped 2 km in a second where
+            // the model's storm stopped being a thunderstorm; its strength still fades it out.)
+            int cellsCount = Math.Min(cells.Count, cellsNow.Length);
+            for (int i = 0; i < cellsCount; i++)
+            {
+                WeatherCell c = Between(cells[i], ut);
+                if (Two)
+                {
+                    Vector2 most = new Vector2(c.Radius, c.Top);
+                    if (heldSize.TryGetValue(c.Id, out Vector2 held)) most = Vector2.Max(most, held);
+                    heldSize[c.Id] = most;
+                    c.Radius = most.x; c.Top = most.y;
+                }
+                cellsNow[i] = c;
+            }
+            for (int i = 0; i < cellsCount; i++)
+            {
+                WeatherCell c = cellsNow[i];
+                shellBottom = Mathf.Min(shellBottom, Mathf.Max(0f, c.Base - 60f));
+                // (the second form's storms stand over their top: their turrets by up to a twentieth of their depth, the dome by its
+                // own height; the walk takes no step over the shell's top, and with 300 m both were cut flat)
+                shellTop = Mathf.Max(shellTop, c.Top + (Two ? Mathf.Max(300f, Mathf.Max(0.05f * (c.Top - c.Base) + 100f, OvershootOf(c) + 150f)) : 300f));
+            }
 
             Mark("how much (map)");
             // ---- a cyclone within sight, as the shader takes it (its wall, canopy and bands are drawn as shapes of their
@@ -1343,8 +2080,9 @@ namespace NaturalWeather
             // the camera; and no further than a storm's rain, which hangs from its base to the ground. The clouds are laid on
             // the picture no nearer than that (see Setup).
             float clear = alt < shellBottom ? (float)(shellBottom - alt) : 0f;
-            foreach (WeatherCell c in cells)
+            for (int i = 0; i < cellsCount; i++)
             {
+                WeatherCell c = cellsNow[i];
                 // (its rain as the shader draws it: an upright cylinder round the storm's middle, three quarters of its reach
                 // across: clouds.glsl, rainWalk)
                 if (c.Rain < 0.1f || c.Strength < 0.15f) continue;
@@ -1400,21 +2138,42 @@ namespace NaturalWeather
             Mark("lightning");
             // ---- the storms, as the shader takes them
             // (kept from frame to frame: two new arrays every frame were garbage the collector came round for)
-            Vector4[] cellA = keptCellA, cellB = keptCellB;
-            Array.Clear(cellA, 0, cellA.Length); Array.Clear(cellB, 0, cellB.Length);
+            Vector4[] cellA = keptCellA, cellB = keptCellB, cellC = keptCellC;
+            Array.Clear(cellA, 0, cellA.Length); Array.Clear(cellB, 0, cellB.Length); Array.Clear(cellC, 0, cellC.Length);
             // (not those inside a cyclone: its own wall and bands stand there, and each storm's anvil drawn as well was a
             // round plate lying on its canopy. The weather keeps them: their lightning lights the cyclone's cloud.)
             int cellsSent = 0;
-            for (int i = 0; i < cells.Count && cellsSent < 6; i++)
+            for (int i = 0; i < cellsCount && cellsSent < 6; i++)
             {
 #if DEV
                 if (NoStorms || cellsSent >= StormsSent) break;
 #endif
-                WeatherCell c = Between(cells[i], ut);
+                WeatherCell c0 = cells[i], c = cellsNow[i];
                 if (eyeOf != null && Model.Distance(World.Of(body), c.Latitude, c.Longitude, eyeOf.Lat, eyeOf.Lon) < 13.5 * eyeOf.Rmw) continue;
                 Vector3d mid = SceneAt(body, c.Latitude, c.Longitude, 0.0);
                 cellA[cellsSent] = new Vector4((float)mid.x, (float)mid.y, (float)mid.z, c.Radius);
                 cellB[cellsSent] = new Vector4(c.Base, c.Top, c.Strength, c.Rain);
+                // (its life; the dome over its strongest updraught (OvershootOf) in whole metres, and in their fraction a turn of its
+                // own for its turrets, the same all its life (from its number: by the wind aloft, every storm in sight had its turrets
+                // on the same bearings, and they swung round as that wind turned); its anvil from 0.35, as far as the wind aloft has
+                // carried it since, against the storm's own going: the ice is left behind by the storm as well as blown off it. Its
+                // own going and its own span of life from the two asks it is drawn between (the model's storms, the squalls', the
+                // stand-in's and another weather's alike: the model's span was used for all, the stand-in's anvils 39 % short and a
+                // squall's four times long at a quarter of the pace; its drift, not how the stand-in's stand still); the model's
+                // span and its drift where it was not asked for twice within ten minutes.)
+                float span = (float)Model.CellSpan;
+                Vector2 going = new Vector2((float)c0.Drift.x, (float)c0.Drift.y);
+                double askedApart = cellsUt1 - cellsUt0;
+                if (askedApart > 0.0 && askedApart <= 600.0 && nextById.TryGetValue(c0.Id, out WeatherCell c1))
+                {
+                    if (c1.Life > c0.Life) span = (float)(askedApart / (c1.Life - c0.Life));
+                    double dLon = c1.Longitude - c0.Longitude, perDegree = body.Radius * Math.PI / 180.0;
+                    if (dLon > 180.0) dLon -= 360.0; else if (dLon < -180.0) dLon += 360.0;
+                    going = new Vector2((float)(dLon * perDegree * Math.Cos(c0.Latitude * Math.PI / 180.0) / askedApart), (float)((c1.Latitude - c0.Latitude) * perDegree / askedApart));
+                }
+                Vector2 blown = aloftEased - going;
+                float turn = (float)(unchecked((uint)c.Id * 2654435761u) >> 8) / 16777216f;
+                cellC[cellsSent] = new Vector4(Mathf.Atan2(blown.y, blown.x), c.Life, Mathf.Floor(OvershootOf(c)) + 0.999f * turn, blown.magnitude * Mathf.Max(c.Life - 0.35f, 0f) * span);
 #if DEV
                 if (cellsSent == 0) StormsSaid = "";
                 StormsSaid += "#" + cellsSent + " " + (Model.Distance(World.Of(body), c.Latitude, c.Longitude, body.GetLatitude(FlightCamera.fetch != null ? FlightCamera.fetch.transform.position : Vector3.zero), body.GetLongitude(FlightCamera.fetch != null ? FlightCamera.fetch.transform.position : Vector3.zero)) / 1000.0).ToString("F1") + " km r " + c.Radius.ToString("F0") + " base " + c.Base.ToString("F0") + " top " + c.Top.ToString("F0") + " strength " + c.Strength.ToString("F2") + "; ";
@@ -1493,7 +2252,8 @@ namespace NaturalWeather
                 heapsMap = Make(RenderTextureFormat.ARGBHalf, "the heaps' map");
                 heapsMapB = Make(RenderTextureFormat.RHalf, "the heaps' map (2)");
             }
-            heapsOn = heapsWanted && heapsMap != null && heapsMap.IsCreated() && heapsMapB.IsCreated();
+            // (not in the second form, which never reads it: kept, for going back)
+            heapsOn = !Two && heapsWanted && heapsMap != null && heapsMap.IsCreated() && heapsMapB.IsCreated();
             Vector3d upF = camFixed.normalized;
             double upX = Math.Abs(upF.x), upY = Math.Abs(upF.y), upZ = Math.Abs(upF.z);
             float heapsFace = upX >= upY && upX >= upZ ? 0f : upY >= upZ ? 1f : 2f;
@@ -1518,13 +2278,17 @@ namespace NaturalWeather
                 m.SetVector(idAhead, new Vector4(f.x, f.y, f.z, SystemInfo.usesReversedZBuffer ? 1f : 0f));
                 m.SetVector(idFixedX, (Vector3)fx); m.SetVector(idFixedY, (Vector3)fy); m.SetVector(idFixedZ, (Vector3)fz);
                 m.SetVector(idNoise, noise);
-                m.SetVector(idDrift, new Vector4(windDir.x, windDir.y, windDir.z, boil));
+                m.SetVector(idDrift, Two ? new Vector4(leanFixed.x, leanFixed.y, leanFixed.z, boil) : new Vector4(windDir.x, windDir.y, windDir.z, boil));
                 m.SetVector(idStreets, new Vector4(streetsAcross.x, streetsAcross.y, streetsAcross.z, streetsStrength));
                 m.SetVector(idAlong, new Vector4(streetsAlong.x, streetsAlong.y, streetsAlong.z, 0f));
                 m.SetVector(idShell, new Vector4(shellBottom, shellTop, map.HighCloud, 1f));
                 m.SetVector(idShellEased, new Vector4(easedBottom, easedTop, 0f, 0f));
                 shellTopNow = shellTop;
                 m.SetVector(idLook, new Vector4(thick, 0.85f, amount, steps));
+                m.SetVector(idLight2, new Vector4(LightGain, LightSky, LightGround, BillowFiner));
+                m.SetVector(idDeck2, new Vector4(DeckCrease2.x, DeckCrease2.y, DeckRelief2, 0f));
+                m.SetVector(idSpec, specNow);
+                m.SetVector(idAnvil, new Vector4(AnvilKnobs.x, AnvilKnobs.y, AnvilKnobs.z + 100f * Mathf.Round(AnvilCore * 10f), AnvilKnobs.w));
                 // (How the heaps come today. The field has heaps of every size, and all of them in the sky at once, hundreds of
                 // small ones each by itself, is a sky that does come but is not the common one: on about one day in eight. On
                 // the others the small heaps that stand alone are left out and a shallow layer's heaps are read half as large
@@ -1538,21 +2302,24 @@ namespace NaturalWeather
                     m.SetVector("_CloudHabit", new Vector4(habit, Mathf.Lerp(1f, Broader, habit), LidSpread * habit, Mathf.Lerp(70f, Pushed, habit)));
                 }
                 m.SetVector(idSun, new Vector4(toSun.x, toSun.y, toSun.z, 1.0f * brightness));
-                m.SetVector(idSunTint, new Vector4(1f, 0.985f, 0.96f, night));
+                // (the second form's sun above the air as SunTint2 says: the air's own table colours it on the way down, at a low sun
+                // the most)
+                m.SetVector(idSunTint, Two ? new Vector4(SunTint2.x, SunTint2.y, SunTint2.z, night) : new Vector4(1f, 0.985f, 0.96f, night));
                 // (a full Mun's own light on a veil of ice: twelve times the night's light from all round, which is the sky's
                 // glow and the Mun's light scattered about together; at twice, the ring and the glow round the Mun were lost)
                 m.SetVector(idMoon, new Vector4(toMoon.x, toMoon.y, toMoon.z, 12f * night * moonLit));
-                m.SetVector(idSky, new Vector4(skyLight.r, skyLight.g, skyLight.b, 1f));
+                m.SetVector(idSky, new Vector4(skyLight.r, skyLight.g, skyLight.b, Two ? HazeTint2 : 1f));
                 m.SetVector(idGround, new Vector4(groundLight.r, groundLight.g, groundLight.b, 120f));
                 m.SetVector(idAir, new Vector4(air.Rayleigh.x, air.Rayleigh.y, air.Rayleigh.z, air.Haze));
                 // (and whether the world has a sea: from above the clouds the walk shades the sea's surface, which the camera's
                 // picture of depths does not hold, as the sea is shaded, not as land)
-                m.SetVector(idAirHigh, new Vector4(air.RayleighHeight, air.HazeHeight, body.ocean ? 1f : 0f, 0f));
-                m.SetVector(idHaze, new Vector4(noiseHasMips ? 1f : 0f, 40f, 1.5f, 1f));
+                m.SetVector(idAirHigh, new Vector4(air.RayleighHeight, air.HazeHeight, body.ocean ? 1f : 0f, SkyTint2));
+                // (the air's light scattered again and again: in the second form once, its clouds far off as milky as the hills there)
+                m.SetVector(idHaze, new Vector4(noiseHasMips ? 1f : 0f, 40f, Two ? HazeAir2.x : 1.5f, Two ? HazeAir2.y : 1f));
                 m.SetVector(idFlashA, FlashVector(0)); m.SetVector(idFlashB, FlashVector(1));
                 m.SetVector(idHoleA, HoleVector(0)); m.SetVector(idHoleB, HoleVector(1)); m.SetVector(idHoleC, HoleVector(2));
                 m.SetVector(idFlashTint, new Vector4(0.75f, 0.8f, 1f, 900f));
-                for (int i = 0; i < 6; i++) { m.SetVector(idCellA[i], cellA[i]); m.SetVector(idCellB[i], cellB[i]); }
+                for (int i = 0; i < 6; i++) { m.SetVector(idCellA[i], cellA[i]); m.SetVector(idCellB[i], cellB[i]); m.SetVector(idCellC[i], cellC[i]); }
                 m.SetVector("_CloudTwistA", twistA); m.SetVector("_CloudTwistB", twistB);
                 m.SetVector("_CloudShelfA", shelfA); m.SetVector("_CloudShelfB", shelfB); m.SetVector("_CloudShelfC", shelfC);
                 m.SetVector("_CloudEyeA", eyeA); m.SetVector("_CloudEyeB", eyeB); m.SetVector("_CloudEyeC", eyeC); m.SetVector("_CloudEyeD", eyeD);
@@ -1566,6 +2333,9 @@ namespace NaturalWeather
                 SetLight(m, readMid, readEast, readNorth, readLow, readStep, lightOn ? 1f : 0f, fx, fy, fz);
                 m.SetTexture(idLight, lightOn ? (Texture)lightRead : Texture2D.whiteTexture);
                 m.SetTexture(idShape, shape); m.SetTexture(idDetail, detail);
+                // (the second form's billows and pattern, where it is drawn; elsewhere a cube of one place, and a dot of grey: NoPattern)
+                m.SetTexture("_CloudBillow", billow != null && billow.IsCreated() ? (Texture)billow : noField);
+                m.SetTexture("_CloudPattern", PatternNow());
                 // (the shapes of the rework of 2026-10-12: whether, and the time in lifetimes of a heap, kept within 1024 of
                 // them, where the shader's numbering of each point's heaps comes round)
                 CloudsWake.Hand(m, ut, noiseAt, NoiseWrap, CloudsPage.Stirred == null || CloudsPage.Stirred);
@@ -1603,6 +2373,7 @@ namespace NaturalWeather
                     mapFine.Create();
                 }
                 if (mapFineWalk == null) mapFineWalk = new Material(walkShader) { name = "Natural Weather: the low clouds' map, smoothed" };
+                if (mapFineWalk.shader != WalkWhole) mapFineWalk.shader = WalkWhole;
                 Common(mapFineWalk, farCam, mapFine.width);
                 mapFineWalk.SetVector(idStage, new Vector4(6f, 0f, 0f, 0f));
                 mapFineWalk.SetTexture(idMap, map.A);
@@ -1611,6 +2382,7 @@ namespace NaturalWeather
             if (heapsOn)
             {
                 if (heapsWalk == null) heapsWalk = new Material(walkShader) { name = "Natural Weather: the heaps' map" };
+                if (heapsWalk.shader != WalkWhole) heapsWalk.shader = WalkWhole;
                 Common(heapsWalk, farCam, HeapsDots);
                 heapsWalk.SetVector(idStage, new Vector4(5f, 0f, 0f, 0f));
                 // (what is drawn into is not also read)
@@ -1630,6 +2402,7 @@ namespace NaturalWeather
                     shadowMapB.Create();
                 }
                 if (shadowWalk == null) shadowWalk = new Material(walkShader) { name = "Natural Weather: shadow walk" };
+                if (shadowWalk.shader != WalkWhole) shadowWalk.shader = WalkWhole;
                 Common(shadowWalk, farCam, Shadow);
                 shadowWalk.SetVector(idStage, new Vector4(4f, 0f, 0f, 0f));
                 // (and how wide a pixel of the far camera's walk is for each metre off, by which the shader chooses the near shapes or
@@ -1684,6 +2457,7 @@ namespace NaturalWeather
                     lightBand = 0;
                 }
                 if (lightWalk == null) lightWalk = new Material(walkShader) { name = "Natural Weather: the light field" };
+                if (lightWalk.shader != WalkWhole) lightWalk.shader = WalkWhole;
                 Common(lightWalk, farCam, 4 * LightCells);
                 // (and how wide a pixel of the far camera's walk is, as the shadow's map is told: see the shader's formChoice)
                 lightWalk.SetVector("_CloudJitter", new Vector4(0f, 0f, 0f, WalkPixel(farCam, quality)));
@@ -1706,13 +2480,30 @@ namespace NaturalWeather
             // shader only where a cyclone or a tornado is near; the storm's copy where there are storm cells, lightning, a squall
             // line or heaps made as smoke; the calm one otherwise. (Where a copy is missing, an older bundle, the next fuller one.)
             bool stormy = shelfA.w > 0f || flashes > 0 || cells.Count > 0 || (Heaps.Body == body && Heaps.Now.Count > 0);
-            walkNow = eyeA.w > 0f || twistA.w > 0f ? walkShader : stormy ? (walkStorm ?? walkShader) : (walkCalm ?? walkStorm ?? walkShader);
+            // (and of the form being drawn: see FormTwo)
+            bool two = Two;
+            Shader whole = two ? walk2 : walkShader, storm = two ? walkStorm2 : walkStorm, calm = two ? walkCalm2 : walkCalm;
+            walkNow = eyeA.w > 0f || twistA.w > 0f ? whole : stormy ? (storm ?? whole) : (calm ?? storm ?? whole);
 #if DEV
-            if (CopyHeld == 1) walkNow = walkShader; else if (CopyHeld == 2 && walkStorm != null) walkNow = walkStorm;
-            CopyNow = walkNow == walkShader ? "the whole shader" : walkNow == walkStorm ? "the storm's copy" : "the calm copy";
+            if (CopyHeld == 1) walkNow = whole; else if (CopyHeld == 2 && storm != null) walkNow = storm;
+            CopyNow = (two ? "the second form's " : "the ") + (walkNow == whole ? "whole shader" : walkNow == storm ? "storm's copy" : "calm copy");
 #endif
 
             Mark("which shader");
+            // ---- under the sea nothing of the clouds is laid on: what shows of the sky from below comes through the water's
+            // window overhead, which the sea's own pass under the water draws. Laid on as everywhere, they showed through the sea
+            // as a broken line of white near the horizon from 12 m down, and the clouds' shadow on the ground was laid over the
+            // water as well (2026-10-25). Only once the whole of the near camera's glass is under: the sea's lens draws the water's
+            // surface where it cuts that glass, a hand's breadth across, and the sky above the cut is the camera's own picture,
+            // clouds and all; taken at the camera's middle, the clouds came and went with every wave at the waterline.
+            {
+                float tanU = Mathf.Tan(nearCam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+                float glass = nearCam.nearClipPlane * Mathf.Sqrt(1f + tanU * tanU * (1f + nearCam.aspect * nearCam.aspect)) + 0.25f;
+                underSea = Keystone.Water.Depth(body, (Vector3d)nearCam.transform.position) > glass;
+#if DEV
+                if (underSeaAsBefore) underSea = false;
+#endif
+            }
             // ---- each camera's clouds
             const float nearReach = 450f;
             bool nearWanted = split && alt > shellBottom - nearReach && alt < shellTop + nearReach;
@@ -1740,7 +2531,18 @@ namespace NaturalWeather
 #endif
         }
 
-        readonly Vector4[] keptCellA = new Vector4[6], keptCellB = new Vector4[6];
+        readonly Vector4[] keptCellA = new Vector4[6], keptCellB = new Vector4[6], keptCellC = new Vector4[6];
+        // (the storms as drawn this frame; and for the second form the most each storm's reach and top have been, by its number,
+        // kept while it is found: see the shell in Frame)
+        readonly WeatherCell[] cellsNow = new WeatherCell[6];
+        readonly Dictionary<int, Vector2> heldSize = new Dictionary<int, Vector2>();
+        readonly List<int> heldGone = new List<int>();
+        // (the second form's wind aloft for the anvils and how unstable the air is for the domes, eased, and the game's time they
+        // were last eased at; the low wind for the lean, eased: see Frame)
+        Vector2 aloftEased, leanEased;
+        float unstableEased;
+        double aloftUt;
+        bool aloftEasedSet, leanSet;
         float reportAt = -10f;
 
         void FreeHeaps()
@@ -1749,12 +2551,24 @@ namespace NaturalWeather
             if (heapsMapB != null) { heapsMapB.Release(); Destroy(heapsMapB); heapsMapB = null; }
         }
 
-        /// <summary>The storms found (see Frame): the nearest six kept, and where each will be at the next moment asked.</summary>
+        /// <summary>The storms found (see Frame): the nearest six kept, those strong enough to be drawn before those that are not,
+        /// and where each will be at the next moment asked.</summary>
         void Found(CelestialBody body, Vector3d here, List<WeatherCell> found, List<WeatherCell> next, double t0, double t1)
         {
             cells.Clear(); cells.AddRange(found);
-            cells.Sort((a, b) => Distance(body, a, here).CompareTo(Distance(body, b, here)));
+            // (by nearness alone, weak storms the shader does not draw (under 0.15: cellAt) crowded drawn ones further off out of
+            // the six, and those popped in and out whole as the near ones' strength crossed 0.15 (the second review))
+            cells.Sort((a, b) => a.Strength >= 0.15f != b.Strength >= 0.15f ? (a.Strength >= 0.15f ? -1 : 1) : Distance(body, a, here).CompareTo(Distance(body, b, here)));
             if (cells.Count > 6) cells.RemoveRange(6, cells.Count - 6);
+            // (the sizes held only for storms still found, every one of them, not only the six)
+            heldGone.Clear();
+            foreach (int id in heldSize.Keys)
+            {
+                bool still = false;
+                foreach (WeatherCell f in found) if (f.Id == id) { still = true; break; }
+                if (!still) heldGone.Add(id);
+            }
+            foreach (int id in heldGone) heldSize.Remove(id);
             cellsUt0 = t0; cellsUt1 = t1;
             nextById.Clear();
             foreach (WeatherCell n in next) nextById[n.Id] = n;
@@ -1795,12 +2609,8 @@ namespace NaturalWeather
             return 2f * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) * cam.aspect / kept;
         }
 
-        // (the sixteen pixels a quarter-size walk's dot stands for, in Bayer's order: each frame's lines go through the one whose
-        // number is the frame's, so that any four frames running cover the dot evenly)
         /// <summary>A point of the R2 sequence, each of its two numbers from -0.5 to 0.5: spread as evenly as any over the first few, and never the same.</summary>
         static Vector2 SubDot(int n) => new Vector2((float)((0.5 + n * 0.7548776662) % 1.0) - 0.5f, (float)((0.5 + n * 0.5698402910) % 1.0) - 0.5f);
-
-        static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
 
         /// <summary>
         /// The clouds' shadow laid on what a camera has drawn, into its pass (cloudshade.glsl): the scene is drawn with the sun dimmed
@@ -1847,7 +2657,7 @@ namespace NaturalWeather
             s.SetVector(idShadeTint, shadeTint);
 #endif
             // (and wet ground is darker ground, as far as the wet is known round the camera: Wet.cs)
-            s.SetVector("_CloudWet", new Vector4(Weather.WetGround ? Wet.Ground : 0f, 2500f, 0f, 0f));
+            s.SetVector("_CloudWet", new Vector4(Weather.WetGround ? Wet.GroundShown : 0f, 2500f, 0f, 0f));
             s.SetTexture(idShadowMap, shadowMap);
             // (and this camera's clouds as taken together this frame, made before this pass: from above the clouds, how much
             // the walk's own shadow takes from the land, which this pass tints)
@@ -1920,10 +2730,17 @@ namespace NaturalWeather
 #if DEV
             if (Trial == 22f) finer = false;        // (for comparing: what is kept, at the walk's own size, as before)
 #endif
+            // (the far camera's kept pixels count their own lines (cloudskeep.glsl); the near camera's are taken together as before)
+            bool counts = finer && makesShadow;
             int keptW = finer ? w * div : w, keptH = finer ? h * div : h;
-            if (p.Now == null || p.Now.width != w || p.Now.height != h || p.HistA == null || p.HistA.width != keptW || p.HistA.height != keptH)
+            // (What the far camera keeps is held to the sky (cloudskeep.glsl): the screen's kept size and a margin of a sixteenth of its
+            // height each side, 1.20 times the screen's pixels at 1920 by 1080, so that the camera may turn that far before it is held
+            // anew. Its copy on the screen's own grid, laid each frame (Shown), is what everything else reads.)
+            int margin = counts ? Mathf.Max(8, keptH / 16) : 0, heldW = keptW + 2 * margin, heldH = keptH + 2 * margin;
+            if (p.Now == null || p.Now.width != w || p.Now.height != h || p.HistA == null || p.HistA.width != heldW || p.HistA.height != heldH || counts != (p.Shown != null))
             {
-                foreach (RenderTexture t in new[] { p.Now, p.NowD, p.HistA, p.HistDA, p.HistB, p.HistDB }) if (t != null) { t.Release(); Destroy(t); }
+                foreach (RenderTexture t in new[] { p.Now, p.NowD, p.HistA, p.HistDA, p.HistB, p.HistDB, p.Shown, p.ShownD }) if (t != null) { t.Release(); Destroy(t); }
+                p.Shown = p.ShownD = null;
                 RenderTexture Make(RenderTextureFormat f, string name, int across, int up)
                 {
                     var t = new RenderTexture(across, up, 0, f, RenderTextureReadWrite.Linear) { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp, name = "Natural Weather: " + p.Name + " clouds, " + name };
@@ -1931,17 +2748,20 @@ namespace NaturalWeather
                     return t;
                 }
                 // (the distance pictures with a second channel: how much the walk's own shadow from above the clouds takes from the
-                // land's light, for the shadow's pass to tint (cloudshade.glsl, aboveTint))
-                p.Now = Make(RenderTextureFormat.ARGBHalf, "this frame", w, h); p.NowD = Make(RenderTextureFormat.RGHalf, "this frame's distance", w, h);
-                p.HistA = Make(RenderTextureFormat.ARGBHalf, "taken together", keptW, keptH); p.HistDA = Make(RenderTextureFormat.RGHalf, "distance taken together", keptW, keptH);
-                p.HistB = Make(RenderTextureFormat.ARGBHalf, "taken together (2)", keptW, keptH); p.HistDB = Make(RenderTextureFormat.RGHalf, "distance taken together (2)", keptW, keptH);
-                p.HavePrev = false;
+                // land's light, for the shadow's pass to tint (cloudshade.glsl, aboveTint); the walk's with, b and a, where in its dot
+                // each line went; the kept one with, b, how many of its own lines each kept pixel holds (cloudskeep.glsl))
+                p.Now = Make(RenderTextureFormat.ARGBHalf, "this frame", w, h); p.NowD = Make(RenderTextureFormat.ARGBHalf, "this frame's distance", w, h);
+                p.HistA = Make(RenderTextureFormat.ARGBHalf, "taken together", heldW, heldH); p.HistDA = Make(RenderTextureFormat.ARGBHalf, "distance taken together", heldW, heldH);
+                p.HistB = Make(RenderTextureFormat.ARGBHalf, "taken together (2)", heldW, heldH); p.HistDB = Make(RenderTextureFormat.ARGBHalf, "distance taken together (2)", heldW, heldH);
+                if (counts) { p.Shown = Make(RenderTextureFormat.ARGBHalf, "laid on the screen", keptW, keptH); p.ShownD = Make(RenderTextureFormat.RGHalf, "distance laid on the screen", keptW, keptH); }
+                p.HavePrev = false; p.HeldOk = false;
             }
             if (p.Walk == null)
             {
                 Warm();
                 p.Walk = new Material(walkShader) { name = "Natural Weather: walk" };
-                p.Together = new Material(walkShader) { name = "Natural Weather: over frames" };
+                p.Together = new Material(keepShader) { name = "Natural Weather: over frames" };
+                p.Lay = new Material(keepShader) { name = "Natural Weather: laid on the screen's grid" };
                 p.Over = new Material(overShader) { name = "Natural Weather: laid on", renderQueue = LaidQueue };
                 p.Shadow = new Material(shadeShader) { name = "Natural Weather: shadow laid on" };
                 p.Draw = new CommandBuffer { name = "Natural Weather: clouds (" + p.Name + ")" };
@@ -1955,9 +2775,10 @@ namespace NaturalWeather
 
             common(p.Walk, cam, w);
             common(p.Together, cam, w);
+            common(p.Lay, cam, w);
             p.Walk.SetVector(idStage, new Vector4(2f, frame % 64, from, to));
             // (the near camera's stretch is short, and flown through: finer steps)
-            p.Walk.SetVector(idHaze, new Vector4(noiseHasMips ? 1f : 0f, makesShadow ? 40f : 15f, 1.5f, 1f));
+            p.Walk.SetVector(idHaze, new Vector4(noiseHasMips ? 1f : 0f, makesShadow ? 40f : 15f, Two ? HazeAir2.x : 1.5f, Two ? HazeAir2.y : 1f));
             p.Together.SetVector(idStage, new Vector4(3f, frame % 64, from, to));
             // (which of the four pixels this frame's lines go through: the two on one diagonal, then the two on the other; of sixteen,
             // in Bayer's order; and, w, how much finer a kept dot is than the walk's)
@@ -1966,26 +2787,39 @@ namespace NaturalWeather
             // (the main chat's pictures; the owner, of blackrack's clouds, "way better"). Seen at more places within each dot over the
             // frames, as the picture's other taking-together does, the edge is smooth and the grain within less, in the lab.)
             Vector4 jitter = Vector4.zero;
-            if (finer && div == 2)
+            if (counts)
             {
-                int turn = frame & 3;
-                Vector2 sub = SubDot(frame >> 2) * 0.5f;
-                jitter = new Vector4(((turn == 0 || turn == 3 ? -0.25f : 0.25f) + sub.x * 0.5f) / w, ((turn == 0 || turn == 2 ? -0.25f : 0.25f) + sub.y * 0.5f) / h, 1f, 0.5f);
+                // (the far camera's: which kept pixel each dot's line goes through the walk works out dot by dot (clouds.glsl, lookIn),
+                // each dot from its own place in Bayer's order; z and w as before, for the walk's choice of near and far shapes)
+                jitter = new Vector4(0f, 0f, 1f, 1f / div);
+                p.Walk.SetVector(idAim, new Vector4(1f / w, 1f / h, frame & 1023, div));
+                p.Walk.SetTexture(idBlue, blueTable);
             }
-            else if (finer)
+            else
             {
-                int k = Array.IndexOf(Bayer4, frame & 15);
-                Vector2 sub = SubDot(frame >> 4) * 0.5f;
-                jitter = new Vector4(((k % 4 + 0.5f + sub.x) / 4f - 0.5f) / w, ((k / 4 + 0.5f + sub.y) / 4f - 0.5f) / h, 1f, 0.25f);
+                p.Walk.SetVector(idAim, Vector4.zero);
+                if (finer)
+                {
+                    // (the near camera's on "higher": every dot's line through the same one of its four pixels, the two on one diagonal,
+                    // then the two on the other, each round moved by a point of the R2 sequence, as since 2026-10-21)
+                    int turn = frame & 3;
+                    Vector2 sub = SubDot(frame >> 2) * 0.5f;
+                    jitter = new Vector4(((turn == 0 || turn == 3 ? -0.25f : 0.25f) + sub.x * 0.5f) / w, ((turn == 0 || turn == 2 ? -0.25f : 0.25f) + sub.y * 0.5f) / h, 1f, 0.5f);
+                }
             }
             p.Walk.SetVector("_CloudJitter", jitter);
             p.Together.SetVector("_CloudJitter", jitter);
 
             // where this camera was last frame (in the planet's axes), for taking the frames together
             float tanY = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad), tanX = tanY * cam.aspect;
-            bool usable = p.HavePrev && p.PrevBody == body.bodyName && (camFixed - p.PrevAt).magnitude < 5000.0;
+            // (nothing kept used after a jump of the camera (Frame), a move of 5 km or more, or on another world)
+            bool usable = p.HavePrev && !jumped && p.PrevBody == body.bodyName && (camFixed - p.PrevAt).magnitude < 5000.0;
             Vector3d moved = camFixed - p.PrevAt;
-            p.Together.SetVector(idPrevAt, new Vector4((float)moved.x, (float)moved.y, (float)moved.z, usable ? 1f : 0f));
+            // (and where each pixel's cloud was is further upwind by what the wind carried it since (Frame, windNow): left out, a heap
+            // 2 km off in a wind of 15 m/s slid an eighth of a pixel a frame through what was kept, and its edges trailed)
+            double since = windUt - p.PrevUt;
+            Vector3d carried = moved - (Math.Abs(since) > 3600.0 ? Vector3d.zero : windNow * since);
+            p.Together.SetVector(idPrevAt, new Vector4((float)carried.x, (float)carried.y, (float)carried.z, usable ? 1f : 0f));
             // (w: how much of this frame's walk a kept pixel takes: 0.07 since 2026-10-21, 0.14 until then. Set beside the same view
             // taken together over 64 frames, the game's picture was grainy all over every heap: the walk's own noise, half taken
             // away; the shading that gives each lobe its form was lost in it, and a sky of heaps looked like cotton (the owner: the
@@ -2000,10 +2834,49 @@ namespace NaturalWeather
             bool cut = !usable || Vector3.Dot(toFixed(cam.transform.forward), p.PrevAhead) < 0.94f;
             p.SinceCut = cut ? 0 : Math.Min(p.SinceCut + 1, 1000);
             float take = Mathf.Max(0.07f, Mathf.Min(0.45f, 0.3f / (1f + p.SinceCut / 6f)));
-            p.Together.SetVector(idPrevRight, new Vector4(p.PrevRight.x, p.PrevRight.y, p.PrevRight.z, take));
-            p.Together.SetVector(idPrevUp, p.PrevUp);
-            p.Together.SetVector(idPrevAhead, p.PrevAhead);
+            Vector3 camR = toFixed(cam.transform.right), camU = toFixed(cam.transform.up), camA = toFixed(cam.transform.forward);
+            if (counts)
+            {
+                // (held anew after a cut, when a corner of the screen comes within two pixels of its edge, or when the field of view
+                // changes; read this frame from what it was held to last frame)
+                bool anew = !usable || !p.HeldOk || heldToScreen || Mathf.Abs(cam.fieldOfView - p.HeldFov) > 0.002f * p.HeldFov;
+                for (int c = 0; c < 4 && !anew; c++)
+                {
+                    Vector3 v = camA + camR * (tanX * (c % 2 == 0 ? -1f : 1f)) + camU * (tanY * (c < 2 ? -1f : 1f));
+                    float ahead = Vector3.Dot(v, p.HeldAhead);
+                    anew = ahead <= 0f || Mathf.Abs(Vector3.Dot(v, p.HeldRight) / ahead) > 1f - 4f / heldW || Mathf.Abs(Vector3.Dot(v, p.HeldUp) / ahead) > 1f - 4f / heldH;
+                }
+                p.Together.SetVector(idPrevRight, p.HeldRight); p.Together.SetVector(idPrevUp, p.HeldUp); p.Together.SetVector(idPrevAhead, p.HeldAhead);
+                if (anew)
+                {
+                    p.HeldRight = camR / (tanX * heldW / keptW); p.HeldUp = camU / (tanY * heldH / keptH); p.HeldAhead = camA;
+                    p.HeldFov = cam.fieldOfView; p.HeldOk = true;
+                }
+                foreach (Material m in new[] { p.Together, p.Lay })
+                {
+                    m.SetVector(idHeldRight, p.HeldRight); m.SetVector(idHeldUp, p.HeldUp); m.SetVector(idHeldAhead, p.HeldAhead);
+                    m.SetVector(idSeeRight, camR / tanX); m.SetVector(idSeeUp, camU / tanY); m.SetVector(idSeeAhead, camA);
+                }
+                p.Together.SetVector(idHeld, new Vector4(keptW, keptH, div, anew ? 1f : 0f));
+                p.Lay.SetVector(idHeld, new Vector4(keptW, keptH, div, 2f));
+            }
+            else
+            {
+                p.Together.SetVector(idPrevRight, new Vector4(p.PrevRight.x, p.PrevRight.y, p.PrevRight.z, take));
+                p.Together.SetVector(idPrevUp, p.PrevUp);
+                p.Together.SetVector(idPrevAhead, p.PrevAhead);
+            }
+            // (how the far camera's kept pixels take this frame's lines (cloudskeep.glsl): x, at most 6.5 of their own lines' worth read
+            // at the middles of last frame's pixels (a still view's grain as with the 0.07 of 2026-10-21); y, 4 read between them, which
+            // softens a little each time; z, the walk's lines spread counting a quarter of one where nothing kept can be used; w, what is
+            // kept held within a quarter of the lines' spread beyond them. Fewer lines held as time goes faster and the clouds boil: from
+            // warp 4, as 4 over the rate. Nought for the near camera's.)
+            float warpShare = Mathf.Min(1f, 4f / Mathf.Max(1f, TimeWarp.CurrentRate));
+            Vector4 keep = counts ? new Vector4(Mathf.Max(1f, 6.5f * warpShare * keepSaid.x), Mathf.Max(1f, 4f * warpShare * keepSaid.y), 0.25f * keepSaid.z, 0.25f * keepSaid.w) : Vector4.zero;
+            p.Together.SetVector(idKeep, keep);
+            p.Lay.SetVector(idKeep, keep);      // (for the count shown in development builds' trial 26 only)
             p.PrevAt = camFixed;
+            p.PrevUt = windUt;
             p.PrevRight = toFixed(cam.transform.right) / tanX;
             p.PrevUp = toFixed(cam.transform.up) / tanY;
             p.PrevAhead = toFixed(cam.transform.forward);
@@ -2013,10 +2886,13 @@ namespace NaturalWeather
             RenderTexture histIn = p.Flip ? p.HistB : p.HistA, histDIn = p.Flip ? p.HistDB : p.HistDA;
             RenderTexture histOut = p.Flip ? p.HistA : p.HistB, histDOut = p.Flip ? p.HistDA : p.HistDB;
             p.Flip = !p.Flip;
+            // (what everything else reads: the far camera's kept picture as laid on the screen's grid; the near camera's as kept)
+            RenderTexture shown = counts ? p.Shown : histOut, shownD = counts ? p.ShownD : histDOut;
+            if (counts) { p.Lay.SetTexture(idHist, histOut); p.Lay.SetTexture(idHistD, histDOut); }
             // (the far camera's clouds, as they will be laid this frame, and how far off they are, for Keystone's pass that writes
             // the motion of what lies beyond the near camera: where they hide most of what is behind them, a smoothing between
             // frames follows them, not the ground under them)
-            if (makesShadow) TellFarMotion(histOut, histDOut);
+            if (makesShadow) TellFarMotion(shown, shownD);
             // (Scatterer's sun flare, its rays and its ghosts, dimmed by how much of the sun these clouds let through: its shader
             // multiplies them by the alpha of the global texture `scattererReconstructedCloud` where the sun stands in the picture,
             // which Scatterer sets white once, at its flare's making, for a mod of raymarched clouds to hand over. The far camera's
@@ -2025,7 +2901,7 @@ namespace NaturalWeather
             // the thickest cloud: the sun's disc and rays in the middle of a dark heap at dusk (Natural Ocean's evening picture,
             // 2026-10-18; research/rendering/experiments/sun-flare-through-cloud.md). Clouds within the near camera's 400 m on
             // OpenGL are not in it: the flare goes on through those, as before.)
-            if (makesShadow) Shader.SetGlobalTexture(idFlareCloud, histOut);
+            if (makesShadow) Shader.SetGlobalTexture(idFlareCloud, shown);
             p.Together.SetTexture(idNow, p.Now); p.Together.SetTexture(idNowD, p.NowD);
             p.Together.SetTexture(idHist, histIn); p.Together.SetTexture(idHistD, histDIn);
 
@@ -2046,8 +2922,19 @@ namespace NaturalWeather
             over.SetVector(idRight, new Vector4(r.x, r.y, r.z, depth ? 1f : 0f));
             over.SetVector(idUp, new Vector4(u.x, u.y, u.z, 0f));
             over.SetVector(idAhead, new Vector4(f.x, f.y, f.z, SystemInfo.usesReversedZBuffer ? 1f : 0f));
-            over.SetVector(idOver, new Vector4(1f / 2.2f, 1f, 1f, 0f));
-            over.SetTexture(idHist, histOut); over.SetTexture(idHistD, histDOut);
+            // (The weather's veil, Natural Light's: laid on Camera 00 before the clouds (on OpenGL's near camera before anything
+            // see-through; on Direct3D's one camera in the clouds' own turn, just before them), and on Camera 01 after everything.
+            // So the clouds laid on Camera 00, the only camera on Direct3D, take it themselves, by how far off each is
+            // (cloudsover.glsl); Camera 01's are veiled with everything else. Until 2026-10-25 none did: in fog on the pad the
+            // ground and the sky were white and the heaps over them crisp and blue.)
+            bool veils = Names.Is(cam, "Camera 00");
+#if DEV
+            if (veilAsBefore) veils = false;
+#endif
+            over.SetVector(idOver, new Vector4(1f / 2.2f, 1f, 1f, (veils ? 1f : 0f) + (EdgesAsBefore ? 2f : 0f) + (FormTwo && !TopsAsBefore ? 4f : 0f) + (FormTwo && HueKept ? 8f : 0f)));
+            Vector3 upHere = ((Vector3)((Vector3d)cam.transform.position - body.position)).normalized;
+            over.SetVector(idVeilUp, new Vector4(upHere.x, upHere.y, upHere.z, (float)body.Radius));
+            over.SetTexture(idHist, shown); over.SetTexture(idHistD, shownD);
 
             p.Draw.Clear();
             // (The clouds are laid on in their turn among the see-through things (LaidQueue, by the renderer `laying`): after
@@ -2059,9 +2946,10 @@ namespace NaturalWeather
             bool late = LaidLate();
             if (late) { p.After.Clear(); p.After.DrawMesh(sheet, Matrix4x4.identity, over, 0, 0); }
             else p.After.Clear();
-            p.Draw.SetGlobalTexture(idOthersPic, histOut);
-            p.Draw.SetGlobalTexture(idOthersDist, histDOut);
-            p.Draw.SetGlobalVector(idOthers, new Vector4(late ? 0f : 1f, clear, 0f, 0f));
+            p.Draw.SetGlobalTexture(idOthersPic, shown);
+            p.Draw.SetGlobalTexture(idOthersDist, shownD);
+            // (none laid on under the sea: nor is the smoke to be dimmed by them)
+            p.Draw.SetGlobalVector(idOthers, new Vector4(late || underSea ? 0f : 1f, clear, 0f, 0f));
             p.After.SetGlobalVector(idOthers, Vector4.zero);
             InFront?.Invoke(p.After, cam);
 
@@ -2089,7 +2977,7 @@ namespace NaturalWeather
             // (the light field: this frame's band of rows of the one being made, before any walk reads the one made whole)
             if (makesShadow && LightField && !lightHigh && lightWalk != null && lightMaking != null && lightBand >= 0 && lightBand < LightRound)
             {
-                int rows = LightHeights / 4 * LightCells * LightLevels, band = (rows + LightRound - 1) / LightRound;
+                int rows = 2 * (LightHeights / 4 * LightCells * LightLevels), band = (rows + LightRound - 1) / LightRound;
                 p.Early.SetRenderTarget(lightMaking);
                 p.Early.EnableScissorRect(new Rect(0f, lightBand * band, 4 * LightCells, band));
                 p.Early.DrawMesh(sheet, Matrix4x4.identity, lightWalk, 0, 0);
@@ -2100,12 +2988,28 @@ namespace NaturalWeather
             p.Early.DrawMesh(sheet, Matrix4x4.identity, p.Walk, 0, 0);
             p.Early.SetRenderTarget(new RenderTargetIdentifier[] { histOut, histDOut }, histOut);
             p.Early.DrawMesh(sheet, Matrix4x4.identity, p.Together, 0, 0);
+            if (counts)
+            {
+                p.Early.SetRenderTarget(new RenderTargetIdentifier[] { p.Shown, p.ShownD }, p.Shown);
+                p.Early.DrawMesh(sheet, Matrix4x4.identity, p.Lay, 0, 0);
+            }
+            // (and the far camera's clouds made small, for their own light over the sky: see Meter)
+            if (makesShadow)
+            {
+                if (meterPic == null || !meterPic.IsCreated())
+                {
+                    meterPic = new RenderTexture(MeterW, MeterH, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear) { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp, name = "Natural Weather: the clouds' light, small" };
+                    meterPic.Create();
+                }
+                p.Early.Blit(shown, meterPic);
+                meterRight = r; meterUp = u; meterAhead = f; meterSky = upHere; meterMade = frame;
+            }
             // (and the camera's own picture to be drawn into after this, as before it)
             p.Early.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
 
             // the shadow, before anything see-through is drawn
             p.Shade.Clear();
-            if (shadows && shadowMap != null) LayShadow(p.Shadow, p.Shade, cam, body, shadowMidScene, sunUp, makesShadow, histDOut);
+            if (shadows && shadowMap != null) LayShadow(p.Shadow, p.Shade, cam, body, shadowMidScene, sunUp, makesShadow, shownD);
             else if (makesShadow) Shader.SetGlobalVector(idWeatherShadowSun, Vector4.zero);
             if (!p.On)
             {
@@ -2138,6 +3042,7 @@ namespace NaturalWeather
         const int LaidQueue = 2999;
         GameObject laying;
         Material layNothing;
+        bool underSea;
 
         /// <summary>
         /// The one renderer that lays the clouds on in their turn: a sheet over the whole screen, whose drawing ignores where
@@ -2174,10 +3079,40 @@ namespace NaturalWeather
         /// <summary>The material the sheet is drawn with for a camera just about to draw it (CloudsLaid).</summary>
         internal Material LaidFor(Camera cam)
         {
-            if (cam == null || LaidLate()) return layNothing;
+            if (cam == null || LaidLate() || underSea) return layNothing;
             if (far.On && cam == far.Cam) return far.Over;
             if (near.On && cam == near.Cam) return near.Over;
             return layNothing;
+        }
+
+        /// <summary>
+        /// The share of a sunlit ground's light that the ground under this weather throws up: the sun on it, as it comes through the gaps
+        /// and the thin places on the average round about, and of what the clouds take from the sun, what they let down as light from the
+        /// whole sky, by the same two-stream rule as the weather's shade (Provider.ShadeAt). About 0.06 under a thunderstorm, a fifth
+        /// under an overcast, seven tenths under fair-weather heaps.
+        /// </summary>
+        static float GroundShare(WeatherHere here, float sunUp)
+        {
+            float tauSky = 0f, notCovered = 1f, sun = 1f, up = Mathf.Max(0f, sunUp);
+            // (layer by layer, not from an array of the three: this is every frame)
+            OverGround(here.Low, up, ref tauSky, ref notCovered, ref sun);
+            OverGround(here.Middle, up, ref tauSky, ref notCovered, ref sun);
+            OverGround(here.High, up, ref tauSky, ref notCovered, ref sun);
+            float spread = 1f + 3f * up;
+            float sky = notCovered + (1f - notCovered) * spread / (1f + 0.15f * tauSky);
+            return Mathf.Clamp01(sun + (1f - sun) * Mathf.Clamp01(sky / spread));
+        }
+
+        /// <summary>How much of the sky a layer covers as cloud overhead (fog and dust are the air's, the veil's, not a deck).</summary>
+        static float LayerCover(CloudLayer l) => l.Kind == CloudKind.None || l.Kind == CloudKind.Fog || l.Kind == CloudKind.Dust ? 0f : Mathf.Clamp01(l.Cover);
+
+        static void OverGround(CloudLayer l, float up, ref float tauSky, ref float notCovered, ref float sun)
+        {
+            if (l.Kind == CloudKind.None || l.Cover < 0.01f) return;
+            float tau = Provider.Tau(l), cover = Mathf.Clamp01(l.Cover);
+            tauSky += cover * tau;
+            notCovered *= 1f - cover;
+            sun *= 1f - cover + cover * Mathf.Exp(-0.75f * tau / Mathf.Max(up, 0.15f));
         }
 
         /// <summary>(Development build, for setting one against the other: the clouds laid on after everything, as until Natural Weather 0.4.0.)</summary>
@@ -2230,6 +3165,25 @@ namespace NaturalWeather
         static bool heldOff;
         /// <summary>(Development build: the clouds off, or on again, without touching the player's settings: for timing.)</summary>
         public static string Switch() { heldOff = !heldOff; return heldOff ? "clouds held off" : "clouds on"; }
+        static bool groundAsBefore;
+        static float GroundShareSaid = 1f;
+        /// <summary>(Development build: the share of a sunlit ground's light the ground under the weather throws up on the clouds.)</summary>
+        public static string GroundLight() => "the ground's light on the clouds: " + GroundShareSaid.ToString("F3") + " of a sunlit ground's" + (groundAsBefore ? " (held as before)" : "");
+        /// <summary>(Development build: the light the ground throws up on the clouds as a sunlit ground's whatever the weather over it, as
+        /// before 2026-10-25, and back: for pictures of before and after.)</summary>
+        public static string GroundAsBefore() { groundAsBefore = !groundAsBefore; return groundAsBefore ? "the ground's light on the clouds as before 2026-10-25" : "the ground's light on the clouds under its weather"; }
+        static bool veilAsBefore, underSeaAsBefore;
+        /// <summary>(Development build: the clouds laid on Camera 00 without the weather's veil, as before 2026-10-25, and back.)</summary>
+        public static string VeilAsBefore() { veilAsBefore = !veilAsBefore; return veilAsBefore ? "the clouds unveiled, as before 2026-10-25" : "the clouds veiled by the weather in front of them"; }
+        /// <summary>(Development build: the clouds laid on with the camera under the sea, as before 2026-10-25, and back.)</summary>
+        public static string UnderSeaAsBefore() { underSeaAsBefore = !underSeaAsBefore; return underSeaAsBefore ? "the clouds laid on under the sea, as before 2026-10-25" : "no clouds laid on under the sea"; }
+        /// <summary>(Development build: the clouds' own light over the sky as last read back (see Meter), and what the read saw.)</summary>
+        public static string Light()
+        {
+            Color c = deckSaid;
+            return "the clouds' light over the sky " + c.r.ToString("F3") + " " + c.g.ToString("F3") + " " + c.b.ToString("F3") + " (as light), covering " + deckCover.ToString("F2") +
+                   " of it, " + (Time.unscaledTime - deckAt).ToString("F1") + " s ago" + (deckUnsaid ? " (not said: a Keystone older than the deck's light)" : "") + "; " + (instance != null ? instance.meterSaid + (instance.meterRead != null ? " (" + instance.meterRead.Way + ")" : "") : "no clouds") + "; under the sea " + (instance != null && instance.underSea);
+        }
         /// <summary>(Development build: both passes' pictures and buffers let go, to be made afresh in the next frame as at a flight's
         /// start: with the cameras drawn deferred (CloudsProbe.Deferred), what a game with the Deferred mod has from the first frame.)</summary>
         public static string Afresh()
@@ -2237,6 +3191,28 @@ namespace NaturalWeather
             if (instance == null) return "no clouds";
             foreach (Pass p in new[] { instance.far, instance.near }) { Detach(p); Free(p); }
             return "the clouds' pictures made afresh";
+        }
+        /// <summary>(Development build: nothing kept from frame to frame used at the next frame, as after a jump; for comparing. The
+        /// jump test leaves it alone: it is there for the rule that finds a jump by itself.)</summary>
+        public static string Cut() { cutAsked = true; return "a cut at the next frame"; }
+        /// <summary>(Development build: how many frames the jump test (Frame) has found a jump in since the game began, and the game's
+        /// time of the last; for checking that flying, orbits and changes of warp are not taken for jumps.)</summary>
+        public static int JumpsSeen;
+        public static double JumpLast = double.NaN;
+        public static string Jumps() { return "jumps seen: " + JumpsSeen + ", the last at " + JumpLast.ToString("F1") + " s (now " + Planetarium.GetUniversalTime().ToString("F1") + " s)"; }
+        /// <summary>(Development build: the far camera's keeping as multiples of the release's, "still move spread widen" (1 1 1 1 as
+        /// released); "screen" holds what is kept to the screen, held anew every frame (the count alone, for comparing), "sky" to the
+        /// sky (from 2026-10-26's step 8).)</summary>
+        public static string Keep(string what)
+        {
+            if (what == "screen" || what == "sky") heldToScreen = what == "screen";
+            else
+            {
+                string[] said = (what ?? "").Split(' ');
+                for (int i = 0; i < 4 && i < said.Length; i++)
+                    if (float.TryParse(said[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v)) keepSaid[i] = v;
+            }
+            return "kept: " + keepSaid.ToString("F2") + (heldToScreen ? ", held to the screen" : ", held to the sky");
         }
         /// <summary>(Development build: the shadows' sky tint held off ("off") or as worked out ("on"), and what it is.)</summary>
         public static bool TestNoTint;

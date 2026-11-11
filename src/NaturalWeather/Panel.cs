@@ -38,6 +38,8 @@ namespace NaturalWeather
             else GUILayout.Label(Weather.Status, Host.Small);
             if (Aero.Report.Length > 0) GUILayout.Label(Aero.Report, Host.Small);
             if (Feed.Report.Length > 0) GUILayout.Label(Feed.Report, Host.Small);
+            string eve = CloudsEve.Report;
+            if (eve.Length > 0) GUILayout.Label(eve, Host.Small);
 
             // ---- launch weather
             Launch.Verdict v = Launch.Now;

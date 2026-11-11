@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pack one of this project's shaders into a Unity asset bundle, without the Unity editor.
 
-    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|motion|enlarge|shadow|mark|shock|sundepth|lens|dnfill|farmotion|shafts|clean|veil|clouds|cloudsover|cloudshade|wet|snow|blend|fargroundpoints|fargrounddraw|fargrounddepth|fargroundlights]
+    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|motion|enlarge|shadow|mark|shock|sundepth|lens|dnfill|farmotion|shafts|clean|veil|clouds|cloudskeep|cloudsover|cloudshade|wet|snow|blend|fargroundpoints|fargrounddraw|fargrounddepth|fargroundlights]
 
 Volumetric Explosions': "volume" (the default) is the smoke, "layers" what puts every patch's smoke on the screen in depth order
 (since 0.5.0; "enlarge" did it a patch at a time before, and is kept for older copies of the mod), "shadow" the shadow it throws
@@ -34,6 +34,26 @@ OPENGL_CORE = 15
 # The last texture of each is the game's own depth picture, which is not a property of the material
 # ("given": how many of the last are the game's own, where it is more than that one).
 VERTEX = [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True)]
+
+# What a vertex program may take from the mesh besides the position, by its GLSL name: the mesh's channel Unity reads it from,
+# the vertex component that channel goes to on Direct3D 11, and the HLSL meaning (port.py, windows.py). As the game's own
+# particle shader has them (KSP/Particles/Alpha Blended, read from a Unity-built bundle: on Direct3D 11 the channels (0, 0),
+# (3, 3), (4, 5) and the source map 25, a bit for each channel; on OpenGL the same source map and no list, the attributes
+# being found by their names). Until 2026-10-28 every shader here took the position alone. (From the Windows PC.)
+VERTEX_INPUTS = [("in_COLOR0", 3, 3, "COLOR"), ("in_TEXCOORD0", 4, 5, "TEXCOORD0")]
+
+
+def vertex_inputs(code):
+    """The inputs of VERTEX_INPUTS a shader's vertex program declares, in that order (its text as source_of gives it, or as text)."""
+    if isinstance(code, bytes): code = code.decode("utf-8", "replace")
+    return [v for v in VERTEX_INPUTS if re.search(r"\bin\s+\w+\s+%s\s*;" % v[0], code)]
+
+
+def source_map(code):
+    """Unity's mask of the mesh's channels a vertex program reads: the position, and any of VERTEX_INPUTS."""
+    return 1 | sum(1 << channel for _, channel, _, _ in vertex_inputs(code))
+
+
 # (Far Ground's rings round the camera: the point under it, north and east there, and how the rings are laid; all three of its shaders read them)
 FG_RINGS = [("_FGUp", 4, False), ("_FGNorth", 4, False), ("_FGEast", 4, False), ("_FGRound", 4, False)]
 SHADERS = {
@@ -46,13 +66,13 @@ SHADERS = {
                      ("_VolSceneA", 4, False), ("_VolSceneB", 4, False), ("_VolSceneC", 4, False), ("_VolSceneD", 4, False),
                      ("_VolSceneTintA", 4, False), ("_VolSceneTintB", 4, False), ("_VolSceneTintC", 4, False), ("_VolSceneTintD", 4, False),
                      ("_VolSceneDirA", 4, False), ("_VolSceneDirB", 4, False), ("_VolSceneDirC", 4, False), ("_VolSceneDirD", 4, False),
-                     ("_VolJet", 4, False), ("_VolJetFrom", 4, False), ("_VolJetLook", 4, False), ("_VolJetBody", 4, False), ("_VolJetFlow", 4, False), ("_VolJetEnd", 4, False), ("_VolJetGlow", 4, False)] + [("_VolJetAt%d" % n, 4, False) for n in range(8)] + [("_VolFire", 4, False), ("_VolFireGone", 4, False),
+                     ("_VolJet", 4, False), ("_VolJetFrom", 4, False), ("_VolJetLook", 4, False), ("_VolJetBody", 4, False), ("_VolJetFlow", 4, False), ("_VolJetEnd", 4, False), ("_VolJetGlow", 4, False)] + [("_VolJetAt%d" % n, 4, False) for n in range(8)] + [("_VolFire", 4, False), ("_VolFireGone", 4, False), ("_VolFireWasSize", 4, False), ("_VolFireWasOffset", 4, False),
                      ("_VolTint", 4, False), ("_VolHot1", 4, False), ("_VolHot2", 4, False), ("_VolHot3", 4, False), ("_VolHot4", 4, False),
                      ("_VolCutA", 4, False), ("_VolCutB", 4, False), ("_VolCutC", 4, False), ("_VolCutD", 4, False), ("_VolCutE", 4, False), ("_VolCutF", 4, False), ("_VolSlot", 4, False), ("_VolSunMapFrom", 4, False), ("_VolSunMapRight", 4, False), ("_VolSunMapUp", 4, False), ("_VolSunMapAlong", 4, False),
                      ("_VolWakes", 4, False), ("_VolWakeLo", 4, False), ("_VolWakeHi", 4, False)]
                     + [("_VolWake%s%d" % (part, n), 4, False) for n in range(8) for part in "ABC"]
-                    + [("unity_WorldToObject", 4, True), ("unity_MatrixV", 4, True), ("_VolQuarter", 4, False)],
-        "textures": [("_Volume", 3), ("_Amount", 3), ("_Detail", 3), ("_Around", 3), ("_Flow", 3), ("_RestA", 3), ("_RestB", 3), ("_RestC", 3), ("_RestD", 3), ("_RestE", 3), ("_Turns", 3), ("_Clear", 3), ("_VolSunMap", 2), ("_CameraDepthTexture", 2)],
+                    + [("unity_WorldToObject", 4, True), ("unity_MatrixV", 4, True), ("_VolQuarter", 4, False), ("_VolHole", 4, False), ("_VolHoleWay", 4, False), ("_VolFireLook", 4, False), ("_VolFireLight", 4, False), ("_VolFireShine", 4, False)],
+        "textures": [("_Volume", 3), ("_Amount", 3), ("_AmountWas", 3), ("_Detail", 3), ("_Around", 3), ("_Flow", 3), ("_RestA", 3), ("_RestB", 3), ("_RestC", 3), ("_RestD", 3), ("_RestE", 3), ("_Turns", 3), ("_Clear", 3), ("_VolSunMap", 2), ("_CameraDepthTexture", 2)],
         "vertex": VERTEX + [("_VolShift", 4, False)],
     },
     "mark": {
@@ -107,10 +127,21 @@ SHADERS = {
     "layers": {
         "name": "VolumetricExplosions/Layers", "path": "assets/volumetricexplosions/layers.shader", "id": 7307199000000000010, "program": 1987650010,
         "bundle": "volumetricexplosionslayers", "file": "CAB-766f6c756d65747269636c6179657273", "code": "layers.glsl",
-        "fragment": [("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_VolLayers", 4, False), ("_VolSlots", 4, False), ("_WeatherClouds", 4, False)],
+        "fragment": [("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_VolLayers", 4, False), ("_VolSlots", 4, False), ("_WeatherClouds", 4, False), ("_VolHoleA", 4, False), ("_VolHoleB", 4, False), ("_VolHoleC", 4, False), ("_VolHoleSlots", 4, False)],
         "textures": [("_VolAtlas", 2), ("_VolAtlasDepth", 2), ("_VolFull", 2), ("_VolFullDepth", 2), ("_CameraDepthTexture", 2), ("_WeatherCloudsPic", 2), ("_WeatherCloudsDist", 2)],
         "vertex": [("_VolSheet", 4, False)],
         "cull": 0.0,                     # a sheet over the part of the screen the smoke is on, whichever way round
+    },
+    # The smoke and flames left as sprites, drawn as the game's particle shaders draw them (sprite.glsl): the first shader here to
+    # read a particle's colour and uv (VERTEX_INPUTS). Tested against the depth already drawn, as the game's particles are.
+    "sprite": {
+        "name": "VolumetricExplosions/Sprite", "path": "assets/volumetricexplosions/sprite.shader", "id": 7307199000000000022, "program": 1987650022,
+        "bundle": "volumetricexplosionssprite", "file": "CAB-766f6c756d6574726963737072697465", "code": "sprite.glsl",
+        "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_VolFrontOn", 4, False), ("_SpriteKind", 4, False), ("_TintColor", 4, False)],
+        "textures": [("_MainTex", 2), ("_VolFront", 2), ("_VolFront1", 2), ("_CameraDepthTexture", 2)],
+        "given": 3,                      # (the smoke in front is Layers' picture, set for all; the depth picture the game's)
+        "vertex": [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True), ("unity_MatrixV", 4, True)],
+        "cull": 0.0, "ztest": 4.0,       # (the light and how much it hides, as one: Blend One OneMinusSrcAlpha, for every kind)
     },
     "shock": {
         "name": "VolumetricExplosions/Shock", "path": "assets/volumetricexplosions/shock.shader", "id": 7307199000000000003, "program": 1987650003,
@@ -128,7 +159,7 @@ SHADERS = {
         "name": "VolumetricExplosions/Shadow", "path": "assets/volumetricexplosions/shadow.shader", "id": 7307199000000000009, "program": 1987650009,
         "bundle": "volumetricexplosionsshadow", "file": "CAB-766f6c756d6574726963736861646f77", "code": "shadow.glsl",
         "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ProjectionParams", 4, False), ("_ZBufferParams", 4, False), ("_VolCamera", 4, False),
-                     ("_ShadowGridX", 4, False), ("_ShadowGridY", 4, False), ("_ShadowGridZ", 4, False), ("_ShadowSun", 4, False), ("_ShadowSunWorld", 4, False), ("unity_MatrixV", 4, True),
+                     ("_ShadowGridX", 4, False), ("_ShadowGridY", 4, False), ("_ShadowGridZ", 4, False), ("_ShadowSun", 4, False), ("_ShadowSunWorld", 4, False), ("_ShadowSky", 4, False), ("_ShadowSkyKeep", 4, False), ("unity_MatrixV", 4, True),
                      ("_VolFlow", 4, False), ("_VolSize", 4, False)],
         "textures": [("_Volume", 3), ("_Flow", 3), ("_CameraDepthTexture", 2)],
         "blend": (2.0, 0.0),             # what is there is multiplied by what it draws: darkened, and nothing added
@@ -193,9 +224,10 @@ SHADERS = {
         "vertex": [("_VeilSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,       # a sheet over the whole screen, drawn over what is there by as much weather as there is (premultiplied)
     },
-    # Natural Weather's clouds: "clouds" makes the noise, walks the clouds into small pictures of its own, takes them together
-    # over frames and works out their shadow (all into its own pictures); "cloudsover" lays them on the camera's picture;
-    # "cloudshade" darkens the scene under them. (Numbers from 101 up, out of the way of the others'.)
+    # Natural Weather's clouds: "clouds" makes the noise, walks the clouds into small pictures of its own and works out their
+    # shadow (all into its own pictures); "cloudskeep" takes the walk's pictures together over frames (since 2026-10-26; into
+    # its own pictures too); "cloudsover" lays them on the camera's picture; "cloudshade" darkens the scene under them. (Numbers
+    # from 101 up, out of the way of the others'.)
     "clouds": {
         "name": "NaturalWeather/Clouds", "path": "assets/naturalweather/clouds.shader", "id": 7307199000000000101, "program": 1987650101,
         "bundle": "weatherclouds", "file": "CAB-77656174686572636c6f756473000000", "code": "clouds.glsl",
@@ -205,13 +237,13 @@ SHADERS = {
                      ("_CloudAir", 4, False), ("_CloudAirHigh", 4, False), ("_CloudHaze", 4, False), ("_CloudFlashA", 4, False), ("_CloudFlashB", 4, False), ("_CloudFlashTint", 4, False),
                      ("_CloudHoleA", 4, False), ("_CloudHoleB", 4, False), ("_CloudHoleC", 4, False),
                      ("_CloudFieldA", 4, False), ("_CloudFieldB", 4, False), ("_CloudFieldLevA", 4, False), ("_CloudFieldLevB", 4, False), ("_CloudFieldLevC", 4, False), ("_CloudFieldLevD", 4, False),
-                     ("_CloudPrevAt", 4, False), ("_CloudPrevRight", 4, False), ("_CloudPrevUp", 4, False), ("_CloudPrevAhead", 4, False),
                      ("_CloudShadowAt", 4, False), ("_CloudShadowX", 4, False), ("_CloudShadowY", 4, False), ("_CloudSunFixed", 4, False),
-                     ("_CloudStreets", 4, False), ("_CloudAlong", 4, False), ("_CloudHabit", 4, False), ("_CloudForm", 4, False),
-                     ("_CloudWakeLook", 4, False), ("_CloudWakeMid", 4, False), ("_CloudHeapsAt", 4, False), ("_CloudJitter", 4, False), ("_CloudTwistA", 4, False), ("_CloudTwistB", 4, False), ("_CloudEyeA", 4, False), ("_CloudEyeB", 4, False), ("_CloudEyeC", 4, False), ("_CloudEyeD", 4, False), ("_CloudShelfA", 4, False), ("_CloudShelfB", 4, False), ("_CloudShelfC", 4, False)] + [("_CloudWake%d" % n, 4, False) for n in range(8)]
-                    + [("_CloudCellA%d" % n, 4, False) for n in range(6)] + [("_CloudCellB%d" % n, 4, False) for n in range(6)],
-        "textures": [("_CloudField", 3), ("_CloudShape", 3), ("_CloudDetail", 3), ("_CloudMap", 2), ("_CloudMapB", 2), ("_CloudMapC", 2), ("_CloudAirLut", 2), ("_CloudNow", 2), ("_CloudNowD", 2),
-                     ("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2), ("_CloudCells", 2), ("_CloudHeaps", 2), ("_CloudHeapsB", 2), ("_CloudLight", 2)],
+                     ("_CloudStreets", 4, False), ("_CloudAlong", 4, False), ("_CloudHabit", 4, False), ("_CloudForm", 4, False), ("_CloudSpec", 4, False), ("_CloudAnvil", 4, False), ("_CloudLight2", 4, False), ("_CloudDeck2", 4, False),
+                     ("_CloudWakeLook", 4, False), ("_CloudWakeMid", 4, False), ("_CloudHeapsAt", 4, False), ("_CloudJitter", 4, False), ("_CloudAim", 4, False), ("_CloudTwistA", 4, False), ("_CloudTwistB", 4, False), ("_CloudEyeA", 4, False), ("_CloudEyeB", 4, False), ("_CloudEyeC", 4, False), ("_CloudEyeD", 4, False), ("_CloudShelfA", 4, False), ("_CloudShelfB", 4, False), ("_CloudShelfC", 4, False)] + [("_CloudWake%d" % n, 4, False) for n in range(8)]
+                    + [("_CloudCellA%d" % n, 4, False) for n in range(6)] + [("_CloudCellB%d" % n, 4, False) for n in range(6)] + [("_CloudCellC%d" % n, 4, False) for n in range(6)],
+        "textures": [("_CloudField", 3), ("_CloudShape", 3), ("_CloudDetail", 3), ("_CloudMap", 2), ("_CloudMapB", 2), ("_CloudMapC", 2), ("_CloudAirLut", 2),
+                     ("_CameraDepthTexture", 2), ("_CloudCells", 2), ("_CloudHeaps", 2), ("_CloudHeapsB", 2), ("_CloudLight", 2), ("_CloudBillow", 3), ("_CloudPattern", 2),
+                     ("_CloudBlue", 2)],
         "vertex": [("_CloudSheet", 4, False)],
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),             # what it draws takes the place of what was there (its own pictures)
@@ -219,12 +251,30 @@ SHADERS = {
     "cloudsover": {
         "name": "NaturalWeather/CloudsOver", "path": "assets/naturalweather/cloudsover.shader", "id": 7307199000000000102, "program": 1987650102,
         "bundle": "weathercloudsover", "file": "CAB-77656174686572636c6f7564736f7665", "code": "cloudsover.glsl",
-        "fragment": [("_ZBufferParams", 4, False), ("_CloudRight", 4, False), ("_CloudUp", 4, False), ("_CloudAhead", 4, False), ("_CloudOver", 4, False)],
+        "fragment": [("_ZBufferParams", 4, False), ("_CloudRight", 4, False), ("_CloudUp", 4, False), ("_CloudAhead", 4, False), ("_CloudOver", 4, False),
+                     ("_CloudVeilUp", 4, False), ("_WeatherVeilAir", 4, False), ("_WeatherVeilColour", 4, False), ("_WeatherVeilSun", 4, False), ("_WeatherVeilSunColour", 4, False)],
         "textures": [("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2)],
         "vertex": [("_CloudSheet", 4, False)],
         # (laid over what is there by how much the cloud hides: colour already multiplied by that. The sheet stands as far off
         # as the nearest cloud can be (Clouds.cs, Setup) and is hidden by whatever is drawn nearer: 4, nearer or as near)
         "cull": 0.0, "ztest": 4.0,
+    },
+    # The clouds taken together over frames: the third go of "clouds" until 2026-10-26, moved to a program of its own (its own
+    # pictures, as the walk's).
+    "cloudskeep": {
+        "name": "NaturalWeather/CloudsKeep", "path": "assets/naturalweather/cloudskeep.shader", "id": 7307199000000000107, "program": 1987650107,
+        "bundle": "weathercloudskeep", "file": "CAB-77656174686572636c6f7564736b6565", "code": "cloudskeep.glsl",
+        "fragment": [("_CloudRight", 4, False), ("_CloudUp", 4, False), ("_CloudAhead", 4, False), ("_CloudFixedX", 4, False), ("_CloudFixedY", 4, False),
+                     ("_CloudFixedZ", 4, False), ("_CloudPrevAt", 4, False), ("_CloudPrevRight", 4, False), ("_CloudPrevUp", 4, False),
+                     ("_CloudPrevAhead", 4, False), ("_CloudJitter", 4, False), ("_CloudKeep", 4, False), ("_CloudForm", 4, False),
+                     ("_CloudHeld", 4, False), ("_CloudHeldRight", 4, False), ("_CloudHeldUp", 4, False), ("_CloudHeldAhead", 4, False), ("_CloudSeeRight", 4, False),
+                     ("_CloudSeeUp", 4, False), ("_CloudSeeAhead", 4, False), ("_ZBufferParams", 4, False)],
+        # (and, since 2026-11-10, the camera's depth picture: the far camera's kept pixels leave out the walk's lines that stopped at
+        # something much nearer than what each sees)
+        "textures": [("_CloudNow", 2), ("_CloudNowD", 2), ("_CloudHist", 2), ("_CloudHistD", 2), ("_CameraDepthTexture", 2)],
+        "vertex": [("_CloudSheet", 4, False)],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there (its own pictures)
     },
     # Natural Ocean's sea: a mesh moved by the waves in its vertex program, drawn solid (it writes how far off it is, so that
     # what is drawn after it, smoke and spray, goes behind the waves it is behind). (Numbers from 201 up.)
@@ -302,11 +352,14 @@ SHADERS = {
     "wet": {
         "name": "NaturalWeather/Wet", "path": "assets/naturalweather/wet.shader", "id": 7307199000000000104, "program": 1987650104,
         "bundle": "weatherwet", "file": "CAB-77656174686572776574000000000000", "code": "wet.glsl",
-        "fragment": [("_ZBufferParams", 4, False), ("_WetRight", 4, False), ("_WetUp", 4, False), ("_WetAhead", 4, False), ("_WetCam", 4, False), ("_WetHere", 4, False),
-                     ("_WetAcross", 4, False), ("_WetAlong", 4, False), ("_WetGround", 4, False), ("_WetSky", 4, False), ("_WetSun", 4, False), ("_WetGlass", 4, False),
-                     ("_WetDropsSize", 4, False)],
-        "textures": [("_WetDrops", 2), ("_WetScene", 2), ("_CameraDepthTexture", 2)],
-        "given": 2,                      # (the picture so far and how far off each pixel is: the game's own, handed over as they are)
+        "fragment": [("_ZBufferParams", 4, False), ("_ScreenParams", 4, False), ("_WetRight", 4, False), ("_WetUp", 4, False), ("_WetAhead", 4, False), ("_WetCam", 4, False), ("_WetHere", 4, False),
+                     ("_WetAcross", 4, False), ("_WetAlong", 4, False), ("_WetPlanetX", 4, False), ("_WetPlanetY", 4, False), ("_WetPlanetZ", 4, False),
+                     ("_WetPattern", 4, False), ("_WetPatternSmall", 4, False), ("_WetRipples", 4, False), ("_WetGround", 4, False),
+                     ("_WetSky", 4, False), ("_WetSun", 4, False), ("_WetGlass", 4, False),
+                     ("_WetLook", 4, False), ("_WetLights", 4, False), ("_WetDropsSize", 4, False), ("_WetLastRight", 4, False), ("_WetLastUp", 4, False), ("_WetLastAhead", 4, False)],
+        "textures": [("_WetLast", 2), ("_WetLastFar", 2), ("_WetDrops", 2), ("_WetMist", 2), ("_WetSoft", 2), ("_WetScene", 2), ("_CameraDepthTexture", 2)],
+        "given": 3,                      # (the picture so far and how far off each pixel is: the game's own, handed over as they are; and the
+                                         # picture's soft copy while there are drops on the glass, set for all as they are, 2026-11-07)
         "vertex": [],
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),
@@ -423,13 +476,25 @@ SHADERS = {
 # otherwise.
 CLOUDS_STORM_GONE = ["_CloudTwistA", "_CloudTwistB", "_CloudEyeA", "_CloudEyeB", "_CloudEyeC", "_CloudEyeD"]
 CLOUDS_CALM_GONE = CLOUDS_STORM_GONE + ["_CloudShelfA", "_CloudShelfB", "_CloudShelfC", "_CloudFlashA", "_CloudFlashB",
-                                        "_CloudHoleA", "_CloudHoleB", "_CloudHoleC"] + ["_CloudCellA%d" % n for n in range(6)] + ["_CloudCellB%d" % n for n in range(6)]
+                                        "_CloudHoleA", "_CloudHoleB", "_CloudHoleC"] + ["_CloudCellA%d" % n for n in range(6)] + ["_CloudCellB%d" % n for n in range(6)] + ["_CloudCellC%d" % n for n in range(6)]
 for _key, _title, _gone, _n, _file in (("cloudsstorm", "Storm", CLOUDS_STORM_GONE, 111, "CAB-77656174686572636c6f75647374726d"),
                                        ("cloudscalm", "Calm", CLOUDS_CALM_GONE, 112, "CAB-77656174686572636c6f756463616c6d")):
     _spec = copy.deepcopy(SHADERS["clouds"])
     _spec.update(name="NaturalWeather/Clouds" + _title, path="assets/naturalweather/clouds%s.shader" % _title.lower(),
                  id=7307199000000000000 + _n, program=1987650000 + _n, bundle="weatherclouds" + _title.lower(), file=_file, constants=_gone)
     _spec["fragment"] = [p for p in _spec["fragment"] if p[0] not in _gone]
+    SHADERS[_key] = _spec
+# And the same three with the clouds' second form (2026-10-27, a development trial: the shapes by coverage and eroding billows,
+# as Blackrack's are made; clouds.glsl, fieldAt), each a program of its own, so that neither form's code is in the other's
+# (Windows' compiler puts every function inline: both in one would double the walk). Clouds.cs draws with them when told to
+# (Clouds.FormTwo).
+for _key, _from, _title, _n, _file in (("clouds2", "clouds", "2", 121, "CAB-77656174686572636c6f756473320000"),
+                                       ("clouds2storm", "cloudsstorm", "2Storm", 122, "CAB-77656174686572636c6f75643273746d"),
+                                       ("clouds2calm", "cloudscalm", "2Calm", 123, "CAB-77656174686572636c6f75643263616c")):
+    _spec = copy.deepcopy(SHADERS[_from])
+    _spec.update(name="NaturalWeather/Clouds" + _title, path="assets/naturalweather/clouds%s.shader" % _title.lower(),
+                 id=7307199000000000000 + _n, program=1987650000 + _n, bundle="weatherclouds" + _title.lower(), file=_file,
+                 replace=_spec.get("replace", []) + [("const float FORM_TWO = 0.0;", "const float FORM_TWO = 1.0;")])
     SHADERS[_key] = _spec
 
 # The smoke's shader as a release build has it: the testing switches (_VolGrid.w, the test views; _VolThin.z, the rounds), which
@@ -577,7 +642,7 @@ def build(ksp, out_path, which):
     gl_vertex = [s for s in one["progVertex"]["m_SubPrograms"] if s["m_GpuProgramType"] == glprogram.GLCORE][0]
     gl_fragment = [s for s in one["progFragment"]["m_SubPrograms"] if s["m_GpuProgramType"] == glprogram.GLCORE][0]
     gl_vertex["m_BlobIndex"] = 0
-    gl_vertex["m_Channels"] = {"m_Channels": [], "m_SourceMap": 1}                 # positions only
+    gl_vertex["m_Channels"] = {"m_Channels": [], "m_SourceMap": source_map(code)}  # (the position, and any colour or uv: VERTEX_INPUTS)
     gl_vertex["m_TextureParams"] = [{"m_NameIndex": number[n], "m_Index": i, "m_SamplerIndex": i, "m_MultiSampled": False, "m_Dim": d} for i, (n, d) in enumerate(TEXTURES)]
     gl_vertex["m_ConstantBuffers"] = groups_for_form()
     gl_vertex["m_ConstantBufferBindings"] = []
@@ -589,7 +654,7 @@ def build(ksp, out_path, which):
     def group(params, size):
         return {"name": "$Globals", "size": size, "params": [{"name": n, "type": 0, "rows": 4 if m else 1, "cols": c, "matrix": 1 if m else 0, "array": 0, "index": at} for n, c, m, at in params]}
 
-    first = glprogram.write_entry({"code": code, "source_map": 1, "groups": [{"name": "", "size": 0, "params": []}, group(fragment, fragment_size), group(vertex, vertex_size)],
+    first = glprogram.write_entry({"code": code, "source_map": source_map(code), "groups": [{"name": "", "size": 0, "params": []}, group(fragment, fragment_size), group(vertex, vertex_size)],
                                    "bindings": [{"name": n, "type": 0, "index": i, "extra": i, "texture": d << 1} for i, (n, d) in enumerate(TEXTURES)]})
     second = glprogram.write_entry({})
     blob = glprogram.write_blob([first, second])

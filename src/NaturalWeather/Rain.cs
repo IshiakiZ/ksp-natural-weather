@@ -31,7 +31,13 @@ namespace NaturalWeather
         public static Color SnowLit = Color.white;
 
         // ---- rain in the light of lamps: the strongest thing about rain at night (each lamp near the camera gets its own few drops, lit by it)
-        sealed class Lit { public Light Lamp; public ParticleSystem Drops; public Material Mat; }
+        sealed class Lit
+        {
+            public Light Lamp; public ParticleSystem Drops; public Material Mat;
+            // (where the lamp was on the ground last frame, latitude, longitude and height, and how fast it goes over the ground:
+            // an engine's light goes with its craft, and its drops are made where it is now, see Lamps)
+            public double Lat, Lon, Alt; public bool Placed, Measured, Gone; public float At; public Vector3 Vel;
+        }
         readonly System.Collections.Generic.List<Lit> lit = new System.Collections.Generic.List<Lit>();
         float lampsAt;
 
@@ -191,6 +197,9 @@ namespace NaturalWeather
 
         void LateUpdate()
         {
+#if DEV
+            heardBy = this;
+#endif
             if (follower == null) return;
             Camera cam = FlightCamera.fetch != null ? FlightCamera.fetch.mainCamera : null;
             CelestialBody body = FlightGlobals.currentMainBody;
@@ -231,16 +240,20 @@ namespace NaturalWeather
             follower.transform.position = camPos;
             follower.transform.rotation = Quaternion.identity;
             // (ice pellets are drawn by Hail; freezing rain is rain until it lands)
-            Feed(drops, rain * Mathf.Clamp01(1f - snow - pellets), Mathf.Lerp(4.5f, 8.5f, Mathf.Clamp01(rain * 1.4f)), wind, down, camVel, true);
+            // (the page's fine details, 1 as installed: the streaks' length, the flakes' size)
+            dropsDrawn.velocityScale = Shutter * Weather.Times(Weather.StreakLength);
+            float flakeSize = Weather.Times(Weather.FlakeSize);
+            if (flakeSize != flakeSizeSet) { flakeSizeSet = flakeSize; var fm = flakes.main; fm.startSize = new ParticleSystem.MinMaxCurve(0.035f * flakeSize, 0.07f * flakeSize); }
+            Feed(drops, rain * Mathf.Clamp01(1f - snow - pellets), Mathf.Lerp(4.5f, 8.5f, Mathf.Clamp01(rain * 1.4f)), wind, down, camVel, true, Weather.Times(Weather.RainCount));
             if (splashes != null)
             {
                 // (down is where the world's own pull is: the splashes fall back that way)
                 var force = splashes.forceOverLifetime; Vector3 g = down * 9.8f; force.x = g.x; force.y = g.y; force.z = g.z;
                 // (splashes on a craft moving fast are not seen as such: only near the ground and slow)
-                var hit = drops.collision; hit.enabled = camVel.sqrMagnitude < 40f * 40f;
+                var hit = drops.collision; hit.enabled = camVel.sqrMagnitude < 40f * 40f && Weather.Shown(Weather.Splashes);
             }
-            Feed(flakes, rain * snow, 1.1f, wind, down, camVel, false);
-            Feed(motes, dust, 0.25f, wind, down, camVel, false);
+            Feed(flakes, rain * snow, 1.1f, wind, down, camVel, false, Weather.Times(Weather.SnowCount));
+            Feed(motes, dust, 0.25f, wind, down, camVel, false, 1f);
 #if DEV
             if (old)
             {
@@ -265,7 +278,10 @@ namespace NaturalWeather
             Report = rain > 0.01f ? (glaze > 0.5f ? "Freezing rain" : pellets > 0.5f ? "Ice pellets falling" : snow > 0.5f ? "Snowing" : "Raining") + " here" + (lit.Count > 0 ? ", in the light of " + lit.Count + (lit.Count == 1 ? " lamp" : " lamps") : "") + "." : dust > 0.05f ? "Dust blowing here." : "";
         }
 
-        void Feed(ParticleSystem ps, float amount, float fall, Vector3 wind, Vector3 down, Vector3 camVel, bool streaks)
+        float flakeSizeSet = 1f;
+
+        /// <summary>`more`: how many more than the weather has (the page's fine details: 1 as installed).</summary>
+        void Feed(ParticleSystem ps, float amount, float fall, Vector3 wind, Vector3 down, Vector3 camVel, bool streaks, float more)
         {
             var emission = ps.emission;
             if (amount < 0.005f) { emission.rateOverTime = 0f; return; }
@@ -283,7 +299,8 @@ namespace NaturalWeather
             shape.rotation = Vector3.zero;
             shape.scale = new Vector3(Box, Box * 0.6f, Box);
             // how many: a downpour is a few thousand streaks in view at once, drizzle a few hundred
-            float inView = (streaks ? 9000f : 5000f) * Mathf.Pow(Mathf.Clamp01(amount), 0.7f);
+            float inView = (streaks ? 9000f : 5000f) * Mathf.Pow(Mathf.Clamp01(amount), 0.7f) * more;
+            if (more > 1f) { int most = Mathf.CeilToInt(inView * 1.5f); if (main.maxParticles < most) main.maxParticles = most; }
             emission.rateOverTime = inView / life;
         }
 
@@ -305,6 +322,10 @@ namespace NaturalWeather
                         if (l == null || !l.isActiveAndEnabled || l.intensity < 0.2f || l.type == LightType.Directional || l.range < 4f) continue;
                         if ((l.cullingMask & ((1 << 0) | (1 << 15))) == 0) continue;
                         if ((l.transform.position - at).sqrMagnitude > 90f * 90f) continue;
+                        // (not a fire's in a crash, Volumetric Explosions': it burns inside its own smoke, and the drops it lit, drawn
+                        // added over everything, glittered through the smoke as a swarm of specks, the owner 2026-10-28, "a whole bunch
+                        // of small little dots ... like it's a bunch of tiny rains")
+                        if (l.transform.root.name.StartsWith("VolumetricExplosions", StringComparison.Ordinal)) continue;
                         near.Add(l);
                     }
                     near.Sort((a, b) => ((a.transform.position - at).sqrMagnitude / Mathf.Max(0.1f, a.intensity)).CompareTo((b.transform.position - at).sqrMagnitude / Mathf.Max(0.1f, b.intensity)));
@@ -321,13 +342,54 @@ namespace NaturalWeather
                     var one = new Lit { Lamp = l, Mat = new Material(add) { mainTexture = streak, renderQueue = 3100, name = "NaturalWeather lamp drops" } };
                     one.Drops = Make("lamp drops", one.Mat, true, out ParticleSystemRenderer r);
                     one.Drops.transform.SetParent(null, true);
-                    var main = one.Drops.main; main.simulationSpace = ParticleSystemSimulationSpace.World;
+                    // (its drops go with the lamp, falling past it as the air goes past it: since 2026-11-06. Left in the world as
+                    // they were, a lamp on a craft, an engine's light, left the drops it lit behind it, still lit, a dotted trail
+                    // after a dropped booster still burning in rain, the owner 2026-11-06, "sometimes you can see the particle
+                    // smoke, once the rocket is detached and still thrusting")
+                    var main = one.Drops.main; main.simulationSpace = ParticleSystemSimulationSpace.Local;
                     lit.Add(one);
                 }
             }
+            CelestialBody body = FlightGlobals.currentMainBody;
+            float now = Time.time;
             foreach (Lit one in lit)
             {
                 if (one.Lamp == null || one.Drops == null) continue;
+                // How fast the lamp goes over the ground: from where it last was, on the ground, put where that is now (the game
+                // moves the whole world under a fast craft, and the planet turns; neither is the lamp's going). A craft moves only
+                // on the game's physics steps, fifty a second, not every frame: a frame it has not moved in is not a stop, and the
+                // going is the way gone since it last moved over the time since. A frame of thousands of metres a second is the
+                // scene put back or another craft taken over: read as fast, to be read again.
+                Vector3 here = one.Lamp.transform.position;
+                if (body != null)
+                {
+                    if (!one.Placed) { one.Placed = true; one.At = now; }
+                    else
+                    {
+                        Vector3 gone = here - (Vector3)body.GetWorldSurfacePosition(one.Lat, one.Lon, one.Alt);
+                        float since = now - one.At;
+                        if (since > 1e-4f && (gone.sqrMagnitude > 1e-8f || since > 0.1f))
+                        {
+                            Vector3 v = gone / since;
+                            if (v.sqrMagnitude > 3000f * 3000f) v = v.normalized * 3000f;
+                            one.Vel = one.Measured ? Vector3.Lerp(one.Vel, v, Mathf.Clamp01(since * 6f)) : v;
+                            one.Measured = true; one.At = now;
+                        }
+                    }
+                    if (one.At == now) { one.Lat = body.GetLatitude(here); one.Lon = body.GetLongitude(here); one.Alt = body.GetAltitude(here); }
+                }
+                // (a lamp going fast, on a craft in flight, lights no drops of its own: they would go past it in a blink, smeared thin
+                // as a camera sees them, too faint to see. Full from standing to 10 m/s, a car's lamps at a walk, gone at 30. None
+                // until its going is known (a lamp just found may be an engine's in a climb); and none once it is out, at once, not
+                // at the next look for lamps a second on.)
+                float going = one.Vel.magnitude, slow = Mathf.Clamp01((30f - going) / 20f);
+                if (slow <= 0f || !one.Measured || !one.Lamp.isActiveAndEnabled || one.Lamp.intensity < 0.2f)
+                {
+                    var stop = one.Drops.emission; stop.rateOverTime = 0f;
+                    if (!one.Gone) { one.Drops.Clear(); one.Gone = true; }
+                    continue;
+                }
+                one.Gone = false;
                 float reach = Mathf.Clamp(one.Lamp.range * 0.35f, 4f, 14f);
                 one.Drops.transform.position = one.Lamp.transform.position - down * (reach * 0.3f);      // (about the lamp, a little above it: a floodlight stands on the ground and shines up)
                 one.Drops.transform.rotation = Quaternion.identity;
@@ -335,20 +397,25 @@ namespace NaturalWeather
                 bool flaking = snow > 0.5f;
                 var drawn = one.Drops.GetComponent<ParticleSystemRenderer>();
                 drawn.renderMode = ParticleSystemRenderMode.Stretch;
-                drawn.lengthScale = flaking ? 1.2f : 2f; drawn.velocityScale = flaking ? Shutter * 0.4f : Shutter;
+                drawn.lengthScale = flaking ? 1.2f : 2f; drawn.velocityScale = flaking ? Shutter * 0.4f : Shutter * Weather.Times(Weather.StreakLength);
                 drawn.maxParticleSize = flaking ? 0.01f : 0.004f;
                 one.Mat.mainTexture = flaking ? dot : streak;
                 var noise = one.Drops.noise; noise.enabled = flaking; noise.strength = 0.7f; noise.frequency = 0.35f;
-                var sz = one.Drops.main; sz.startSize = flaking ? new ParticleSystem.MinMaxCurve(0.035f, 0.07f) : new ParticleSystem.MinMaxCurve(0.03f, 0.05f);
-                Vector3 air = wind + down * (flaking ? 1.1f : Mathf.Lerp(4.5f, 8.5f, Mathf.Clamp01(rain * 1.4f)));
+                float flake = Weather.Times(Weather.FlakeSize);
+                var sz = one.Drops.main; sz.startSize = flaking ? new ParticleSystem.MinMaxCurve(0.035f * flake, 0.07f * flake) : new ParticleSystem.MinMaxCurve(0.03f, 0.05f);
+                // (the drops as the lamp meets them: the air's going less the lamp's)
+                Vector3 air = wind + down * (flaking ? 1.1f : Mathf.Lerp(4.5f, 8.5f, Mathf.Clamp01(rain * 1.4f))) - one.Vel;
                 float life = Mathf.Clamp(2f * reach / Mathf.Max(air.magnitude, 0.5f), 0.3f, flaking ? 20f : 4f);
                 var main = one.Drops.main; main.startLifetime = new ParticleSystem.MinMaxCurve(life * 0.8f, life * 1.2f);
                 var vel = one.Drops.velocityOverLifetime; vel.x = air.x; vel.y = air.y; vel.z = air.z;
                 var shape = one.Drops.shape; shape.position = -air * (life * 0.5f); shape.scale = new Vector3(reach * 2f, reach * 1.2f, reach * 2f);
                 var emission = one.Drops.emission;
-                emission.rateOverTime = rain < 0.01f ? 0f : 3000f * Mathf.Pow(Mathf.Clamp01(rain), 0.7f) / life;
+                emission.rateOverTime = rain < 0.01f ? 0f : 3000f * Mathf.Pow(Mathf.Clamp01(rain), 0.7f) * Weather.Times(flaking ? Weather.SnowCount : Weather.RainCount) / life;
                 // (lit by the lamp: its colour, as strong as it is, faded at the edge of its reach)
-                Color c = one.Lamp.color * Mathf.Clamp(one.Lamp.intensity, 0.3f, 3f) * 0.45f;
+                // (and faded out with the lamp's distance from the camera, from 25 m to 55: a drop a few millimetres across further
+                // off is less than a pixel, and drawn anyway it is a bright speck, not a streak)
+                float off = cam != null ? Vector3.Distance(one.Lamp.transform.position, cam.transform.position) : 0f;
+                Color c = one.Lamp.color * Mathf.Clamp(one.Lamp.intensity, 0.3f, 3f) * 0.45f * Mathf.Clamp01((55f - off) / 30f) * slow * (flaking ? 1f : Weather.Times(Weather.RainBright));
                 one.Mat.SetColor("_TintColor", new Color(c.r, c.g, c.b, 0.5f));
             }
         }
@@ -363,6 +430,7 @@ namespace NaturalWeather
         /// </summary>
         void Sound(float rain, float going)
         {
+            if (Hush.Paused) return;     // (docs/sound-rules.md, B1: nothing started or changed while the game is paused)
             bool inside = Inside;
             float meets = 1f + Mathf.Clamp01(going / 150f);
             float want = Weather.Patter * GameSettings.AMBIENCE_VOLUME * Mathf.Pow(Mathf.Clamp01(rain * meets), 0.6f) * (inside ? 1.35f : 1f) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
@@ -390,6 +458,7 @@ namespace NaturalWeather
                 hiss.spatialBlend = 0f; hiss.loop = true; hiss.playOnAwake = false; hiss.volume = 0f;
                 hissClip = MakeHiss();
                 hiss.clip = hissClip;
+                Hush.Add(hiss);
                 hissMuffle = go.AddComponent<AudioLowPassFilter>();
             }
             if (hissMuffle != null) { hissMuffle.cutoffFrequency = inside ? 1800f : 22000f; hissMuffle.lowpassResonanceQ = inside ? 2f : 1f; }
@@ -400,6 +469,7 @@ namespace NaturalWeather
         /// <summary>The wind's sound near the ground: as loud as the wind is strong (from about 5 m/s), swelling and dropping with each gust; none high up, where the craft's own noise is all.</summary>
         void Roar(Vector3 gust)
         {
+            if (Hush.Paused) return;     // (docs/sound-rules.md, B1: nothing started or changed while the game is paused)
             float speed = new Vector2(gust.x, gust.y).magnitude, agl = gust.z;
             float want = Weather.Whoosh * GameSettings.AMBIENCE_VOLUME * Noise.Smooth(4f, 22f, speed) * Noise.Smooth(400f, 80f, agl) * (TimeWarp.CurrentRate > 4.1f ? 0f : 1f);
             // (since 0.6.0, where the mod has its recordings: real wind, gusty, strong and a hurricane's crossfaded by how hard it
@@ -425,6 +495,7 @@ namespace NaturalWeather
                 roar.spatialBlend = 0f; roar.loop = true; roar.playOnAwake = false; roar.volume = 0f;
                 roarClip = MakeRoar();
                 roar.clip = roarClip;
+                Hush.Add(roar);
             }
             if (!roar.isPlaying) roar.Play();
             roar.volume = Mathf.MoveTowards(roar.volume, want, Time.unscaledDeltaTime * 0.8f);
@@ -439,6 +510,7 @@ namespace NaturalWeather
         /// </summary>
         void Airflow(Vessel ship, Camera cam)
         {
+            if (Hush.Paused) return;     // (docs/sound-rules.md, B1: nothing started or changed while the game is paused)
             float want = 0f, speed = 0f;
             if (ship != null && cam != null && ship.mainBody != null && ship.mainBody.atmosphere && !ship.LandedOrSplashed && Weather.On && !MapView.MapIsEnabled
                 && (ship.CoMD - (Vector3d)cam.transform.position).sqrMagnitude < 300.0 * 300.0)
@@ -455,6 +527,7 @@ namespace NaturalWeather
                 rush.spatialBlend = 0f; rush.loop = true; rush.playOnAwake = false; rush.volume = 0f;
                 rushClip = MakeRush();
                 rush.clip = rushClip;
+                Hush.Add(rush);
                 rushMuffle = go.AddComponent<AudioLowPassFilter>();
             }
             if (rushMuffle != null) rushMuffle.cutoffFrequency = Inside ? 700f : 22000f;
@@ -575,7 +648,9 @@ namespace NaturalWeather
             level = level.normalized;
             Vector3 aside = Vector3.Cross(up, level);
             looks[0] = ahead; looks[1] = up; looks[2] = -ahead; looks[3] = aside; looks[4] = -aside; looks[5] = level;
-            RenderSettings.ambientProbe.Evaluate(looks, seen);
+            // (the even light by the way it is set, see Lightning.EvenNow: read straight from the probe it was black whenever
+            // the game's own flat light was in use, Natural Light off)
+            Lightning.EvenNow(RenderSettings.ambientMode).Evaluate(looks, seen);
             Color infront = Positive(seen[0]), above = Positive(seen[1]), behind = Positive(seen[2]);
             Color around = Positive((seen[1] + seen[3] + seen[4] + seen[5] + seen[2]) * 0.2f);
             // the sun, as it is here (Natural Light dims it for the clouds in the way)
@@ -601,7 +676,7 @@ namespace NaturalWeather
             // as opaque at its middle as a drop is wide against the length it is smeared over, made up to what the eye sees
             // of the many drops that make one streak's worth of the picture.
             // (most of what a drop bends towards the eye is the sky above and behind it: brighter than the light all round)
-            Color drop = Shown(around * 0.5f + above * 0.7f) + sunShown * (0.25f * towards);
+            Color drop = (Shown(around * 0.5f + above * 0.7f) + sunShown * (0.25f * towards)) * Weather.Times(Weather.RainBright);
             float opaque = 0.34f + 0.26f * Mathf.Clamp01(rain);
             // (the shader doubles its tint: a half is as it is)
             dropMat.SetColor("_TintColor", new Color(Mathf.Min(drop.r, 1f) * 0.5f, Mathf.Min(drop.g, 1f) * 0.5f, Mathf.Min(drop.b, 1f) * 0.5f, opaque * 0.5f));
@@ -644,6 +719,10 @@ namespace NaturalWeather
         }
 
 #if DEV
+        static Rain heardBy;
+        /// <summary>(For the development build: the recorded loops of the rain and the wind, each one's volume and whether it plays or rests; and how many sources have been started, woken from a pause and let go.)</summary>
+        public static string Heard() => heardBy == null ? "no rain here" : heardBy.rainLoops.Says() + " | " + heardBy.windLoops.Says()
+            + " | sources started " + Loops.Starts + ", woken " + Loops.Wakes + ", let go " + Loops.Ends + " | woken in frames " + string.Join(" ", Loops.WokenIn);
         static string seenText = "";
         /// <summary>(For the development build: the light the drops and flakes were last lit with, and what they were given.)</summary>
         public static string Seen() => seenText;

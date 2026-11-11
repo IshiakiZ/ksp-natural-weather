@@ -53,7 +53,39 @@ namespace NaturalWeather
             public float AxisX, AxisY, Squash;   // a merging's stretch: along which way, and how much is left of it
             public float Travel;        // mm run since it last left a bead
             public int Seed;            // for its outline
+            public float Flat;          // 0 a cap; 1 a splat: a large fast drop spread flat where it landed (see Step)
+            public float Snow;          // 0 water; 1 a snowflake lying on the glass, white and lacy, that melts into a drop on warm glass
+            public float Ice;           // 0 water; 1 frozen where it sits, on glass below freezing: clear, bumpy, held fast
         }
+
+        /// <summary>Snow and ice on the glass (2026-11-07, queue item 20; research/lens-drops/understand.md: "flakes land and stay
+        /// as white tufts until they melt into drops"; "freezing rain: drops freeze where they land into clear bumpy ice that does
+        /// not run"). Snowflakes land as the snow comes at the glass and lie as white tufts, melting into drops on glass above
+        /// freezing; water on glass below freezing freezes where it sits and thaws again as the glass warms. False: none, as until
+        /// then: snow left nothing on the glass, and freezing rain ran on it as rain.</summary>
+        public static bool SnowOn = true;
+        /// <summary>The glass's warmth, degrees C (Wet: it comes to the air's in a few minutes): above nought snow on it melts,
+        /// below it water on it freezes.</summary>
+        public float GlassC = 10f;
+        static bool Solid(in Drop d) => d.Snow > 0.5f || d.Ice > 0.5f;
+        /// <summary>The radius a snowflake of so much water lies over on the glass, mm: an aggregate of crystals about five
+        /// millimetres across for each square root of a milligram of its water (the masses and sizes of aggregate flakes, a
+        /// milligram's some 5 mm across, a tenth of one under 2).</summary>
+        static float FlakeFoot(float volume) => 2.5f * Mathf.Sqrt(Mathf.Max(volume, 1e-6f));
+
+        /// <summary>Large fast drops land as splats with a ring of specks (2026-11-05); false: every drop a cap, as until then.
+        /// Off from 2026-11-05: in a night storm (lensveil streaks6, splatpair) the splats were grey crumpled clumps, read as grit
+        /// on the glass, not water, beside the round caps. On again 2026-11-07, made again (drops.glsl): a thin level film with
+        /// a rounded rim, clear through its middle, bending the scene at its edge (recordings/2026-11-07-pc/splat-after-d3d,
+        /// splat-after-gl).</summary>
+        public static bool Splats = true;
+
+        /// <summary>The foot a drop stands on, as Foot, wider for a splat: flatter, the same water spread wider (a cap at 25 degrees
+        /// is about a quarter wider than one at 45 holding as much). (At 15 degrees, half as wide again, with an edge four times as
+        /// lobed, as first written, a field of them in a downpour was a field of flowers with spiked petals, and merged ones
+        /// grew into great dark arcs: the films of 2026-11-05, recordings/2026-11-05-pc/veil and streaks.) A snowflake's, as it
+        /// lies (FlakeFoot), going to its water's as it melts.</summary>
+        static float FootOf(in Drop d) => d.Snow > 0f ? Mathf.Lerp(Foot(d.Volume) * (1f + 0.25f * d.Flat), FlakeFoot(d.Volume), d.Snow) : Foot(d.Volume) * (1f + 0.25f * d.Flat);
 
         readonly Drop[] drops = new Drop[Most];
         int count;
@@ -63,10 +95,49 @@ namespace NaturalWeather
         const int GridX = 112, GridY = 64;
         readonly float[] wet = new float[GridX * GridY];
         readonly float[] hold = new float[GridX * GridY];
+        // ---- the mist on the glass (2026-11-05, queue item 20's third gap: research/lens-drops/understand.md): drops too small
+        // to draw one by one, a few tenths of a millimetre and less, which together are a grey veil that lowers the picture's
+        // contrast and puts haloes round its lights. How much of each patch of the glass they cover (0 to 1): built up by
+        // drizzle and fine rain, more where the glass holds more, dried off slowly in rain and in half a minute out of it,
+        // gathered up and cleared wherever a drop runs (a lane through it) and gone with a wipe or under water.
+        readonly float[] mist = new float[GridX * GridY];
+        readonly byte[] mistBytes = new byte[GridX * GridY * 4];
+        Texture2D mistPicture;
+        /// <summary>The mist on the glass is gathered and drawn (2026-11-05); false: none, as until then.</summary>
+        public static bool MistOn = true;
+        /// <summary>(development build) when 0 or more, every patch of the glass held at so much mist (by its hold), to see it.</summary>
+        public static float MistHeld = -1f;
+        /// <summary>The most mist on any patch of the glass now (0 to 1).</summary>
+        public float MistMost { get; private set; }
+        /// <summary>Condensation on the glass (Wet: the glass colder than the air's dew point), so much more of each patch
+        /// misted a second; less than nothing, the mist dried off so much faster (queue item 20's seventh gap, 2026-11-05).</summary>
+        public float Condense;
+        // ---- water spots (queue item 20's sixth gap, 2026-11-05): where a drop dried where it sat, what was in the water stays
+        // on the glass: a faint spot that scatters a little light and holds the next drops harder, so that rain gathers on
+        // the old spots. Only a wipe or water over the whole glass takes them off.
+        readonly float[] spots = new float[GridX * GridY];
+        float spotsMost;
+        /// <summary>Drops leave water spots where they dry (2026-11-05); false: none, as until then.</summary>
+        public static bool SpotsOn = true;
+        /// <summary>How hard the glass is jerked away from its drops now (m/s^2, the camera's acceleration backwards, Wet): the
+        /// drops whose grip cannot hold them against it are thrown off (queue item 20's eighth gap, 2026-11-05).</summary>
+        public float Flung;
+        /// <summary>How many drops have been jerked off the glass (Flung), for the development build's count.</summary>
+        internal int FlungCount;
+        /// <summary>The hardest jerk back from the glass since the development build's report last read it (m/s^2).</summary>
+        internal float FlungMost;
+        /// <summary>Something on the glass with no drops: mist, spots, wet tracks, or water condensing (the glass's pass goes on for it).</summary>
+        public bool Lingers => MistMost > 0.003f || spotsMost > 0.02f || tracksMost > 0.02f || Condense > 0f || TracksHeld >= 0f;
+        /// <summary>Light streaks across the wet tracks drops leave (2026-11-05, wet.glsl); false: none, as until then.</summary>
+        public static bool StreaksOn = true;
+        /// <summary>(development build) when 0 or more, the glass held wet in tracks so much (by its hold), to see the streaks.</summary>
+        public static float TracksHeld = -1f;
+        float tracksMost;
 
         // ---- drawing
         Mesh mesh;
         Vector3[] corners = new Vector3[Most * 4];
+        Vector3[] marks = new Vector3[Most * 4];      // (each corner's drop: how much of it is snow, how much ice, and its water's own foot over its quad's)
         int[] order = new int[Most * 6];
         public RenderTexture Picture;
         Material material;
@@ -101,8 +172,10 @@ namespace NaturalWeather
         public float Covered { get; private set; }
         /// <summary>How many are running now.</summary>
         public int Running { get; private set; }
+        /// <summary>Whether any snow or ice was on the glass as last drawn (Draw): wet.glsl then lights it from a soft copy of the picture (Wet).</summary>
+        public bool Whitened { get; private set; }
 
-        public void Clear() { count = 0; Array.Clear(wet, 0, wet.Length); }
+        public void Clear() { count = 0; Array.Clear(wet, 0, wet.Length); Array.Clear(mist, 0, mist.Length); MistMost = 0f; Array.Clear(spots, 0, spots.Length); spotsMost = 0f; }
 
         /// <summary>
         /// The glass has just come up out of the water. (`speed`: how fast it left the surface, m/s; `wide`: the picture's
@@ -122,6 +195,8 @@ namespace NaturalWeather
         {
             count = 0;
             for (int k = 0; k < wet.Length; k++) wet[k] = 1f;
+            Array.Clear(mist, 0, mist.Length);
+            Array.Clear(spots, 0, spots.Length);
             float halfX = 0.5f * wide * Tall, halfY = 0.5f * Tall;
             // (water: viscosity 1e-3 Pa s, surface tension 0.072 N/m, capillary length 2.7 mm)
             float film = 0.94f * 2.7f * Mathf.Pow(1e-3f * Mathf.Clamp(speed, 0.05f, 20f) / 0.072f, 2f / 3f);    // mm
@@ -131,7 +206,7 @@ namespace NaturalWeather
             {
                 // (the drops a thinning sheet breaks into: a millimetre or so across, a few of them large)
                 double u = random.NextDouble();
-                float across = Mathf.Clamp(0.5f + (float)(-Math.Log(1.0 - u * 0.98) * 0.7), 0.4f, 3.2f);
+                float across = Mathf.Clamp(0.5f + (float)(-Math.Log(1.0 - u * 0.98) * 0.7), 0.4f, 3.2f) * Weather.Times(Weather.GlassSize);
                 float volume = Mathf.PI * across * across * across / 6f;
                 drops[count] = new Drop
                 {
@@ -153,6 +228,114 @@ namespace NaturalWeather
             return gy * GridX + gx;
         }
 
+        /// <summary>A drop of so much water joins one already on the glass: the snow in it so much the less of it, and on ice it
+        /// freezes onto it (2026-11-07).</summary>
+        static void Join(ref Drop on, float volume)
+        {
+            float before = on.Volume;
+            on.Volume = before + volume;
+            on.Snow *= before / on.Volume;
+            on.Ice = on.Ice > 0.5f && on.Snow <= 0.5f ? Mathf.Max(on.Ice * before / on.Volume, 0.55f) : on.Ice * before / on.Volume;
+        }
+
+        /// <summary>
+        /// A drop so many millimetres across lands on the glass at a random place, coming at it so fast face-on (`hit`, m/s).
+        /// (How it lands goes by its Weber number, how hard it hits against how strongly its surface holds it together: the
+        /// water's density times its speed squared times its size over its surface tension, 13.9 v^2 D for v in m/s and D in
+        /// mm. A small slow drop sits down as a cap; from some hundreds, as a 2-3 mm drop falling or any drop met at speed, it
+        /// spreads into a thin sheet several times its width, its rim throws a crown of fine droplets round it, and it pulls
+        /// back to a flat ragged splat: research/lens-drops/understand.md, section 1.) Rain's drops (Step) and water thrown at
+        /// the glass (Thrown) land so alike.
+        /// </summary>
+        void Land(float across, float hit, float halfX, float halfY)
+        {
+            float volume = Mathf.PI * across * across * across / 6f;
+            if (count >= Most)
+            {
+                // (The glass holding as many as it may, the drop lands on one already there and joins it; on ice, it freezes
+                // onto it (2026-11-07). Until then rain stopped landing there, and freezing rain's glaze stopped growing with
+                // under half the glass covered: recordings/2026-11-07-pc/ice-grow-d3d.)
+                Join(ref drops[random.Next(count)], volume);
+                return;
+            }
+            float weber = 13.9f * hit * hit * across;
+            float flat = Splats ? Mathf.Clamp01((weber - 150f) / 450f) : 0f;
+            float x0 = (float)(random.NextDouble() * 2.0 - 1.0) * halfX, y0 = (float)(random.NextDouble() * 2.0 - 1.0) * halfY;
+            drops[count] = new Drop
+            {
+                X = x0, Y = y0,
+                Volume = volume, Grip = 0.8f + 0.4f * (float)random.NextDouble(), Seed = random.Next(128), Flat = flat,
+            };
+            count++;
+            // (the crown's specks: a ring of a few tiny drops round the splat, more the harder it hit, a fifth to a third of a
+            // millimetre across, at one and a half to two and a half times its foot; they dry in a minute or two, so they
+            // take places only while the glass holds under three fifths of all it may: the rest kept for the rain, which
+            // otherwise found every place taken in a downpour and stopped landing, 2026-11-05)
+            if (flat > 0.3f)
+            {
+                float rs = Foot(volume) * (1f + 0.25f * flat);
+                int specks = Mathf.Min(4 + (int)(weber / 400f), 10);
+                for (int k = 0; k < specks && count < Most * 3 / 5; k++)
+                {
+                    float turn = (float)(random.NextDouble() * 2.0 * Math.PI), out_ = rs * (1.5f + (float)random.NextDouble());
+                    float sa = 0.2f + 0.15f * (float)random.NextDouble();
+                    drops[count] = new Drop
+                    {
+                        X = x0 + Mathf.Cos(turn) * out_, Y = y0 + Mathf.Sin(turn) * out_,
+                        Volume = Mathf.PI * sa * sa * sa / 6f, Grip = 1.3f, Seed = random.Next(128),
+                    };
+                    count++;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Water thrown at the glass this frame (Thrown, 2026-11-07: spray off a craft's wheels, a splash, a hull's sheet): so
+        /// many drops of each of Thrown.Sizes, each coming at the glass so fast face-on on the average (m/s). The finest, under
+        /// a quarter of a millimetre, too small to draw one by one, go to the mist on the glass, as much more of it as their
+        /// feet cover; the rest land as rain's do, caps or splats by how hard they hit. Forty of a size in a frame at most land
+        /// on their own places: the water of the rest joins drops already there, so a deluge of it (a camera in a splash's
+        /// falling crown) makes few great drops that run, not more than the glass can be drawn with; and it wets the glass all
+        /// over between them, as a wave's sheet does (Surfaced). `wide`: the picture's width over its height.
+        /// </summary>
+        public void Thrown(float[] landing, float[] hit, float wide)
+        {
+            float halfX = 0.5f * wide * Tall, halfY = 0.5f * Tall;
+            float size = Weather.Times(Weather.GlassSize);
+            float glassArea = 4f * halfX * halfY;
+            float water = 0f;
+            for (int k = 0; k < landing.Length && k < NaturalWeather.Thrown.Sizes.Length; k++)
+            {
+                float owed = landing[k];
+                if (!(owed > 0f)) continue;
+                float d = NaturalWeather.Thrown.Sizes[k] * size;
+                float volume = Mathf.PI * d * d * d / 6f;
+                if (d < 0.25f)
+                {
+                    if (!MistOn || MistHeld >= 0f) continue;
+                    float foot = Foot(volume);
+                    float gain = Mathf.Min(owed * Mathf.PI * foot * foot / glassArea, 1f);
+                    for (int i = 0; i < mist.Length; i++) mist[i] = Mathf.Clamp01(mist[i] + gain * hold[i] * (1f - mist[i]));
+                    continue;
+                }
+                water += owed * volume;
+                int n = (int)Mathf.Min(owed, 1e6f);
+                if (random.NextDouble() < owed - n) n++;
+                int own = Mathf.Min(n, 40);
+                for (int j = 0; j < own; j++) Land(d * Mathf.Exp(((float)random.NextDouble() - 0.5f) * 0.7f), hit[k], halfX, halfY);
+                float left = (n - own) * volume;
+                if (left > 0f && count > 0)
+                {
+                    int joins = Mathf.Min(count, 30);
+                    for (int j = 0; j < joins; j++) Join(ref drops[random.Next(count)], left / joins);
+                }
+            }
+            // (the glass wet all over between the drops: a twentieth of a millimetre of water over it at once wets all of it)
+            float wetting = Mathf.Min(20f * water / glassArea, 1f);
+            if (wetting > 0.001f)
+                for (int i = 0; i < wet.Length; i++) wet[i] = wet[i] + wetting * (1f - wet[i]);
+        }
+
         /// <summary>
         /// The drops carried on by so many seconds. `down`: the way things fall, on the glass (picture axes, x right, y up),
         /// times how much of gravity lies along the glass (m/s^2); `air`: the air streaming past the glass along it (m/s,
@@ -160,28 +343,46 @@ namespace NaturalWeather
         /// `shaken`: the camera's own acceleration along the glass (m/s^2, picture axes: the drops feel it backwards);
         /// `dense`: the air's density against Kerbin's at sea level; `arrive`: drops landing a second; `dry`: how fast they
         /// dry (0 in rain, about 1 out of it); `lambda`: how fast the number of raindrops falls off with their size (per mm
-        /// of diameter: about 3 in steady rain, 2 in a downpour); `wide`: the picture's width over its height.
+        /// of diameter: about 3 in steady rain, 2 in a downpour); `flakes`: snowflakes landing and staying a second, and
+        /// `flakeLambda` the same for their water melted (per mm); `wide`: the picture's width over its height.
         /// </summary>
-        public void Step(float dt, Vector2 down, Vector2 air, float into, Vector2 shaken, float dense, float arrive, float lambda, float dry, float wide)
+        public void Step(float dt, Vector2 down, Vector2 air, float into, Vector2 shaken, float dense, float arrive, float lambda, float flakes, float flakeLambda, float dry, float wide)
         {
             if (dt <= 0f) return;
             dt = Mathf.Min(dt, 0.05f);
+            FlungMost = Mathf.Max(FlungMost, Flung);
             float halfX = 0.5f * wide * Tall, halfY = 0.5f * Tall;
+            float size = Weather.Times(Weather.GlassSize), dries = Weather.Times(Weather.GlassDry);   // (the page's fine details: 1 as installed)
 
             // ---- new drops: as many as land, each a raindrop spread into a cap (the sizes rain comes in: many small, few large)
             float owed = arrive * dt;
             int landing = (int)owed + (random.NextDouble() < owed - (int)owed ? 1 : 0);
-            for (int n = 0; n < landing && count < Most; n++)
+            for (int n = 0; n < landing; n++)
             {
                 // (Marshall and Palmer: the number of drops of each size falls away exponentially with their diameter, by
                 // about e to the minus 3 for each mm in steady rain: most are under a millimetre)
                 double u = random.NextDouble();
-                float across = Mathf.Clamp(0.25f + (float)(-Math.Log(1.0 - u * 0.985) / Mathf.Max(lambda, 1f)), 0.25f, 3.5f);
-                float volume = Mathf.PI * across * across * across / 6f;
+                float across = Mathf.Clamp(0.25f + (float)(-Math.Log(1.0 - u * 0.985) / Mathf.Max(lambda, 1f)), 0.25f, 3.5f) * size;
+                // (its speed at the glass: the air coming at it face-on and about half its fall, its end speed 9.65 - 10.3
+                // e^(-0.6 D) m/s after Gunn and Kinzer; the rain comes at the glass at a slant)
+                float fall = Mathf.Max(9.65f - 10.3f * Mathf.Exp(-0.6f * across), 0.5f);
+                Land(across, Mathf.Max(into, 0f) + 0.5f * fall, halfX, halfY);
+            }
+
+            // ---- snowflakes landing (2026-11-07): each an aggregate of crystals, its water as a drop (melted) a few tenths of a
+            // millimetre to a few millimetres across, many small and few large (Sekhon and Srivastava's sizes for the rate it
+            // falls at: Wet gives how fast their number falls off with size), lying on the glass as a white lacy tuft some
+            // millimetres across (FlakeFoot), until it melts
+            float owedFlakes = SnowOn ? flakes * dt : 0f;
+            int flakesNow = (int)owedFlakes + (random.NextDouble() < owedFlakes - (int)owedFlakes ? 1 : 0);
+            for (int n = 0; n < flakesNow && count < Most; n++)
+            {
+                double u = random.NextDouble();
+                float melted = Mathf.Clamp(0.2f + (float)(-Math.Log(1.0 - u * 0.985) / Mathf.Max(flakeLambda, 0.3f)), 0.2f, 3.5f) * size;
                 drops[count] = new Drop
                 {
                     X = (float)(random.NextDouble() * 2.0 - 1.0) * halfX, Y = (float)(random.NextDouble() * 2.0 - 1.0) * halfY,
-                    Volume = volume, Grip = 0.8f + 0.4f * (float)random.NextDouble(), Seed = random.Next(128),
+                    Volume = Mathf.PI * melted * melted * melted / 6f, Grip = 0.8f + 0.4f * (float)random.NextDouble(), Seed = random.Next(128), Snow = 1f,
                 };
                 count++;
             }
@@ -195,23 +396,27 @@ namespace NaturalWeather
             for (int i = 0; i < count; i++)
             {
                 ref Drop d = ref drops[i];
-                float r = Foot(d.Volume);
+                float r = FootOf(d);
                 float mass = d.Volume * 1e-6f;                            // kg (a mm^3 of water is a milligram)
                 // (the air past it: along the glass, and spreading out from the middle where it comes at the glass face-on;
                 // the drop sits low in the air that clings to the glass, where it is about half as fast)
                 float ax = air.x + into * 0.6f * d.X / halfY, ay = air.y + into * 0.6f * d.Y / halfY;
                 ax *= 0.5f; ay *= 0.5f;
                 float speedAir = Mathf.Sqrt(ax * ax + ay * ay);
-                float frontal = 2f * r * 1e-3f * (r * 0.414f * 1e-3f) * 0.7f;  // m^2: its width times its height (a 45-degree cap stands 0.41 of its foot)
+                float r45 = Foot(d.Volume), frontal = 2f * r45 * 1e-3f * (r45 * 0.414f * 1e-3f) * 0.7f;  // m^2: its width times its height (a 45-degree cap stands 0.41 of its foot)
                 float pushAir = 0.5f * airDensity * frontal * speedAir;  // times the air's velocity: N per (m/s)
                 float fx = mass * (down.x - shaken.x) + pushAir * ax;
                 float fy = mass * (down.y - shaken.y) + pushAir * ay;
                 // (the glass's hold here: the plain glass's, by this patch and this drop, much less on a wet track)
                 int c = Cell(d.X, d.Y, wide);
-                float held = holdPerMm * r * hold[c] * d.Grip * (1f - 0.65f * wet[c]);
+                float held = holdPerMm * r * hold[c] * (1f + 0.8f * spots[c]) * d.Grip * (1f - 0.65f * wet[c]);
                 float push = Mathf.Sqrt(fx * fx + fy * fy);
-                // (a drop that is running is held less than one at rest: it goes on until its push is under about half what started it)
-                float holds = d.Moving ? 0.55f * held : held;
+                // (jerked off: the glass pulled away from the drop harder than its grip can hold it to the glass, taken as
+                // twice and a half what holds it from sliding; it is gone, with no spot)
+                if (Flung > 0f && d.Ice < 0.5f && mass * Flung > 2.5f * held) { d.Volume = -1f; FlungCount++; continue; }
+                // (a drop that is running is held less than one at rest: it goes on until its push is under about half what started it;
+                // a flake or ice holds fast where it lies: the snow caught in the glass's roughness, the ice frozen to it)
+                float holds = Solid(d) ? float.MaxValue : d.Moving ? 0.55f * held : held;
                 if (push <= holds)
                 {
                     d.Moving = false;
@@ -248,14 +453,16 @@ namespace NaturalWeather
                     {
                         int k = Cell(d.X + stepX * s / steps, d.Y + stepY * s / steps, wide);
                         wet[k] = 1f;
+                        mist[k] = 0f;
                     }
                     d.X += stepX; d.Y += stepY;
                     d.Travel += moved;
                     float every = Mathf.Max(0.6f, 2.6f * r / (1f + v * 4f));
-                    if (d.Travel > every && d.Volume > 0.15f && count < Most && random.NextDouble() < 0.7)
+                    // (none too small to last: one under what dries away at once was gone in the same frame, and left a spot, 2026-11-05)
+                    float share = Mathf.Lerp(0.008f, 0.03f, Mathf.Clamp01(v * 3f));
+                    if (d.Travel > every && d.Volume > 0.15f && d.Volume * share >= 0.004f && count < Most && random.NextDouble() < 0.7)
                     {
                         d.Travel = 0f;
-                        float share = Mathf.Lerp(0.008f, 0.03f, Mathf.Clamp01(v * 3f));
                         float left2 = d.Volume * share;
                         d.Volume -= left2;
                         // (left at its tail, a little way behind it)
@@ -268,10 +475,25 @@ namespace NaturalWeather
                         count++;
                     }
                 }
-                // (drying, from its edge: slow in rain, a minute or two for a millimetre drop out of it)
-                d.Volume -= (0.0006f + 0.006f * dry) * r * dt;
+                // (drying, from its edge: slow in rain, a minute or two for a millimetre drop out of it; snow and ice next to not at all)
+                d.Volume -= (0.0006f + 0.006f * dry) * r * dt * dries * (1f - Mathf.Max(d.Snow, d.Ice));
+                // (Snow melts on glass above freezing, faster the warmer the glass and the smaller the flake: a milligram's in some four
+                // seconds at five degrees, half a minute at one; ice thaws as fast. Water freezes on glass below freezing: four cubic
+                // millimetres in some four seconds at two degrees under, a small drop in two, so that freezing rain glazes the glass
+                // where it lands.)
+                if (!SnowOn) d.Snow = d.Ice = 0f;
+                else if (GlassC > 0f)
+                {
+                    float melts = dt * GlassC / (20f * Mathf.Pow(Mathf.Max(d.Volume, 0.05f), 1f / 3f));
+                    d.Snow = Mathf.Max(0f, d.Snow - melts);
+                    d.Ice = Mathf.Max(0f, d.Ice - melts);
+                }
+                else if (GlassC < 0f && d.Snow < 0.5f)
+                    d.Ice = Mathf.Min(1f, d.Ice - dt * GlassC / (8f * Mathf.Pow(Mathf.Max(d.Volume / 4f, 0.01f), 1f / 3f)));
                 // (a merging's stretch dies away in a few hundredths of a second)
                 d.Squash *= Mathf.Exp(-dt / 0.035f);
+                // (a splat that runs gathers itself into a running drop's rounded head within a few tenths of a second)
+                if (d.Moving) d.Flat *= Mathf.Exp(-dt / 0.3f);
                 covered += Mathf.PI * r * r;
             }
             Covered = Mathf.Clamp01(covered / (4f * halfX * halfY));
@@ -281,7 +503,13 @@ namespace NaturalWeather
             {
                 ref Drop d = ref drops[i];
                 float r = Foot(d.Volume);
-                if (d.Volume < 0.004f || Mathf.Abs(d.X) > halfX + r || Mathf.Abs(d.Y) > halfY + r) { drops[i] = drops[count - 1]; count--; i--; }
+                bool off = Mathf.Abs(d.X) > halfX + r || Mathf.Abs(d.Y) > halfY + r;
+                if (d.Volume < 0.004f || off)
+                {
+                    // (dried where it sat: a spot; not a drop flung off (less than nothing), nor one dried while running)
+                    if (!off && d.Volume >= 0f && !d.Moving && SpotsOn) { int c = Cell(d.X, d.Y, wide); spots[c] = Mathf.Min(1f, spots[c] + 0.2f); }
+                    drops[i] = drops[count - 1]; count--; i--;
+                }
             }
 
             // ---- drops that touch become one
@@ -292,8 +520,32 @@ namespace NaturalWeather
             Running = running;
 
             // ---- the tracks dry (a minute or so)
-            float keep = Mathf.Exp(-dt / (40f + 200f * (1f - dry)));
+            float keep = Mathf.Exp(-dt * dries / (40f + 200f * (1f - dry)));
             for (int k = 0; k < wet.Length; k++) wet[k] *= keep;
+            // (development build: every track held at so much, to see the streaks they make)
+            if (TracksHeld >= 0f) for (int k = 0; k < wet.Length; k++) wet[k] = Mathf.Max(wet[k], TracksHeld * (0.5f + 0.5f * hold[k]));
+
+            // ---- the mist: fine drops landing as the rain lands, the more of them the finer the rain (lambda over about 4, a
+            // drizzle, is nearly all fine), so that steady rain covers a patch about a fifth in two minutes and a drizzle near
+            // half; dried away in about four minutes in rain and half a minute out of it
+            float most = 0f;
+            if (!MistOn) Array.Clear(mist, 0, mist.Length);
+            else if (MistHeld >= 0f) for (int k = 0; k < mist.Length; k++) mist[k] = Mathf.Clamp01(MistHeld * hold[k]);
+            else
+            {
+                float gather = 0.012f * (arrive / 30f) * Mathf.Clamp((lambda - 2f) / 4f, 0.1f, 1f) * dt + Mathf.Max(Condense, 0f) * dt;
+                float fades = Mathf.Exp(-dt * (dries * (0.004f + 0.03f * dry) + Mathf.Max(-Condense, 0f)));
+                for (int k = 0; k < mist.Length; k++) mist[k] = Mathf.Clamp01((mist[k] + gather * hold[k] * (1f - mist[k])) * fades);
+            }
+            for (int k = 0; k < mist.Length; k++) most = Mathf.Max(most, mist[k]);
+            MistMost = most;
+            float tracks = 0f;
+            for (int k = 0; k < wet.Length; k++) tracks = Mathf.Max(tracks, wet[k]);
+            float spotted = 0f;
+            if (!SpotsOn) Array.Clear(spots, 0, spots.Length);
+            for (int k = 0; k < spots.Length; k++) spotted = Mathf.Max(spotted, spots[k]);
+            spotsMost = spotted;
+            tracksMost = StreaksOn ? tracks : 0f;
         }
 
         // (a grid of the drops by place, to find the ones that touch without trying every pair)
@@ -317,8 +569,10 @@ namespace NaturalWeather
             bool any = false;
             for (int i = 0; i < count; i++)
             {
-                if (gone[i]) continue;
-                float ri = Foot(drops[i].Volume);
+                // (snow and ice do not run together with anything: a flake lies over what is under it, ice is fast where it froze;
+                // but water that meets ice freezes onto it, where the ice is, below)
+                if (gone[i] || Solid(drops[i])) continue;
+                float ri = FootOf(drops[i]);
                 int bx = Mathf.Clamp((int)((drops[i].X + halfX) / Bucket) + 1, 0, bucketsX - 1), by = Mathf.Clamp((int)((drops[i].Y + halfY) / Bucket) + 1, 0, bucketsY - 1);
                 int reach = Mathf.CeilToInt((ri + 3.5f) / Bucket);
                 for (int yy = Mathf.Max(0, by - reach); yy <= Mathf.Min(bucketsY - 1, by + reach); yy++)
@@ -326,10 +580,27 @@ namespace NaturalWeather
                         for (int j = heads[yy * bucketsX + xx]; j >= 0; j = next[j])
                         {
                             if (j == i || gone[j] || gone[i]) continue;
-                            float rj = Foot(drops[j].Volume);
+                            bool frozen = drops[j].Ice > 0.5f && drops[j].Snow <= 0.5f;
+                            if (Solid(drops[j]) && !frozen) continue;
+                            float rj = FootOf(drops[j]);
                             float dx = drops[j].X - drops[i].X, dy = drops[j].Y - drops[i].Y;
                             float reachBoth = (ri + rj) * 0.96f;
                             if (dx * dx + dy * dy > reachBoth * reachBoth) continue;
+                            if (frozen)
+                            {
+                                // (Water meeting ice on the glass freezes onto it, where the ice is, held fast by it: freezing rain's
+                                // glaze thickening, the beads growing into one another (2026-11-07). Each drop kept apart until then,
+                                // in a downpour the glass came to hold as many as it can, 900, with a fifth of it covered, and took
+                                // no more: recordings/2026-11-07-pc/ice-set-d3d.)
+                                ref Drop ice = ref drops[j];
+                                ref Drop water = ref drops[i];
+                                float vi = ice.Volume, vw = water.Volume, vs = vi + vw;
+                                ice.Ice = Mathf.Max((ice.Ice * vi + water.Ice * vw) / vs, 0.55f);
+                                ice.Flat = (ice.Flat * vi + water.Flat * vw) / vs;
+                                ice.Volume = vs;
+                                gone[i] = true; any = true;
+                                continue;
+                            }
                             // (one drop: all the water, where the water's middle was, moving as the two together did; stretched
                             // for a moment along the line between them)
                             ref Drop a = ref drops[i];
@@ -340,11 +611,13 @@ namespace NaturalWeather
                             a.Vx = (a.Vx * va + b.Vx * vb) / vt; a.Vy = (a.Vy * va + b.Vy * vb) / vt;
                             a.Moving = a.Moving || b.Moving;
                             a.Grip = (a.Grip * va + b.Grip * vb) / vt;
+                            a.Flat = (a.Flat * va + b.Flat * vb) / vt;
+                            a.Snow = (a.Snow * va + b.Snow * vb) / vt; a.Ice = (a.Ice * va + b.Ice * vb) / vt;
                             a.Volume = vt;
                             if (dist > 1e-4f) { a.AxisX = dx / dist; a.AxisY = dy / dist; a.Squash = Mathf.Min(0.6f, dist / Mathf.Max(Foot(vt), 0.05f) * 0.45f); }
                             if (vb > va) a.Seed = b.Seed;
                             gone[j] = true; any = true;
-                            ri = Foot(vt);
+                            ri = FootOf(a);
                         }
             }
             if (!any) return;
@@ -368,19 +641,23 @@ namespace NaturalWeather
         public void Draw(CommandBuffer c, Material drawn, float wide, int high, float shutter)
         {
             int across = Mathf.Max(16, Mathf.RoundToInt(high * wide)), up = Mathf.Max(16, high);
-            if (Picture == null || Picture.width != across || Picture.height != up)
+            // (red how high the water stands, mm; green how white it is there: snow, or the frost in ice (2026-11-07))
+            if (Picture == null || Picture.width != across || Picture.height != up || Picture.format != RenderTextureFormat.RGHalf)
             {
                 if (Picture != null) { Picture.Release(); UnityEngine.Object.Destroy(Picture); }
-                Picture = new RenderTexture(across, up, 16, RenderTextureFormat.RHalf, RenderTextureReadWrite.Linear) { name = "Natural Weather: water on the glass", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+                Picture = new RenderTexture(across, up, 16, RenderTextureFormat.RGHalf, RenderTextureReadWrite.Linear) { name = "Natural Weather: water on the glass", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp, useMipMap = true, autoGenerateMips = false };
                 Picture.Create();
             }
             if (mesh == null) { mesh = new Mesh { name = "Natural Weather: drops on the glass" }; mesh.MarkDynamic(); }
             float halfY = 0.5f * Tall;
             int n = 0;
+            bool white = false;
             for (int i = 0; i < count; i++)
             {
                 Drop d = drops[i];
-                float r = Foot(d.Volume) * 1.04f;
+                white = white || d.Snow > 0.01f || d.Ice > 0.01f;
+                // (a splat's ragged edge reaches out further than a cap's: its quad a quarter wider at the most)
+                float r = FootOf(d) * 1.04f * (1f + 0.25f * d.Flat);
                 float sp = Mathf.Sqrt(d.Vx * d.Vx + d.Vy * d.Vy);
                 float ux, uy, a, b, cx = d.X, cy = d.Y;
                 if (d.Moving && sp > 0.5f)
@@ -401,33 +678,67 @@ namespace NaturalWeather
                 float vx = -uy, vy = ux;
                 // (into the picture's own units, the height being 2)
                 float k = 1f / halfY;
-                int code = Mathf.Clamp(Mathf.RoundToInt(Foot(d.Volume) / 0.02f), 1, 1023) * 128 + (d.Seed & 127);
+                int code = (Mathf.Clamp(Mathf.RoundToInt(FootOf(d) / 0.02f), 1, 1023) * 8 + Mathf.Clamp(Mathf.RoundToInt(d.Flat * 7f), 0, 7)) * 128 + (d.Seed & 127);
+                // (a snowflake lies wider than its water would as a drop: the water's own foot, as a part of the quad's, for its melt)
+                Vector3 mark = new Vector3(d.Snow, d.Ice, d.Snow > 0f ? Foot(d.Volume) * (1f + 0.25f * d.Flat) / Mathf.Max(FootOf(d), 1e-4f) : 1f);
                 for (int corner = 0; corner < 4; corner++)
                 {
                     float su = corner == 1 || corner == 2 ? 1f : -1f, sv = corner >= 2 ? 1f : -1f;
                     float px = cx + ux * su * a + vx * sv * b, py = cy + uy * su * a + vy * sv * b;
                     corners[n * 4 + corner] = new Vector3(px * k / wide, py * k, corner + 4f * code);
+                    marks[n * 4 + corner] = mark;
                 }
                 n++;
             }
-            for (int q = n * 4; q < Math.Min(corners.Length, (n + 1) * 4); q++) corners[q] = Vector3.zero;
+            for (int q = n * 4; q < Math.Min(corners.Length, (n + 1) * 4); q++) { corners[q] = Vector3.zero; marks[q] = Vector3.zero; }
+            Whitened = white;
             mesh.Clear(false);
             mesh.vertices = corners;
+            mesh.SetUVs(0, marks);
             mesh.SetIndices(order, 0, n * 6, MeshTopology.Triangles, 0, false);
             mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1e4f);
             c.SetRenderTarget(Picture);
             c.ClearRenderTarget(true, true, Color.clear, 1f);
             if (n > 0) c.DrawMesh(mesh, Matrix4x4.identity, drawn, 0, 0);
+            // (and its smaller copies: through a wide lens's opening the water is seen as one of them, as wide as the opening (wet.glsl))
+            c.GenerateMips(Picture);
+        }
+
+        /// <summary>The mist on the glass and the wet tracks drops leave, as a small picture for wet.glsl (_WetMist: red the mist,
+        /// green the tracks, blue the water spots; a patch a point, read smoothly between them), or none where there is next to none of either.</summary>
+        public Texture MistPicture()
+        {
+            if (MistMost < 0.003f && tracksMost < 0.02f && spotsMost < 0.02f) return Texture2D.blackTexture;
+            if (mistPicture == null) mistPicture = new Texture2D(GridX, GridY, TextureFormat.RGBA32, false, true) { name = "Natural Weather: mist, tracks and spots on the glass", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            float tracksOn = StreaksOn ? 255f : 0f;
+            for (int k = 0; k < mist.Length; k++)
+            {
+                mistBytes[4 * k] = (byte)Mathf.RoundToInt(255f * mist[k]);
+                mistBytes[4 * k + 1] = (byte)Mathf.RoundToInt(tracksOn * wet[k]);
+                mistBytes[4 * k + 2] = (byte)Mathf.RoundToInt(255f * spots[k]);
+                mistBytes[4 * k + 3] = 255;
+            }
+            mistPicture.SetPixelData(mistBytes, 0);
+            mistPicture.Apply(false);
+            return mistPicture;
         }
 
         public void Dispose()
         {
+            if (mistPicture != null) { UnityEngine.Object.Destroy(mistPicture); mistPicture = null; }
             if (Picture != null) { Picture.Release(); UnityEngine.Object.Destroy(Picture); Picture = null; }
             if (mesh != null) { UnityEngine.Object.Destroy(mesh); mesh = null; }
         }
 
 #if DEV
-        public string Says() => count + " drops, " + Running + " running, " + Mathf.RoundToInt(100f * Covered) + "% of the glass under water";
+        public string Says()
+        {
+            int flakes = 0, frozen = 0, splats = 0;
+            for (int i = 0; i < count; i++) { if (drops[i].Snow > 0.5f) flakes++; else if (drops[i].Ice > 0.5f) frozen++; else if (drops[i].Flat > 0.5f) splats++; }
+            string said = count + " drops (" + splats + " splats, " + flakes + " snowflakes, " + frozen + " frozen; the glass " + GlassC.ToString("F1") + " C), " + Running + " running, " + Mathf.RoundToInt(100f * Covered) + "% of the glass under water, mist at most " + MistMost.ToString("F2") + ", spots at most " + spotsMost.ToString("F2") + "; " + FlungCount + " flung off so far (the glass jerked back at most " + FlungMost.ToString("F1") + " m/s2 since the last report)";
+            FlungMost = 0f;
+            return said;
+        }
 #endif
     }
 }

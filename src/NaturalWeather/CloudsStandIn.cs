@@ -44,10 +44,27 @@ namespace NaturalWeather
             {
                 float b = 1000f + 150f * local2;
 #if DEV
-                // (development build: "cu=0.4", heaps at exactly that cover everywhere and nothing else, for counting what is drawn against it)
-                if (held.StartsWith("cu=", StringComparison.Ordinal) && float.TryParse(held.Substring(3), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float even))
+                // (development build: "cu=0.4", heaps at exactly that cover everywhere and nothing else, for counting what is drawn against it;
+                // "cu=0.4,2100" with their layer so deep (m; 900 unless said), for setting the heaps' height against Blackrack's)
+                string[] cu = held.StartsWith("cu=", StringComparison.Ordinal) ? held.Substring(3).Split(',') : null;
+                if (cu != null && float.TryParse(cu[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float even))
                 {
-                    w.Low = Layer(CloudKind.Cumulus, even, 1000f, 1900f);
+                    float deep = 900f;
+                    if (cu.Length > 1 && !float.TryParse(cu[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out deep)) deep = 900f;
+                    w.Low = Layer(CloudKind.Cumulus, even, 1000f, 1000f + Mathf.Clamp(deep, 100f, 6000f));
+                    return w;
+                }
+                // ("st=0.63,1750,3450": a stratus deck alone at that cover, base and top (m), and nothing else in the sky:
+                // Blackrack's at the deck_above view, read from his maps (2026-11-08), for setting the deck's shape and light
+                // beside his. Our weather there stacks altocumulus over a lower stratus, and his view looks down on that, not on
+                // the deck.)
+                string[] st = held.StartsWith("st=", StringComparison.Ordinal) ? held.Substring(3).Split(',') : null;
+                if (st != null && st.Length >= 3
+                    && float.TryParse(st[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float stCover)
+                    && float.TryParse(st[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float stBase)
+                    && float.TryParse(st[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float stTop))
+                {
+                    w.Low = Layer(CloudKind.Stratus, stCover, Mathf.Clamp(stBase, 0f, 6000f), Mathf.Clamp(stTop, stBase + 50f, 8000f));
                     return w;
                 }
 #endif
@@ -120,12 +137,16 @@ namespace NaturalWeather
                     if (held && (h >> 26) > 40) continue;        // (a held storm: about two nodes in three)
                     double dLat = (cla - latitude) * degree, dLon = (clo - longitude) * degree * Math.Cos(latitude * Math.PI / 180.0);
                     if (dLat * dLat + dLon * dLon > radius * radius) continue;
-                    float strength = Mathf.Sin(Mathf.PI * life) * Mathf.Clamp01(field * 1.4f);
+                    // (taken in through the field's edge, not cut there: a storm stood in whole and went whole where the field
+                    // crossed 0.45 (the clouds' second review of 2026-10-27))
+                    float strength = Mathf.Sin(Mathf.PI * life) * Mathf.Clamp01(field * 1.4f) * Mathf.SmoothStep(0f, 1f, (field - 0.45f) / 0.1f);
                     into.Add(new WeatherCell
                     {
                         Id = i, Latitude = cla, Longitude = clo, Radius = 3500f + 2500f * ((h >> 5) & 31) / 31f,
-                        Base = 800f, Top = 6500f + 3000f * strength, Life = life, Strength = strength, Rain = strength * 0.8f, Thunder = strength > 0.4f,
-                        Drift = new Vector3d(-7.0, 1.5, 0.0),
+                        // (its top by the field, not by its strength now: by that its anvil sank kilometres as it died away; and it
+                        // stands where it is: "how it moves", which the clouds take a storm's going from)
+                        Base = 800f, Top = 6500f + 3000f * Mathf.Clamp01(field * 1.4f), Life = life, Strength = strength, Rain = strength * 0.8f, Thunder = strength > 0.4f,
+                        Drift = Vector3d.zero,
                     });
                     found++;
                 }

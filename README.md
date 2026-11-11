@@ -57,6 +57,10 @@ In the Keystone window: the keystone button on the game's toolbar, or Alt-K (Opt
 * **Beside other mods:** where these clouds are drawn, EVE's clouds are hidden (its city lights stay) and Scatterer's
   sun flare goes behind them. Where another mod already puts wind into the game's aerodynamics (Kerbal Weather
   Project, Advanced Atmosphere Tools), that one wins.
+* **Blackrack's volumetric clouds:** hidden where these are drawn. Switch these clouds off and his are drawn instead,
+  and the weather near you goes by his: rain under his rain, ice in his clouds, lightning strikes in his storms, the
+  light dimmed under them. The rest of the weather stays: the wind on craft, the cold, fog, dust, the forecasts. The
+  mod's own rain and wet ground are drawn in place of his. His lightning and his drops on a cockpit's windows stay.
 * A city's weather is fetched from Open-Meteo (its name is sent every quarter of an hour; nothing with the box empty).
   Weather data by Open-Meteo.com (CC BY 4.0).
 
