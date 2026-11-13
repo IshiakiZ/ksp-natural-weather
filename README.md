@@ -3,11 +3,11 @@
 Weather that is seen and felt: wind on craft and smoke, clouds that dim the sun, rain and snow, lightning and
 thunder, fog and dust storms, hurricanes.
 
-![Heaps of cloud over the sea in the evening, their bases in shade; a hurricane from 320 km; lightning by the pad at night; rain; snow; fog; puddles after rain](src/NaturalWeather/img/natural-weather-tour.jpg)
+![Heaps of cloud over the sea in the evening, their bases in shade; a hurricane from 320 km; lightning beyond the pad at night; rain; snow; fog; puddles after rain](src/NaturalWeather/img/natural-weather-tour.jpg)
 
 ![The camera turning at 600 m in the evening, under towering heaps: the coast and the sea](src/NaturalWeather/img/natural-weather-clouds.gif)
 
-The first picture and this loop were taken beside Scatterer and TUFX, which draw the sky's and the sea's haze; the rest with these mods alone.
+The first picture, the lightning and this loop were taken beside Scatterer and TUFX, which draw the sky's and the sea's haze; the rest with these mods alone.
 
 ![Rain on the lens, then a hurricane's gust: the drops torn away, a rocket blown over on the pad, its fire and smoke blown off (the fire is Volumetric Explosions')](src/NaturalWeather/img/natural-weather-storm.gif)
 
