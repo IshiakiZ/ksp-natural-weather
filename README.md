@@ -46,7 +46,7 @@ goes with the wind; dust devils) and HarmonyKSP (the wind moves craft).
 
 ![Snow on the launch pad: the ground whitening, flakes and melt water on the glass](src/NaturalWeather/img/natural-weather-snow.gif)
 
-![Lightning strikes beside the launch pad at night, each flash lighting the ground](src/NaturalWeather/img/natural-weather-lightning.gif)
+![Lightning strikes beyond the launch pad at night: three strokes out of the cloud, each lighting it where it leaves](src/NaturalWeather/img/natural-weather-lightning.gif)
 
 ## Install
 
