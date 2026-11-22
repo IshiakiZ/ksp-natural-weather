@@ -409,7 +409,7 @@ namespace NaturalWeather
             int n = int.Parse(arg.Trim());
             Hold = n;
             Model.Chosen = Math.Max(0, n); Model.ChosenWeight = n > 0 ? 1f : 0f;
-            Model.Forget(); Launch.Again();
+            Model.Forget(); Launch.Again(); Wet.Forget();
             return n >= 0 ? "held: " + Model.Choices[Math.Max(0, n)] : "let go";
         }
 

@@ -57,6 +57,7 @@ uniform vec4 _CloudHaze;     // x: 1 if the noise has smaller copies to read far
 uniform vec4 _CloudFlashA;   // xyz: a flash of lightning, from the camera (m, the scene's axes); w: its brightness (0: none)
 uniform vec4 _CloudFlashB;
 uniform vec4 _CloudFlashTint; // rgb: the flash's colour; w: how far its light spreads in cloud (m)
+uniform vec4 _CloudFlashDown; // x, y: how far flash A's and B's channel runs on below its place, to the ground (m; 0: a flash within cloud); z: how far a stroke's light spreads in rain (m); w: how bright rain shows in it, against cloud
 uniform vec4 _CloudHoleA;    // xyz: a heap made as smoke is made (Heaps.cs), the middle of its base from the camera (m, the scene's axes); w: how far round it the noise's own heaps are cleared (m; 0: none)
 uniform vec4 _CloudHoleB;
 uniform vec4 _CloudHoleC;
@@ -211,6 +212,9 @@ float remap(float v, float a, float b, float c, float d) { return c + (v - a) / 
 // deep in a sheet as it was. 65 is the light as it was. Nought, and every release build, which sends nought, has them all. Trials
 // 20 to 22 are Clouds.cs's own.)
 bool trialOff(float piece) { float k = _CloudForm.z - 50.0; return k > 0.5 && k < 31.5 && mod(floor(k / piece + 0.01), 2.0) > 0.5; }
+// (and a second set, trials 201 to 231, for the first form's towers and rain of 2026-11-12: 1 its towers 2.4 times as tall for
+// their width, as until then (formWeather); 2 its rain's shafts as until then (rainAt))
+bool trialTwo(float piece) { float k = _CloudForm.z - 200.0; return k > 0.5 && k < 31.5 && mod(floor(k / piece + 0.01), 2.0) > 0.5; }
 
 // The clouds' second form (2026-10-27): 1 in the copies of this shader built for it (make_bundle.py: clouds2, clouds2storm,
 // clouds2calm), whose low and middle clouds are shaped by fieldAt; nought in the others, whose are shaped by formAt. A constant,
@@ -1161,7 +1165,16 @@ void formWeather(vec3 p, vec4 wa, vec4 wb, vec4 wc)
         // (how tall a heap for its width (its height over its whole width): wider than tall, nearly twice as wide in fair
         // weather's shallow layer and still half as wide again in a deep one; taller than wide only where they tower. At
         // as tall as wide in a deep layer, as it was until 2026-10-15, a mostly cloudy sky was a field of pillars.)
-        float tall = mix(0.45, 0.7, smoothstep(350.0, 1600.0, deep)) * mix(1.0, 2.4, smoothstep(0.5, 0.68, kind));
+        // (Where they tower, 1.4 times that since 2026-11-12: about as tall as wide, a heap of its own between 0.75 and 1.3 of
+        // it (heapsRound). At 2.4 times, as until then, a towering sky's heaps were 1.3 to 2.2 times as tall as wide, and on its
+        // layer of 4.5 km and more they stood as pillars one to three kilometres through: seen from 3 km, a field of bollards
+        // (the owner, of the front picture of 2026-11-11: "tell me one place you see this in real life"). Towering cumulus is
+        // about as wide as it is tall. Filmed with the camera held and the noise still, the old rule and then this
+        // (recordings/2026-11-12-pc/clouds3): a pillar three times as tall as wide stands about as tall as wide, the heaps
+        // from the pad lower and broader. Trial 201 (development build) sets it back. The second form, a development trial
+        // whose heaps are pillars on a deep column for reasons of its own (the billows eat 0.65 of the depth inside whatever the
+        // column), is as it was: a first try at it that day made its heaps smooth and featureless (clouds5) and was taken out.)
+        float tall = mix(0.45, 0.7, smoothstep(350.0, 1600.0, deep)) * mix(1.0, trialTwo(1.0) ? 2.4 : 1.4, smoothstep(0.5, 0.68, kind));
         // ---- the lattice's size. For heaps: such that the widest just reach the layer's top. For pads: a kilometre and a
         // quarter to a cell low down, under half of that in the middle sky, where they are small and many. It comes in set
         // sizes, each half as large again as the last (3, 4, 6, 9, 14, 20 or 30 cells to a length of the noise: a lattice
@@ -3171,9 +3184,16 @@ vec2 rainAt(vec3 p, float h, vec4 a, vec4 b, vec4 e)
     float uneven = textureLod(_CloudShape, rel * (6000.0 / max(R, 500.0)) + up * (h / _CloudNoise.w) * 0.12 + vec3(0.21, 0.63, 0.37), 0.0).r;
     // (the heavy shafts dense and the rain between them thin, so that they show: thin all over, the sky behind showed through
     // it evenly, a dark blue band)
-    float shafts = smoothstep(0.35, 0.75, uneven + 0.3 * (1.0 - d / R));
+    // (The first form's a curtain with heavier shafts in it, 2026-11-12: with the shafts alone dense (the square, the columns
+    // and the streaks each cutting the rest to a fifth or less), a shower seen from 3 km against the sea was two or three pale
+    // beams, straight-sided from the base to the water, like searchlights (the owner, of the front picture of 2026-11-11).
+    // Rain seen from outside is a veil as wide as what it falls from, soft at its sides, with streaks in it; filmed so in the
+    // evening from 3 km (recordings/2026-11-12-pc/clouds3, clouds4). Trial 202 (development build) sets it back. The second
+    // form's, not looked at with it, is as it was.)
+    bool veil = FORM_TWO < 0.5 && !trialTwo(2.0);
+    float shafts = veil ? smoothstep(0.2, 0.7, uneven + 0.3 * (1.0 - d / R)) : smoothstep(0.35, 0.75, uneven + 0.3 * (1.0 - d / R));
     if (shafts <= 0.0) return vec2(0.0);
-    shafts *= shafts;
+    if (!veil) shafts *= shafts;
     float streak = textureLod(_CloudShape, (rel + up * (h / _CloudNoise.w) * 0.1) * 2.3 + vec3(0.7, 0.1, 0.4), 0.0).g;
     // (its rim wanders with height, and the rain spreads out a little as it nears the ground: read alone, the shafts made an
     // upright drum with a flat top, its sides straight. Never past the cut above, or the rain would end on its upright circle
@@ -3184,12 +3204,14 @@ vec2 rainAt(vec3 p, float h, vec4 a, vec4 b, vec4 e)
     float body = smoothstep(rim, rim * 0.45, d);
     // (and finer columns within them, a few hundred metres across, nearly upright: rain falls in curtains, not as a fog)
     float columns = textureLod(_CloudShape, rel * (15000.0 / max(R, 500.0)) + up * (h / _CloudNoise.w) * 0.05 + vec3(0.37, 0.71, 0.13), 0.0).r;
-    shafts *= mix(0.2, 1.0, smoothstep(0.4, 0.7, columns));
+    shafts *= mix(veil ? 0.55 : 0.2, 1.0, smoothstep(0.4, 0.7, columns));
     // (fading up into the base, gone at it: faded from 900 m under it, as at first, the rain was thickest a third of the way
     // up and a lighter band hung under the dark base; reaching 200 m into the base, it was laid whole in front of the base's
     // wall, a grey band with a level top across the tower seen from near its height (both the review))
     float top = smoothstep(b.x, b.x - 400.0, h);
-    float c = b.w * 0.12 * reach.y * body * shafts * mix(0.08, 1.0, smoothstep(0.3, 0.75, streak)) * (0.5 + 0.5 * fall) * top;
+    // (the veil's thinnest streaks a third of its thickest, and all of it a little thinner, so that its heavy shafts hide as much
+    // as they did)
+    float c = b.w * (veil ? 0.085 : 0.12) * reach.y * body * shafts * mix(veil ? 0.35 : 0.08, 1.0, smoothstep(0.3, 0.75, streak)) * (0.5 + 0.5 * fall) * top;
     return vec2(c, clamp(d / max(rim, 1.0), 0.0, 1.0));
 }
 
@@ -3442,6 +3464,31 @@ float seaSunShare(vec3 dir, vec3 up, vec3 sunDir, float h, vec3 sunHere)
 
 float dither(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 
+// A flash of lightning's light at a place, as a share of its brightness: falling off with the distance from it, over `spread`.
+// A flash within cloud is a place in the cloud. A stroke to the ground (down: how far its channel runs on below its place,
+// which is where it comes out of the cloud's base) is a line, and the distance is the distance from the line: the channel
+// shines along its whole length, so the cloud's base is lit most where the channel comes out of it, and the rain most beside
+// the channel, all the way down (2026-11-13: until then every flash lit the cloud from a place inside it, 1.5 km under its
+// top, and the rain was lit by none: filmed at night, a stroke 450 m off lit neither the cloud over it nor the rain).
+float flashNear(vec3 p, vec3 at, float down, float spread)
+{
+    vec3 f = p - at;
+    if (down > 0.0)
+    {
+        vec3 up = at / max(length(at), 1.0);
+        f -= up * clamp(dot(f, up), -down, 0.0);
+    }
+    return 1.0 / (1.0 + dot(f, f) / (spread * spread));
+}
+
+vec3 flashLight(vec3 p, float spread)
+{
+    float sum = 0.0;
+    if (_CloudFlashA.w > 0.0) sum += _CloudFlashA.w * flashNear(p, _CloudCam.xyz + _CloudFlashA.xyz, _CloudFlashDown.x, spread);
+    if (_CloudFlashB.w > 0.0) sum += _CloudFlashB.w * flashNear(p, _CloudCam.xyz + _CloudFlashB.xyz, _CloudFlashDown.y, spread);
+    return _CloudFlashTint.rgb * sum;
+}
+
 // A storm's rain along this line of sight, walked apart from the clouds (it hangs below them, where the clouds' own walk does
 // not go): where the line passes through an upright cylinder round the storm's middle, from the ground to its base, wide
 // enough for the rain carried downwind, ten steps. Kept apart (rl, rth, rsT, rsW), each storm's on its own, and laid into
@@ -3492,6 +3539,8 @@ void rainWalk(vec4 a, vec4 b, vec4 e, vec3 dir, vec3 sunTop, vec3 sunDir, float 
         float past = smoothstep(0.5, 1.0, c.y) * mix(1.0, 0.4, smoothstep(0.4, 0.9, sunUp));
         vec3 lit = (sky * clamp(sunUp * 3.0 + 0.35, 0.0, 1.0) * open + _CloudGround.rgb * 0.5 + vec3(_CloudSunTint.w)) * 0.75
                  + sunTop * sunThroughAir(h, sunUp) * (0.06 + lobe) * past;
+        // (and a stroke's light, beside its channel: the drops throw it every way)
+        if (_CloudFlashDown.w > 0.0) lit += flashLight(p, max(_CloudFlashDown.z, 1.0)) * _CloudFlashDown.w;
         float pass = exp(-sigma * dt);
         if (beyond)
         {
@@ -4659,20 +4708,8 @@ void main()
             }
             // ---- lightning inside the cloud (its light spreads through the cloud by being scattered over and over, so it falls
             // off with distance more than it is dimmed by the cloud on the way)
-            if (_CloudFlashA.w > 0.0)
-            {
-                vec3 f = p - (_CloudCam.xyz + _CloudFlashA.xyz);
-                float d2 = dot(f, f);
-                float spread = _CloudFlashTint.w;
-                here += _CloudFlashTint.rgb * _CloudFlashA.w / (1.0 + d2 / (spread * spread));
-            }
-            if (_CloudFlashB.w > 0.0)
-            {
-                vec3 f = p - (_CloudCam.xyz + _CloudFlashB.xyz);
-                float d2 = dot(f, f);
-                float spread = _CloudFlashTint.w;
-                here += _CloudFlashTint.rgb * _CloudFlashB.w / (1.0 + d2 / (spread * spread));
-            }
+            // (a stroke to the ground lights it from the channel's whole length, most where it comes out of the base: flashNear)
+            if (_CloudFlashA.w + _CloudFlashB.w > 0.0) here += flashLight(p, _CloudFlashTint.w);
             lastHere = here; inCloud = true;
             // ---- what this step adds, and how much of what lies beyond it still shows (taken exactly over the step)
             float pass = exp(-sigma * dt);

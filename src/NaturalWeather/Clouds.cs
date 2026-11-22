@@ -486,6 +486,7 @@ namespace NaturalWeather
 
         readonly Pass far = new Pass { Name = "far" }, near = new Pass { Name = "near" };
         int shadowStrip = -1;                   // which quarter of the shadow's map is drawn this frame (less than nothing: all of it)
+        static readonly int idDayEye = Shader.PropertyToID("_NaturalLightDayEye");
         RenderTexture shadowMap, shadowMapB;    // (B: for the walk, how high the sunlit surface stands on each line to the sun)
         Material shadowWalk;
         RenderTexture heapsMap, heapsMapB;      // the map of the low layer's heaps (see HeapsDots)
@@ -686,7 +687,11 @@ namespace NaturalWeather
         float sunDim = 1f;              // what it is dimmed by (eased)
         float sunAbove = 1f;            // what the shadow says lies above the craft (as last read back)
         readonly Vector3d[] flashAt = new Vector3d[2];
-        readonly float[] flashBright = new float[2];
+        readonly float[] flashBright = new float[2], flashDown = new float[2];
+        static readonly int idFlashDown = Shader.PropertyToID("_CloudFlashDown");
+        // (a stroke to the ground against a flash within cloud: how bright it shows on the cloud's base, how far its light
+        // spreads there, how far in the rain, and how bright the rain shows in it; see Lightning.Cloud in a development build)
+        internal static float StrokeBright = 0.2f, StrokeSpread = 900f, RainSpread = 450f, RainBright = 0.75f;
 
         const double NoiseLength = 9000.0;      // metres to one repeat of the large noise (the small one is 9 times finer)
         // The camera's place in the noise wraps round only every 207 lengths of it (1863 km): 207 is a whole number of each of the
@@ -1892,6 +1897,11 @@ namespace NaturalWeather
             }
 #endif
             float brightness = CloudsPage.Brightness != null ? (float)CloudsPage.Brightness : 1f;
+            // (and as far as Natural Light's eye is open for cloud in the light itself, in stops, where no film is at work there
+            // (its FilmLook.LightEye, since 2026-11-11; nought with TUFX, without Natural Light or with an older one): it makes the
+            // sky's light and the ground's so much stronger, and the clouds, which have their own, go with them. Without this the
+            // ground under a rain's cloud was lifted and the cloud over it left as dark as it was.)
+            brightness *= Mathf.Pow(2f, Mathf.Clamp(Shader.GetGlobalFloat(idDayEye), 0f, 4f));
             // (the light at the clouds' height, a kilometre or two up, from the table: the sky lights them as the sun lights the air)
             Color sunAtClouds = air.Through(1500f, Mathf.Max(sunUp, -0.2f));
             // (under a deck of cloud the light from above is the cloud's grey, not the sky's blue)
@@ -2121,7 +2131,7 @@ namespace NaturalWeather
 
             Mark("squall");
             // ---- lightning (the brightest two flashes going on now)
-            int flashes = CloudFlashes.Now(body, ut, flashAt, flashBright);
+            int flashes = CloudFlashes.Now(body, ut, flashAt, flashBright, flashDown);
 #if DEV
             if (heldFlash > 0f) { flashAt[0] = heldFlashAt; flashBright[0] = heldFlash; flashes = Math.Max(flashes, 1); }
 #endif
@@ -2133,7 +2143,8 @@ namespace NaturalWeather
                 Vector3d at = SceneAt(body, heap.lat, heap.lon, heap.baseAt);
                 return new Vector4((float)(at.x - camRel.x), (float)(at.y - camRel.y), (float)(at.z - camRel.z), heap.wide * 2.1f);
             }
-            Vector4 FlashVector(int i) => i < flashes ? new Vector4((float)(flashAt[i].x - camRel.x), (float)(flashAt[i].y - camRel.y), (float)(flashAt[i].z - camRel.z), flashBright[i] * 0.6f) : Vector4.zero;
+            Vector4 FlashVector(int i) => i < flashes ? new Vector4((float)(flashAt[i].x - camRel.x), (float)(flashAt[i].y - camRel.y), (float)(flashAt[i].z - camRel.z), flashBright[i] * 0.6f * (flashDown[i] > 0f ? StrokeBright : 1f)) : Vector4.zero;
+            bool stroke = flashes > 0 && (flashDown[0] > 0f || (flashes > 1 && flashDown[1] > 0f));
 
             Mark("lightning");
             // ---- the storms, as the shader takes them
@@ -2318,7 +2329,8 @@ namespace NaturalWeather
                 m.SetVector(idHaze, new Vector4(noiseHasMips ? 1f : 0f, 40f, Two ? HazeAir2.x : 1.5f, Two ? HazeAir2.y : 1f));
                 m.SetVector(idFlashA, FlashVector(0)); m.SetVector(idFlashB, FlashVector(1));
                 m.SetVector(idHoleA, HoleVector(0)); m.SetVector(idHoleB, HoleVector(1)); m.SetVector(idHoleC, HoleVector(2));
-                m.SetVector(idFlashTint, new Vector4(0.75f, 0.8f, 1f, 900f));
+                m.SetVector(idFlashTint, new Vector4(0.75f, 0.8f, 1f, stroke ? StrokeSpread : 900f));
+                m.SetVector(idFlashDown, new Vector4(flashes > 0 ? flashDown[0] : 0f, flashes > 1 ? flashDown[1] : 0f, RainSpread, stroke ? RainBright : 0f));
                 for (int i = 0; i < 6; i++) { m.SetVector(idCellA[i], cellA[i]); m.SetVector(idCellB[i], cellB[i]); m.SetVector(idCellC[i], cellC[i]); }
                 m.SetVector("_CloudTwistA", twistA); m.SetVector("_CloudTwistB", twistB);
                 m.SetVector("_CloudShelfA", shelfA); m.SetVector("_CloudShelfB", shelfB); m.SetVector("_CloudShelfC", shelfC);

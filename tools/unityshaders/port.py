@@ -29,8 +29,8 @@ import make_bundle  # noqa: E402  (for each shader's name, textures and how it i
 # Where each goes in the Unity project.
 FOLDER = {"volume": "VolumetricExplosions", "enlarge": "VolumetricExplosions", "layers": "VolumetricExplosions", "motion": "VolumetricExplosions", "carry": "VolumetricExplosions", "mark": "VolumetricExplosions", "shock": "VolumetricExplosions", "shadow": "VolumetricExplosions", "sundepth": "VolumetricExplosions", "sprite": "VolumetricExplosions", "lens": "Keystone", "farmotion": "Keystone",
           "shafts": "NaturalLight", "clean": "NaturalLight", "veil": "NaturalLight", "clouds": "NaturalWeather", "cloudskeep": "NaturalWeather", "cloudsover": "NaturalWeather", "cloudshade": "NaturalWeather", "wet": "NaturalWeather", "snow": "NaturalWeather", "drops": "NaturalWeather",
-          "ocean": "NaturalOcean", "oceanfoam": "NaturalOcean", "oceanweed": "NaturalOcean", "oceanunder": "NaturalOcean", "blend": "SmoothRunning", "grade": "CineCamera",
-          "fargroundpoints": "FarGround", "fargrounddraw": "FarGround", "fargrounddepth": "FarGround", "fargroundlights": "FarGround"}
+          "ocean": "NaturalOcean", "oceanfoam": "NaturalOcean", "oceanweed": "NaturalOcean", "oceanunder": "NaturalOcean", "blend": "SmoothRunning", "grade": "CineCamera", "anime": "AnimeLook",
+          "fargroundpoints": "FarGround", "fargrounddraw": "FarGround", "fargrounddepth": "FarGround", "fargroundlights": "FarGround", "worm": "RibbonWorm"}
 
 # What Unity's own headers already declare.
 GIVEN = {"_WorldSpaceCameraPos", "_ProjectionParams", "_ZBufferParams", "_ScreenParams", "_Time"}
@@ -89,7 +89,7 @@ SPECIAL = [
     way = -1.0;
 #endif
     vs_TEXCOORD0 = vec2(in_POSITION0.x * 0.5 + 0.5, in_POSITION0.y * way * 0.5 + 0.5);"""),
-    (("cloudsover", "cloudshade", "veil", "oceanunder", "wet", "snow", "blend", "farmotion", "grade"), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
+    (("cloudsover", "cloudshade", "veil", "oceanunder", "wet", "snow", "blend", "farmotion", "grade", "anime"), "vertex", "    vs_TEXCOORD0 = in_POSITION0.xy * 0.5 + 0.5;",
      """    // (drawn into whatever the camera is drawing into, which may lie either way: as for the lens's second go, above; Natural
     // Light's veil and the sea's lens in the water the same; and Cinema Camera's look, whose picture came out upside down on
     // Direct3D without it, the camera drawing into a picture of its own there (the PC, 2026-10-20))
@@ -640,10 +640,19 @@ def program(which, header):
             if name in GIVEN or name in seen: continue
             seen.add(name); declared.append("            %s %s;%s" % (kind(glsl_type), name, "     // " + note if note else ""))
     textures = []
+    # (A picture named as another with "Was" after it, the same thing a moment before, is read through that other's sampler:
+    # Direct3D gives a pixel program sixteen samplers, and volume.glsl, with the grid before's pictures beside the grid's own
+    # since 2026-11-16, has more pictures than that. The packer (windows.py) takes a picture with no sampler of its own.)
+    every = {name for stage in (vertex, fragment) for name, dims, note in stage["textures"]}
     for stage in (vertex, fragment):
         for name, dims, note in stage["textures"]:
             if name in seen: continue
-            seen.add(name); textures.append("            Texture%s %s; SamplerState sampler%s;%s" % (dims if dims in ("2DArray", "Cube") else "%dD" % dims, name, name, "     // " + note if note else ""))
+            shape = dims if dims in ("2DArray", "Cube") else "%dD" % dims
+            if name.endswith("Was") and name[:-3] in every:
+                seen.add(name); textures.append("            Texture%s %s;%s" % (shape, name, "     // " + note if note else ""))
+                textures.append("            #define sampler%s sampler%s" % (name, name[:-3]))
+                continue
+            seen.add(name); textures.append("            Texture%s %s; SamplerState sampler%s;%s" % (shape, name, name, "     // " + note if note else ""))
     statics = ["            static %s %s;" % (kind(t), n) for n, t in fragment["statics"] + vertex["statics"]]
     # (a pixel's place asked for outside main, as grade.glsl's zebras do: the pixel program's input (IN) is frag's own, which a
     # function outside it cannot see, so frag puts the place in a static first and those functions read that. 2026-10-20)
@@ -728,7 +737,7 @@ def port(which):
 if __name__ == "__main__":
     asked = sys.argv[1:]
     for name in asked or ["volume", "enlarge", "layers", "motion", "carry", "mark", "shock", "shadow", "sundepth", "lens", "shafts", "clean", "veil", "clouds", "cloudskeep", "cloudsover", "cloudshade", "wet", "snow",
-                          "ocean", "oceanfoam", "oceanweed", "oceanunder", "drops", "blend", "farmotion", "grade", "fargroundpoints", "fargrounddraw", "fargrounddepth", "fargroundlights"]:
+                          "ocean", "oceanfoam", "oceanweed", "oceanunder", "drops", "blend", "farmotion", "grade", "fargroundpoints", "fargrounddraw", "fargrounddepth", "fargroundlights", "worm", "anime"]:
         # (a repository of one mod has that mod's shaders and not the others': those are passed over)
         if not asked and not os.path.exists(os.path.join(PACK, make_bundle.SHADERS[name]["code"])):
             print("left out: %s (tools/shaderpack/%s is not here)" % (name, make_bundle.SHADERS[name]["code"]))

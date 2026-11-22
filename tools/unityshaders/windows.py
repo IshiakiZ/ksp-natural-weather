@@ -75,6 +75,10 @@ BUNDLES = [
     ("src/CineCamera/Shaders/grade-windows.bundle", ["grade"]),
     # (Far Ground's four, which Ground.LoadShaders looks for in this one bundle off OpenGL: listed 2026-10-20, never compiled yet)
     ("src/FarGround/Shaders/farground-windows.bundle", ["fargroundpoints", "fargrounddraw", "fargrounddepth", "fargroundlights"]),
+    # (Anime Look's ink and paint, which Ink.cs looks for off OpenGL: listed 2026-11-11)
+    ("src/AnimeLook/Shaders/anime-windows.bundle", ["anime"]),
+    # (Ribbon Worm's skin, which Worm.LoadShader looks for by RibbonWorm/Skin: 2026-11-11)
+    ("src/RibbonWorm/Shaders/worm-windows.bundle", ["worm"]),
 ]
 OUT = os.path.join(ROOT, "build", "windows-shaders")
 

@@ -242,6 +242,25 @@ namespace NaturalWeather
         }
         /// <summary>(development build) the glass wiped.</summary>
         public static string WipeGlass() { if (instance != null) instance.drops.Clear(); return "wiped"; }
+        /// <summary>
+        /// (development build, since 2026-11-20) A weather held for a test (Probe.Choose) taken as if it had been there all along:
+        /// the ground's wet worked out again from the held weather's last twenty minutes, the glass as warm as the held weather's
+        /// air, and wiped. The films hold their clear sky some seconds after the scene begins. Where the development copy was new
+        /// to the game, in the first film after each build, those seconds had the day's own weather, on the test copy's launch
+        /// save a cool rain; then the hold's hot afternoon (36.5 C, its dew point 23.5 C), and the glass, still as cool as the rain's
+        /// air, misted over as a lens carried out of the cold does, for the whole film: the picture brighter by 7 of 255 in the sky
+        /// and 20 on the sea and smeared round every edge. In every film after, the hold was there from the scene's first frame,
+        /// left from the one before, and the glass began as warm as its air: dry and sharp.
+        /// </summary>
+        internal static void Forget()
+        {
+            if (instance == null) return;
+            instance.at = double.NaN;
+            instance.glassT = float.NaN;
+            instance.drops.Condense = 0f;
+            instance.drops.Clear();
+            instance.thrown.Clear();
+        }
         /// <summary>(development build) the rings' anchor (and git's old OpenGL wet.bundle's puddles'): where it is laid out
         /// from, how often it has been carried on and started afresh, and where the camera stands in it.</summary>
         public static string AnchorSays() => instance == null || double.IsNaN(instance.anchorLat) ? "no anchor" : "anchor at " + instance.anchorLat.ToString("F4") + ", "

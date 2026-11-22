@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pack one of this project's shaders into a Unity asset bundle, without the Unity editor.
 
-    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|motion|enlarge|shadow|mark|shock|sundepth|lens|dnfill|farmotion|shafts|clean|veil|clouds|cloudskeep|cloudsover|cloudshade|wet|snow|blend|fargroundpoints|fargrounddraw|fargrounddepth|fargroundlights]
+    python3 tools/shaderpack/make_bundle.py <KSP folder> <output file> [volume|layers|motion|enlarge|shadow|mark|shock|sundepth|lens|dnfill|farmotion|shafts|clean|veil|clouds|cloudskeep|cloudsover|cloudshade|wet|snow|blend|fargroundpoints|fargrounddraw|fargrounddepth|fargroundlights|anime]
 
 Volumetric Explosions': "volume" (the default) is the smoke, "layers" what puts every patch's smoke on the screen in depth order
 (since 0.5.0; "enlarge" did it a patch at a time before, and is kept for older copies of the mod), "shadow" the shadow it throws
@@ -61,18 +61,18 @@ SHADERS = {
         "name": "VolumetricExplosions/Volume", "path": "assets/volumetricexplosions/volume.shader", "id": 7307199000000000001, "program": 1987650001,
         "bundle": "volumetricexplosions", "file": "CAB-766f6c756d65747269636578706c6f73", "code": "volume.glsl",
         "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ProjectionParams", 4, False), ("_ZBufferParams", 4, False), ("_VolParams", 4, False), ("_VolStep", 4, False), ("_VolGrid", 4, False),
-                     ("_VolSize", 4, False), ("_VolOffset", 4, False), ("_VolDetail", 4, False), ("_VolFlow", 4, False), ("_VolCamera", 4, False), ("_VolPeak", 4, False), ("_VolThin", 4, False), ("_VolSun", 4, False),
-                     ("_VolSunDir", 4, False), ("_VolSunLocal", 4, False), ("_VolAmb", 4, False), ("_VolGlow", 4, False), ("_VolLampA", 4, False), ("_VolLampB", 4, False), ("_VolLampC", 4, False), ("_VolLamps", 4, False),
+                     ("_VolSize", 4, False), ("_VolOffset", 4, False), ("_VolDetail", 4, False), ("_VolDetailWas", 4, False), ("_VolUpLocal", 4, False), ("_VolSurface", 4, False), ("_VolSurfaceIn", 4, False), ("_VolFlow", 4, False), ("_VolCamera", 4, False), ("_VolPeak", 4, False), ("_VolThin", 4, False), ("_VolSun", 4, False),
+                     ("_VolSunDir", 4, False), ("_VolSunLocal", 4, False), ("_VolAmb", 4, False), ("_VolGlow", 4, False), ("_VolSteamTone", 4, False), ("_VolSceneShade", 4, False), ("_VolLampA", 4, False), ("_VolLampB", 4, False), ("_VolLampC", 4, False), ("_VolLamps", 4, False), ("_VolLampLineA", 4, False), ("_VolLampLineB", 4, False), ("_VolLampLineC", 4, False),
                      ("_VolSceneA", 4, False), ("_VolSceneB", 4, False), ("_VolSceneC", 4, False), ("_VolSceneD", 4, False),
                      ("_VolSceneTintA", 4, False), ("_VolSceneTintB", 4, False), ("_VolSceneTintC", 4, False), ("_VolSceneTintD", 4, False),
                      ("_VolSceneDirA", 4, False), ("_VolSceneDirB", 4, False), ("_VolSceneDirC", 4, False), ("_VolSceneDirD", 4, False),
-                     ("_VolJet", 4, False), ("_VolJetFrom", 4, False), ("_VolJetLook", 4, False), ("_VolJetBody", 4, False), ("_VolJetFlow", 4, False), ("_VolJetEnd", 4, False), ("_VolJetGlow", 4, False)] + [("_VolJetAt%d" % n, 4, False) for n in range(8)] + [("_VolFire", 4, False), ("_VolFireGone", 4, False), ("_VolFireWasSize", 4, False), ("_VolFireWasOffset", 4, False),
+                     ("_VolJet", 4, False), ("_VolJetFrom", 4, False), ("_VolJetLook", 4, False), ("_VolJetBody", 4, False), ("_VolJetFlow", 4, False), ("_VolJetEnd", 4, False), ("_VolJetGlow", 4, False), ("_VolJetBoil", 4, False), ("_VolJetSheath", 4, False)] + [("_VolJetAt%d" % n, 4, False) for n in range(8)] + [("_VolFire", 4, False), ("_VolFireGone", 4, False), ("_VolFireWasSize", 4, False), ("_VolFireWasOffset", 4, False),
                      ("_VolTint", 4, False), ("_VolHot1", 4, False), ("_VolHot2", 4, False), ("_VolHot3", 4, False), ("_VolHot4", 4, False),
                      ("_VolCutA", 4, False), ("_VolCutB", 4, False), ("_VolCutC", 4, False), ("_VolCutD", 4, False), ("_VolCutE", 4, False), ("_VolCutF", 4, False), ("_VolSlot", 4, False), ("_VolSunMapFrom", 4, False), ("_VolSunMapRight", 4, False), ("_VolSunMapUp", 4, False), ("_VolSunMapAlong", 4, False),
                      ("_VolWakes", 4, False), ("_VolWakeLo", 4, False), ("_VolWakeHi", 4, False)]
                     + [("_VolWake%s%d" % (part, n), 4, False) for n in range(8) for part in "ABC"]
                     + [("unity_WorldToObject", 4, True), ("unity_MatrixV", 4, True), ("_VolQuarter", 4, False), ("_VolHole", 4, False), ("_VolHoleWay", 4, False), ("_VolFireLook", 4, False), ("_VolFireLight", 4, False), ("_VolFireShine", 4, False)],
-        "textures": [("_Volume", 3), ("_Amount", 3), ("_AmountWas", 3), ("_Detail", 3), ("_Around", 3), ("_Flow", 3), ("_RestA", 3), ("_RestB", 3), ("_RestC", 3), ("_RestD", 3), ("_RestE", 3), ("_Turns", 3), ("_Clear", 3), ("_VolSunMap", 2), ("_CameraDepthTexture", 2)],
+        "textures": [("_Volume", 3), ("_VolumeWas", 3), ("_Amount", 3), ("_AmountWas", 3), ("_Detail", 3), ("_Around", 3), ("_AroundWas", 3), ("_Flow", 3), ("_RestA", 3), ("_RestB", 3), ("_RestC", 3), ("_RestD", 3), ("_RestE", 3), ("_RestAWas", 3), ("_RestBWas", 3), ("_RestCWas", 3), ("_RestDWas", 3), ("_RestEWas", 3), ("_Turns", 3), ("_Clear", 3), ("_VolSunMap", 2), ("_CameraDepthTexture", 2)],
         "vertex": VERTEX + [("_VolShift", 4, False)],
     },
     "mark": {
@@ -127,8 +127,8 @@ SHADERS = {
     "layers": {
         "name": "VolumetricExplosions/Layers", "path": "assets/volumetricexplosions/layers.shader", "id": 7307199000000000010, "program": 1987650010,
         "bundle": "volumetricexplosionslayers", "file": "CAB-766f6c756d65747269636c6179657273", "code": "layers.glsl",
-        "fragment": [("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_VolLayers", 4, False), ("_VolSlots", 4, False), ("_WeatherClouds", 4, False), ("_VolHoleA", 4, False), ("_VolHoleB", 4, False), ("_VolHoleC", 4, False), ("_VolHoleSlots", 4, False)],
-        "textures": [("_VolAtlas", 2), ("_VolAtlasDepth", 2), ("_VolFull", 2), ("_VolFullDepth", 2), ("_CameraDepthTexture", 2), ("_WeatherCloudsPic", 2), ("_WeatherCloudsDist", 2)],
+        "fragment": [("_ZBufferParams", 4, False), ("_VolCamera", 4, False), ("_VolLayers", 4, False), ("_VolSlots", 4, False), ("_WeatherClouds", 4, False), ("_VolHoleA", 4, False), ("_VolHoleB", 4, False), ("_VolHoleC", 4, False), ("_VolHoleSlots", 4, False), ("_VolHisClouds", 4, False), ("_VolAir", 4, False)],
+        "textures": [("_VolAtlas", 2), ("_VolAtlasDepth", 2), ("_VolFull", 2), ("_VolFullDepth", 2), ("_CameraDepthTexture", 2), ("_WeatherCloudsPic", 2), ("_WeatherCloudsDist", 2), ("scattererReconstructedCloud", 2), ("historyDistance", 2)],
         "vertex": [("_VolSheet", 4, False)],
         "cull": 0.0,                     # a sheet over the part of the screen the smoke is on, whichever way round
     },
@@ -159,9 +159,9 @@ SHADERS = {
         "name": "VolumetricExplosions/Shadow", "path": "assets/volumetricexplosions/shadow.shader", "id": 7307199000000000009, "program": 1987650009,
         "bundle": "volumetricexplosionsshadow", "file": "CAB-766f6c756d6574726963736861646f77", "code": "shadow.glsl",
         "fragment": [("_WorldSpaceCameraPos", 3, False), ("_ProjectionParams", 4, False), ("_ZBufferParams", 4, False), ("_VolCamera", 4, False),
-                     ("_ShadowGridX", 4, False), ("_ShadowGridY", 4, False), ("_ShadowGridZ", 4, False), ("_ShadowSun", 4, False), ("_ShadowSunWorld", 4, False), ("_ShadowSky", 4, False), ("_ShadowSkyKeep", 4, False), ("unity_MatrixV", 4, True),
+                     ("_ShadowGridX", 4, False), ("_ShadowGridY", 4, False), ("_ShadowGridZ", 4, False), ("_ShadowSun", 4, False), ("_ShadowSunWorld", 4, False), ("_ShadowSky", 4, False), ("_ShadowSkyKeep", 4, False), ("_ShadowWasScale", 4, False), ("_ShadowWasShift", 4, False), ("unity_MatrixV", 4, True),
                      ("_VolFlow", 4, False), ("_VolSize", 4, False)],
-        "textures": [("_Volume", 3), ("_Flow", 3), ("_CameraDepthTexture", 2)],
+        "textures": [("_Volume", 3), ("_VolumeWas", 3), ("_Flow", 3), ("_CameraDepthTexture", 2)],
         "blend": (2.0, 0.0),             # what is there is multiplied by what it draws: darkened, and nothing added
     },
     "lens": {
@@ -234,7 +234,7 @@ SHADERS = {
         "fragment": [("_ZBufferParams", 4, False), ("_CloudStage", 4, False), ("_CloudCam", 4, False), ("_CloudHigh", 4, False), ("_CloudRight", 4, False), ("_CloudUp", 4, False),
                      ("_CloudAhead", 4, False), ("_CloudFixedX", 4, False), ("_CloudFixedY", 4, False), ("_CloudFixedZ", 4, False), ("_CloudNoise", 4, False), ("_CloudDrift", 4, False),
                      ("_CloudShell", 4, False), ("_CloudShellEased", 4, False), ("_CloudLightF", 4, False), ("_CloudLightG", 4, False), ("_CloudLightA", 4, False), ("_CloudLightE", 4, False), ("_CloudLightN", 4, False), ("_CloudLook", 4, False), ("_CloudSun", 4, False), ("_CloudSunTint", 4, False), ("_CloudMoon", 4, False), ("_CloudSky", 4, False), ("_CloudGround", 4, False),
-                     ("_CloudAir", 4, False), ("_CloudAirHigh", 4, False), ("_CloudHaze", 4, False), ("_CloudFlashA", 4, False), ("_CloudFlashB", 4, False), ("_CloudFlashTint", 4, False),
+                     ("_CloudAir", 4, False), ("_CloudAirHigh", 4, False), ("_CloudHaze", 4, False), ("_CloudFlashA", 4, False), ("_CloudFlashB", 4, False), ("_CloudFlashTint", 4, False), ("_CloudFlashDown", 4, False),
                      ("_CloudHoleA", 4, False), ("_CloudHoleB", 4, False), ("_CloudHoleC", 4, False),
                      ("_CloudFieldA", 4, False), ("_CloudFieldB", 4, False), ("_CloudFieldLevA", 4, False), ("_CloudFieldLevB", 4, False), ("_CloudFieldLevC", 4, False), ("_CloudFieldLevD", 4, False),
                      ("_CloudShadowAt", 4, False), ("_CloudShadowX", 4, False), ("_CloudShadowY", 4, False), ("_CloudSunFixed", 4, False),
@@ -322,6 +322,20 @@ SHADERS = {
         "textures": [("_OceanMirror", 2)],
         "cull": 0.0, "ztest": 4.0, "zwrite": 1.0,
         "blend": (1.0, 0.0),
+    },
+    # Ribbon Worm's skin: the worm's body and the branching proboscis, tubes built on the game's thread every frame (worm.glsl;
+    # Body.cs, Proboscis.cs). Solid, so it writes how far off it is and shows its outer faces only; it fades itself out where it
+    # goes into the cloud deck, which the game draws as a far picture with no depth. Reads each point's colour (the way the skin
+    # faces, and how much it is the proboscis's flesh) and uv (along, round, how high). 2026-11-11, from the Windows PC.
+    "worm": {
+        "name": "RibbonWorm/Skin", "path": "assets/ribbonworm/skin.shader", "id": 7307199000000000901, "program": 1987650901,
+        "bundle": "ribbonwormskin", "file": "CAB-726962626f6e776f726d736b696e3030", "code": "worm.glsl",
+        "fragment": [("_WorldSpaceCameraPos", 3, False), ("_WormSun", 4, False), ("_WormSunTint", 4, False), ("_WormSky", 4, False), ("_WormShine", 4, False), ("_WormHaze", 4, False),
+                     ("_WormDeck", 4, False), ("_WormCentre", 4, False), ("_WormLook", 4, False)],
+        "textures": [],
+        "given": 0,
+        "vertex": [("unity_ObjectToWorld", 4, True), ("unity_MatrixVP", 4, True)],
+        "cull": 2.0, "ztest": 4.0, "zwrite": 1.0,
     },
     # Natural Ocean's lens in the water: laid over the finished picture while the camera's glass is at the water or under it.
     "oceanunder": {
@@ -412,6 +426,17 @@ SHADERS = {
         "fragment": [("_GradeMode", 4, False), ("_GradeBalance", 4, False), ("_GradePeak", 4, False), ("_GradeTool", 4, False)],
         "textures": [("_GradeLut", 3), ("_GradeScene", 2)],
         "given": 1,                      # (the picture so far: handed over by the command that draws it)
+        "vertex": [],
+        "cull": 0.0, "ztest": 8.0,
+        "blend": (1.0, 0.0),             # what it draws takes the place of what was there
+    },
+    # (Anime Look's ink lines and flat paint over the picture of the solid things: Ink.cs. From the PC, 2026-11-11.)
+    "anime": {
+        "name": "AnimeLook/Ink", "path": "assets/animelook/ink.shader", "id": 7307199000000000701, "program": 1987650701,
+        "bundle": "animeink", "file": "CAB-616e696d65696e6b0000000000000000", "code": "anime.glsl",
+        "fragment": [("_ZBufferParams", 4, False), ("_AnimeInk", 4, False), ("_AnimePaint", 4, False), ("_AnimeHow", 4, False), ("_AnimeMore", 4, False)],
+        "textures": [("_AnimeScene", 2), ("_CameraDepthTexture", 2), ("_AnimeBehind", 2)],
+        "given": 3,                      # (the picture so far, handed over by the command that draws it, the game's own depth picture, and in the buildings the depth picture of the camera before)
         "vertex": [],
         "cull": 0.0, "ztest": 8.0,
         "blend": (1.0, 0.0),             # what it draws takes the place of what was there

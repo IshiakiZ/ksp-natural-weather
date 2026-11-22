@@ -111,26 +111,37 @@ namespace NaturalWeather
         /// <summary>
         /// The brightest two flashes lighting the clouds now: where (from the planet's centre, the scene's axes) and how bright.
         /// A flash's strokes come about 70 ms apart, each dying away in about 40 ms after its first bright instant.
+        ///
+        /// Since 2026-11-13 a flash that the lightning draws (Lightning.Live) is as bright here as it shows there, frame for
+        /// frame, and a stroke to the ground lights the cloud from where its channel comes out of the cloud's base, with
+        /// `down` how far the channel runs on below that to the ground (the shader lights the rain from all of it). Until
+        /// then every flash went by the game's clock here and by the real one there, a stroke lit the cloud from 1.5 km
+        /// under its top, and the ground could flash in frames in which the cloud did not.
         /// </summary>
-        public static int Now(CelestialBody body, double ut, Vector3d[] at, float[] brightness)
+        public static int Now(CelestialBody body, double ut, Vector3d[] at, float[] brightness, float[] down)
         {
-            for (int i = 0; i < brightness.Length; i++) brightness[i] = 0f;
+            for (int i = 0; i < brightness.Length; i++) { brightness[i] = 0f; down[i] = 0f; }
             flashes.RemoveAll(f => f.Body != body || ut - f.Time > 2.0 || f.Time - ut > 60.0);
             int n = 0;
             foreach (WeatherFlash f in flashes)
             {
                 double since = ut - f.Time;
                 if (since < 0.0) continue;
-                float b = 0f;
-                for (int k = 0; k < Math.Max(1, f.Strokes); k++)
+                float b = 0f, under = 0f;
+                bool drawn = Lightning.Lamps && Lightning.Live(f, out b, out under);
+                if (!drawn)
                 {
-                    double t = since - k * 0.07 - (k > 0 ? 0.02 * ((f.Seed >> k) & 3) : 0.0);
-                    if (t >= 0.0) b += (float)Math.Exp(-t / 0.04) * (k == 0 ? 1f : 0.7f);
+                    b = 0f; under = 0f;
+                    for (int k = 0; k < Math.Max(1, f.Strokes); k++)
+                    {
+                        double t = since - k * 0.07 - (k > 0 ? 0.02 * ((f.Seed >> k) & 3) : 0.0);
+                        if (t >= 0.0) b += (float)Math.Exp(-t / 0.04) * (k == 0 ? 1f : 0.7f);
+                    }
+                    b *= Mathf.Max(0.2f, f.Brightness);
                 }
-                b *= Mathf.Max(0.2f, f.Brightness);
                 if (b < 0.01f) continue;
                 // (a flash to the ground is seen lighting its cloud from the lower part of the cloud; one in the cloud from its middle)
-                double height = f.Ground ? Math.Max(f.Bottom, f.Top - 1500.0) : (f.Bottom + f.Top) * 0.5;
+                double height = under > 0f ? f.Bottom + under : f.Ground ? Math.Max(f.Bottom, f.Top - 1500.0) : (f.Bottom + f.Top) * 0.5;
                 // (from the planet's centre in the scene's axes, as the clouds take it: GetRelSurfacePosition answers in the planet's
                 // own frame, which the scene stands turned against)
                 Vector3d where = body.GetWorldSurfacePosition(f.Latitude, f.Longitude, height) - body.position;
@@ -138,7 +149,7 @@ namespace NaturalWeather
                 int slot = -1;
                 if (n < at.Length) slot = n++;
                 else { int dimmest = 0; for (int i = 1; i < n; i++) if (brightness[i] < brightness[dimmest]) dimmest = i; if (b > brightness[dimmest]) slot = dimmest; }
-                if (slot >= 0) { at[slot] = where; brightness[slot] = b; }
+                if (slot >= 0) { at[slot] = where; brightness[slot] = b; down[slot] = under; }
             }
             return n;
         }

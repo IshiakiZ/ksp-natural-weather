@@ -34,13 +34,16 @@ if [ -f src/NaturalWeather/needs.txt ]; then
   done < src/NaturalWeather/needs.txt
 fi
 
-# A companion library for the Harmony mod, where this mod has one (src/NaturalWeatherHarmony): built against this mod and against
-# Harmony, only where Harmony is installed in the game, and loaded by the game only where it is.
+# A companion library for the Harmony mod, where this mod has one (src/NaturalWeatherCompanion): built against this mod and against
+# Harmony, only where Harmony is installed in the game, and loaded by the game only where it is. (It was NaturalWeatherHarmony.dll
+# until 2026-11-20: CKAN takes any library with "Harmony" in its name for a copy of Harmony itself. That file, from a
+# build here before then, goes: a download must not carry it.)
 HARMONY="$KSP_DIR/GameData/000_Harmony/0Harmony.dll"
 companion() {  # companion <folder the mod's own library is in>
-  [ -d src/NaturalWeatherHarmony ] || return 0
-  if [ -f "$HARMONY" ]; then WITH="$KEYSTONE:$1/NaturalWeather.dll:$HARMONY" compile "$1/NaturalWeatherHarmony.dll" "" src/NaturalWeatherHarmony
-  else rm -f "$1/NaturalWeatherHarmony.dll"; echo "left out: NaturalWeatherHarmony (Harmony is not installed here to build it against)"; fi
+  rm -f "$1/NaturalWeatherHarmony.dll"
+  [ -d src/NaturalWeatherCompanion ] || return 0
+  if [ -f "$HARMONY" ]; then WITH="$KEYSTONE:$1/NaturalWeather.dll:$HARMONY" compile "$1/NaturalWeatherCompanion.dll" "" src/NaturalWeatherCompanion
+  else rm -f "$1/NaturalWeatherCompanion.dll"; echo "left out: NaturalWeatherCompanion (Harmony is not installed here to build it against)"; fi
 }
 
 case "$MODE" in
@@ -60,8 +63,8 @@ case "$MODE" in
     if [ "$MODE" = dist ]; then echo "ok: built into $OUT"; exit 0; fi
     mkdir -p "$KSP_DIR/GameData/NaturalWeather"
     cp "$OUT/NaturalWeather.dll" "$KSP_DIR/GameData/NaturalWeather/"
-    rm -f "$KSP_DIR/GameData/NaturalWeather/NaturalWeatherHarmony.dll"
-    [ -f "$OUT/NaturalWeatherHarmony.dll" ] && cp "$OUT/NaturalWeatherHarmony.dll" "$KSP_DIR/GameData/NaturalWeather/"
+    rm -f "$KSP_DIR/GameData/NaturalWeather/NaturalWeatherHarmony.dll" "$KSP_DIR/GameData/NaturalWeather/NaturalWeatherCompanion.dll"
+    [ -f "$OUT/NaturalWeatherCompanion.dll" ] && cp "$OUT/NaturalWeatherCompanion.dll" "$KSP_DIR/GameData/NaturalWeather/"
     if [ -d "$OUT/PluginData" ]; then mkdir -p "$KSP_DIR/GameData/NaturalWeather/PluginData"; cp -R "$OUT/PluginData/." "$KSP_DIR/GameData/NaturalWeather/PluginData/"; fi
     echo "ok: Natural Weather installed to $KSP_DIR/GameData/NaturalWeather (restart KSP to load it; it needs Keystone there too)"
     ;;

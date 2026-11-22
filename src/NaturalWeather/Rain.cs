@@ -51,7 +51,13 @@ namespace NaturalWeather
         // (since 0.6.0: recordings of real rain and wind in their place, where the mod has them: see Recordings)
         readonly Loops rainLoops = new Loops("NaturalWeather rain (recorded)"), windLoops = new Loops("NaturalWeather wind (recorded)");
 
+        static bool farTube = false;     // (for the development build: the drops' life as until 2026-11-22; see Feed)
         const float Box = 24f;           // how far round the camera drops are drawn (beyond a few tens of metres a drop is too thin to see)
+#if DEV
+        static bool aliased = false;     // (for the development build: the drops' picture without its smaller copies, as until 2026-11-22; see MakeStreak)
+        bool aliasedSet;
+        Texture2D streakOld;
+#endif
         const float Shutter = 1f / 48f;  // the exposure a streak is smeared over: a film camera's half-turn shutter at 24 frames (it was 1/20: streaks twice as long as a camera makes them)
 
         void Start()
@@ -59,7 +65,10 @@ namespace NaturalWeather
             Shader shader = Shader.Find("Legacy Shaders/Particles/Alpha Blended");
             if (shader == null) shader = Shader.Find("Particles/Alpha Blended");
             if (shader == null) { Report = "Rain cannot be drawn: the game's particle shader was not found."; Weather.Log(Report); enabled = false; return; }
-            streak = MakeStreak(); dot = MakeDot();
+            streak = MakeStreak(true); dot = MakeDot();
+#if DEV
+            streakOld = MakeStreak(false);
+#endif
             // (Drops are laid over the picture in the light they gather from all round, not added to it: see Shade. Added, as
             // they first were, a streak could only ever be lighter than what was behind it, and showed as a white line against
             // a grey sky, where a real one all but vanishes.)
@@ -192,6 +201,9 @@ namespace NaturalWeather
             if (flakeMat != null) Destroy(flakeMat);
             if (moteMat != null) Destroy(moteMat);
             if (streak != null) Destroy(streak);
+#if DEV
+            if (streakOld != null) Destroy(streakOld);
+#endif
             if (dot != null) Destroy(dot);
         }
 
@@ -242,6 +254,9 @@ namespace NaturalWeather
             // (ice pellets are drawn by Hail; freezing rain is rain until it lands)
             // (the page's fine details, 1 as installed: the streaks' length, the flakes' size)
             dropsDrawn.velocityScale = Shutter * Weather.Times(Weather.StreakLength);
+#if DEV
+            if (aliased != aliasedSet) { aliasedSet = aliased; dropMat.mainTexture = aliased ? streakOld : streak; oldDropMat.mainTexture = dropMat.mainTexture; }
+#endif
             float flakeSize = Weather.Times(Weather.FlakeSize);
             if (flakeSize != flakeSizeSet) { flakeSizeSet = flakeSize; var fm = flakes.main; fm.startSize = new ParticleSystem.MinMaxCurve(0.035f * flakeSize, 0.07f * flakeSize); }
             Feed(drops, rain * Mathf.Clamp01(1f - snow - pellets), Mathf.Lerp(4.5f, 8.5f, Mathf.Clamp01(rain * 1.4f)), wind, down, camVel, true, Weather.Times(Weather.RainCount));
@@ -288,7 +303,16 @@ namespace NaturalWeather
             Vector3 air = wind + down * fall;
             Vector3 rel = air - camVel;                      // how the drops move past the camera
             float speed = rel.magnitude;
-            float life = Mathf.Clamp(Box / Mathf.Max(speed, 0.5f), 0.25f, streaks ? 8f : 40f);
+            // (As long as a drop takes to cross the box round the camera, however fast it goes by, since 2026-11-22. Until then no
+            // less than a quarter of a second: past a hundred metres a second, from a craft climbing through rain, the drops lived on
+            // three times as far as the box and filled a tube along the way they went, out to forty metres and more ahead of the
+            // camera and behind it, where to either side there were only the box's twelve. That far a drop is a fraction of a pixel
+            // across, and the tube's, round the point the rain came from, shimmered there in fine crisp lines, a cross of them
+            // through it (the owner's "bands in the rain", 2026-11-21; see MakeStreak). As many are fed in a second as before, so
+            // that as many go by near the camera as did; only those beyond the box are gone, and with them, in a fast climb, most
+            // of the fine streaks round the point ahead. FarTube: as until then.)
+            float life = Mathf.Clamp(Box / Mathf.Max(speed, 0.5f), farTube ? 0.25f : 0.02f, streaks ? 8f : 40f);
+            float fed = Mathf.Max(life, 0.25f);
             var main = ps.main;
             main.startLifetime = new ParticleSystem.MinMaxCurve(life * 0.8f, life * 1.2f);
             var velocity = ps.velocityOverLifetime;
@@ -301,7 +325,7 @@ namespace NaturalWeather
             // how many: a downpour is a few thousand streaks in view at once, drizzle a few hundred
             float inView = (streaks ? 9000f : 5000f) * Mathf.Pow(Mathf.Clamp01(amount), 0.7f) * more;
             if (more > 1f) { int most = Mathf.CeilToInt(inView * 1.5f); if (main.maxParticles < most) main.maxParticles = most; }
-            emission.rateOverTime = inView / life;
+            emission.rateOverTime = inView / fed;
         }
 
         /// <summary>
@@ -677,6 +701,11 @@ namespace NaturalWeather
             // of the many drops that make one streak's worth of the picture.
             // (most of what a drop bends towards the eye is the sky above and behind it: brighter than the light all round)
             Color drop = (Shown(around * 0.5f + above * 0.7f) + sunShown * (0.25f * towards)) * Weather.Times(Weather.RainBright);
+            // (and a stroke of lightning's light where the camera is, Lightning.Lamped: the drops throw it every way, and for
+            // as long as it lasts every streak near the camera stands out white, as rain does in a flash. Until 2026-11-13
+            // they were lit by the even light as it was read here, between the cameras' drawing, with no flash in it.)
+            Color flashed = new Color(0.84f, 0.88f, 1f) * (0.35f * Lightning.AtCamera);
+            drop += flashed;
             float opaque = 0.34f + 0.26f * Mathf.Clamp01(rain);
             // (the shader doubles its tint: a half is as it is)
             dropMat.SetColor("_TintColor", new Color(Mathf.Min(drop.r, 1f) * 0.5f, Mathf.Min(drop.g, 1f) * 0.5f, Mathf.Min(drop.b, 1f) * 0.5f, opaque * 0.5f));
@@ -689,6 +718,7 @@ namespace NaturalWeather
             // flakes lit as snow on the ground alone came out at 0.20 against the veil's 0.22, and showed as dark specks.)
             Color veilLike = Shown(around * 2f) * 1.2f;
             snowLit = new Color(Mathf.Max(snowLit.r, veilLike.r), Mathf.Max(snowLit.g, veilLike.g), Mathf.Max(snowLit.b, veilLike.b));
+            snowLit += flashed;
             SetLaid(flakeMat, snowLit, 0.8f);
             { float most = Mathf.Max(1f, Mathf.Max(snowLit.r, Mathf.Max(snowLit.g, snowLit.b))); SnowLit = snowLit / most; }
             // ---- dust: as bright as the murk it makes (Natural Light's veil of it is lit from all round the same way: in a dust storm the
@@ -730,6 +760,10 @@ namespace NaturalWeather
         Material oldDropMat;
         /// <summary>(For the development build: the drops and flakes lit as in 0.1.0, and back: for pictures of before and after.)</summary>
         public static string Old() { old = !old; return old ? "drops and flakes lit as in 0.1.0" : "drops and flakes lit as now"; }
+        /// <summary>(For the development build, 2026-11-22: the drops let live a quarter of a second at least, as until then, and back; see Feed.)</summary>
+        public static string FarTube() { farTube = !farTube; return farTube ? "drops live a quarter of a second at least, as until 2026-11-22" : "drops live as long as they take to cross the box"; }
+        /// <summary>(For the development build, 2026-11-22: the drops' picture without its smaller copies, as until then, and back; see MakeStreak.)</summary>
+        public static string Aliased() { aliased = !aliased; return aliased ? "the drops' picture without its smaller copies, as until 2026-11-22" : "the drops' picture with its smaller copies"; }
 
         /// <summary>(As in 0.1.0: the probe's light from five ways and a little of the sun's, laid over the picture. Kept for the development build's pictures of before and after.)</summary>
         static void Light(Material mat, float alpha) => Light(mat, alpha, Color.white);
@@ -755,11 +789,27 @@ namespace NaturalWeather
         }
 #endif
 
-        /// <summary>A streak: bright down its middle, soft at its sides, faded at both ends.</summary>
-        static Texture2D MakeStreak()
+        /// <summary>
+        /// A streak: bright down its middle, soft at its sides, faded at both ends. `steps`: with its smaller copies, each the one
+        /// before it halved and its light averaged (mipmaps), as since 2026-11-22: a strip a pixel or two wide on the screen is
+        /// drawn from the copy whose pixels are as wide as the screen's, the drop's light spread evenly over the pixels it
+        /// crosses. Nearly every drop is such a strip: no wider than about two pixels (see Make), thinner beyond ten metres or
+        /// so. Drawn from the full picture alone, as until then, a drop's bright middle, under a pixel across, showed only where
+        /// it fell on the middles of pixels: whole down a row or a column of them, broken at every other slant, and there as
+        /// opaque as a near drop. So the drops that went by level or upright on the screen were crisp lines, in bands through
+        /// the point the rain comes from, among the soft ones: the owner, 2026-11-21, of a climb through rain, "bands in the
+        /// rain ... of crisp rain, like sharp rain, and then the rest is blurry normal rain". Each drop's light is as it was.
+        /// A strip thinner than a pixel is still drawn only on the pixels whose middles it crosses, now no brighter there than
+        /// the drop's light spread over it: the farthest drops were such strips, and most of them are gone (see Feed). The two
+        /// together took the brightest of the crisp lines down by a third to a half in the owner's bands, either alone by
+        /// a tenth to a third. (Tried first, the same day: each drop on a strip three times as wide, its picture narrowed down
+        /// the middle. Held to the two pixels, the drops lost two thirds of their light; let three times as wide, they were
+        /// soft round blobs, and dearer to draw.)
+        /// </summary>
+        static Texture2D MakeStreak(bool steps)
         {
             const int W = 8, H = 64;
-            var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, name = "NaturalWeather streak" };
+            var t = new Texture2D(W, H, TextureFormat.RGBA32, steps) { wrapMode = TextureWrapMode.Clamp, filterMode = steps ? FilterMode.Trilinear : FilterMode.Bilinear, name = "NaturalWeather streak" };
             for (int y = 0; y < H; y++)
                 for (int x = 0; x < W; x++)
                 {
@@ -767,7 +817,7 @@ namespace NaturalWeather
                     float a = Mathf.Exp(-across * across * 4f) * Mathf.Sin(along * Mathf.PI);
                     t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
                 }
-            t.Apply(false, true);
+            t.Apply(steps, true);
             return t;
         }
 

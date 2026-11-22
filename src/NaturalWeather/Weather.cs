@@ -26,7 +26,7 @@ namespace NaturalWeather
     /// </summary>
     static class Weather
     {
-        public const string Version = "0.7.0";
+        public const string Version = "0.8.0";
 
         public static Mod Page;
         public static Toggle On, Push, Tip, Strike, HailBreaks, Icing, Light, Smoke, Rain, Drops, WetGround, LyingSnow, Flashes, Fog, Dust, Devils, UseCity, Doppler, Booms;

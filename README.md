@@ -29,6 +29,8 @@ goes with the wind; dust devils) and HarmonyKSP (the wind moves craft).
   lit through by the sun and fading in the land's own air; their shadows blue-grey in the sky's light. A craft leaves
   its path through cloud.
 * **Rain, snow, freezing rain, ice pellets and hail; fog by kind; lightning** that can strike a craft.
+* **Lightning that lights the night** (0.8.0): a stroke lights the ground round its foot, the cloud's base where it
+  leaves it and the storm's rain along it.
 * **Hurricanes** with their eye and spiral arms, **squall lines, tornadoes and waterspouts;** on hot, still
   afternoons, **dust devils** on Duna and in Kerbin's deserts (with Volumetric Explosions 0.8.0).
 * **Wet ground, drops on the camera** (a setting), **haloes**, and **icing** on craft in cold cloud (a setting).
